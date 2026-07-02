@@ -7,9 +7,9 @@ use tracing_subscriber::{
     EnvFilter,
 };
 
-/// Inicializa o logging com formato JSON ou pretty.
-pub fn init_logging(format: &str) {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+/// Inicializa o logging com nível e formato configuráveis.
+pub fn init_logging(level: &str, format: &str) {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     match format {
         "json" => {

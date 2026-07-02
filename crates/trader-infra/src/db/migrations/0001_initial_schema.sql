@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS orders (
 
     price               NUMERIC,
     stop_price          NUMERIC,
+    target_price        NUMERIC,
     avg_fill_price      NUMERIC,
 
     broker              TEXT NOT NULL,

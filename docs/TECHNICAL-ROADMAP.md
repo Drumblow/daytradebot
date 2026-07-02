@@ -137,29 +137,28 @@ Configuração é carregada corretamente de arquivo e variáveis de ambiente. �
 
 #### 5.1 Market data
 
-- [ ] Escolha definitiva da API IBKR: **IBKR Client Portal API (REST)** ou **TWS API**.
-  - Recomendação inicial: avaliar Client Portal API primeiro por simplicidade de HTTP.
-  - Fallback: TWS API via `ibapi` crate ou socket raw se necessário.
-- [ ] Implementação de `IbkrMarketDataProvider`.
-- [ ] Busca de candles históricos.
-- [ ] Subscrição de barras em tempo real (se disponível sem custo extra).
-- [ ] Deduplicação de candles no banco.
-- [ ] Detecção de gaps e registros de qualidade de dados.
+- [x] Escolha definitiva da API IBKR: **TWS API via IB Gateway**.
+  - Decisão registrada em `docs/decisions/ADR-007-ibkr-tws-api.md`.
+- [x] Implementação de `IbkrMarketDataProvider`.
+- [x] Busca de candles históricos.
+- [x] Subscrição de barras em tempo real (5s via TWS API).
+- [x] Deduplicação de candles no banco (`ON CONFLICT DO NOTHING`).
+- [ ] Detecção de gaps e registros de qualidade de dados — **próxima fase**.
 
 #### 5.2 Broker
 
-- [ ] Implementação de `IbkrBrokerAdapter`.
-- [ ] Envio de ordem simples (market/limit).
-- [ ] Cancelamento de ordem.
-- [ ] Consulta de status e ordens abertas.
-- [ ] Consulta de posições e saldo paper.
-- [ ] Subscrição de eventos de fill.
+- [x] Implementação de `IbkrBrokerAdapter`.
+- [x] Envio de ordem simples (market/limit/stop/bracket).
+- [x] Cancelamento de ordem.
+- [ ] Consulta de status e ordens abertas — **stub, requer conta liberada**.
+- [ ] Consulta de posições e saldo paper — **stub, requer conta liberada**.
+- [ ] Subscrição de eventos de fill — **stub, requer conta liberada**.
 
 #### 5.3 CLI
 
-- [ ] Comando `trader-cli ingest`.
-- [ ] Comando `trader-cli test-connection`.
-- [ ] Comando `trader-cli account`.
+- [x] Comando `trader-cli ingest`.
+- [x] Comando `trader-cli test-connection`.
+- [x] Comando `trader-cli account`.
 
 ### Critérios de sucesso
 

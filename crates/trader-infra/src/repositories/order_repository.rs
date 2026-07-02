@@ -50,11 +50,11 @@ impl SqlxOrderRepository {
             r#"
             INSERT INTO orders (
                 signal_id, asset_id, broker_order_id, parent_order_id, side, order_type, status,
-                time_in_force, quantity, filled_quantity, price, stop_price, avg_fill_price,
+                time_in_force, quantity, filled_quantity, price, stop_price, target_price, avg_fill_price,
                 broker, error_message, metadata, correlation_id, created_at, updated_at,
                 submitted_at, filled_at, cancelled_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             RETURNING id
             "#,
             order.signal_id,
@@ -69,6 +69,7 @@ impl SqlxOrderRepository {
             order.filled_quantity,
             order.price,
             order.stop_price,
+            order.target_price,
             order.avg_fill_price,
             order.broker,
             order.error_message,

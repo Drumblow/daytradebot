@@ -1,0 +1,27 @@
+[package]
+name = "trader-adapters"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+trader-domain = { path = "../trader-domain" }
+trader-infra = { path = "../trader-infra" }
+
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+
+ibapi = { workspace = true }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true }

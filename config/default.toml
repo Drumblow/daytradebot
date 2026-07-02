@@ -5,16 +5,23 @@ paper_warning = true
 
 [database]
 # Deve ser sobrescrito via variável de ambiente TRADER__DATABASE__URL ou DATABASE_URL.
-# Exemplo local: postgres://trader:senha_local@localhost:5433/trader_db
 url = ""
 
 [broker]
 name = "ibkr"
 paper = true
-# Preencher via TRADER__BROKER__ACCOUNT_ID, TRADER__BROKER__API_URL, etc.
+# Preencher se usar Client Portal API; para TWS/IB Gateway use [ibkr].
 account_id = ""
 api_url = ""
 client_id = ""
+
+[ibkr]
+# Configuração do IB Gateway / TWS API.
+host = "127.0.0.1"
+port = 7497
+client_id = 1
+paper = true
+account_id = ""
 
 [risk]
 profile = "conservative"

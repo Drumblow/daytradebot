@@ -149,11 +149,11 @@ trader-cli journal --date 2026-07-01
 ## Status do projeto
 
 - [x] Planejamento arquitetural
-- [ ] Fundação do workspace Rust
-- [ ] Conexão com dados e broker
+- [x] Fundação do workspace Rust
+- [x] Conexão com dados e broker (TWS API / IB Gateway)
 - [ ] Motor de contexto de mercado
 - [ ] Primeira estratégia
-- [ ] Paper trading
+- [ ] Paper trading completo
 - [ ] Backtest
 - [ ] Dashboard
 - [ ] Operação real (futuro)

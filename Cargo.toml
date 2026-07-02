@@ -2,6 +2,8 @@
 members = [
     "crates/trader-domain",
     "crates/trader-infra",
+    "crates/trader-adapters",
+    "crates/trader-cli",
 ]
 resolver = "2"
 
@@ -35,6 +37,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Misc
 uuid = { version = "1.9", features = ["serde", "v4"] }
 anyhow = "1.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Broker adapters
+ibapi = "3.1"
 
 [profile.release]
 opt-level = 3

@@ -56,16 +56,21 @@ export DATABASE_URL="postgres://user:pass@localhost:5432/trader_db"
 export TRADER_MODE="paper"          # nunca "production" no MVP
 export TRADER_PAPER_WARNING="true"  # exibe aviso visual de paper trading
 
-# Broker (IBKR)
+# Broker (IBKR TWS API / IB Gateway)
+export TRADER__IBKR__HOST="127.0.0.1"
+export TRADER__IBKR__PORT="7497"    # 7496 para TWS real, 7497 para paper
+export TRADER__IBKR__CLIENT_ID="1"
+export TRADER__IBKR__PAPER="true"
+export TRADER__IBKR__ACCOUNT_ID="DU1234567"
+
+# Client Portal API (alternativa; não usada com TWS API)
 export IBKR_ACCOUNT_ID="DU1234567"
 export IBKR_PAPER="true"
-export IBKR_API_URL="https://localhost:5000/v1/api"  # Client Portal API
+export IBKR_API_URL="https://localhost:5000/v1/api"
 export IBKR_CLIENT_ID="seu_client_id"
 
-# Se usar TWS API
-export IBKR_TWS_HOST="127.0.0.1"
-export IBKR_TWS_PORT="7497"         # 7496 para TWS real, 7497 para paper
-export IBKR_TWS_CLIENT_ID="1"
+# Provedor padrão do CLI: "simulated" ou "ibkr"
+export TRADER_PROVIDER="simulated"
 
 # Estratégia ativa
 export TRADER_STRATEGY_ID="pullback-trend-v1"
@@ -92,9 +97,35 @@ config/
 
 ---
 
-## 5. Deploy
+## 5. IB Gateway / TWS
 
-### 5.1 Deploy local (desenvolvimento)
+### 5.1 Instalação
+
+1. Baixe o IB Gateway em https://www.interactivebrokers.com/en/index.php?f=16457
+2. Instale e faça login com sua conta paper.
+3. Em **Editar > Configuração Global > API > Configurações**, configure:
+   - **Socket port:** `7497` (paper) ou `7496` (real)
+   - **Permitir conexões de localhost:** ativado
+   - **Criar API mensagem de log:** ativado (para debug)
+   - **Trusted IP Addresses:** adicione `127.0.0.1`
+
+### 5.2 Verificação de conexão
+
+```bash
+# Com provider simulado (não requer IB Gateway)
+cargo run --bin trader-cli -- test-connection --provider simulated
+
+# Com IB Gateway aberto (requer conta liberada)
+cargo run --bin trader-cli -- test-connection --provider ibkr
+```
+
+> **Nota:** Até a conta estar liberada, use `--provider simulated` para todos os comandos.
+
+---
+
+## 6. Deploy
+
+### 6.1 Deploy local (desenvolvimento)
 
 ```bash
 # 1. Subir banco
@@ -110,7 +141,7 @@ cargo build --release
 cargo run --bin trader-cli -- paper --symbol SPY
 ```
 
-### 5.2 Deploy em VPS (paper)
+### 6.2 Deploy em VPS (paper)
 
 ```bash
 # 1. Build em máquina de CI ou local para Linux
@@ -125,7 +156,7 @@ rsync -avz migrations/ user@vps:/opt/trader/migrations/
 sudo systemctl restart trader-paper
 ```
 
-### 5.3 Systemd service (exemplo)
+### 6.3 Systemd service (exemplo)
 
 ```ini
 # /etc/systemd/system/trader-paper.service
@@ -150,22 +181,28 @@ WantedBy=multi-user.target
 
 ---
 
-## 6. Runbooks
+## 7. Runbooks
 
-### 6.1 Como iniciar o bot
+### 7.1 Como iniciar o bot
 
 ```bash
-# Verificar conexão com broker
+# Verificar conexão com broker (simulado por padrão)
 trader-cli test-connection
+
+# Verificar conexão com IB Gateway (quando conta estiver liberada)
+trader-cli test-connection --provider ibkr
 
 # Verificar conta
 trader-cli account
 
-# Iniciar paper trading
+# Ingere candles históricos de SPY (15m, 30 dias)
+trader-cli ingest --symbol SPY --timeframe 15m --days 30
+
+# Iniciar paper trading simulado
 trader-cli paper --symbol SPY --strategy pullback-trend-v1
 ```
 
-### 6.2 Como parar o bot de forma segura
+### 7.2 Como parar o bot de forma segura
 
 ```bash
 # 1. Enviar SIGTERM
@@ -179,7 +216,7 @@ trader-cli orders --status open
 #    - fechar manualmente via CLI.
 ```
 
-### 6.3 Queda de conexão com broker
+### 7.3 Queda de conexão com broker
 
 ```text
 1. O bot tenta reconectar automaticamente (backoff exponencial).
@@ -189,7 +226,7 @@ trader-cli orders --status open
 5. Ao reconectar, reconciliar ordens abertas e posições.
 ```
 
-### 6.4 Ordem rejeitada pelo broker
+### 7.4 Ordem rejeitada pelo broker
 
 ```text
 1. Registrar erro em system_events e logs.
@@ -197,7 +234,7 @@ trader-cli orders --status open
 3. Notificar operador se taxa de rejeição > 5% em 1h.
 ```
 
-### 6.5 Perda máxima diária atingida
+### 7.5 Perda máxima diária atingida
 
 ```text
 1. RiskManager bloqueia novas entradas imediatamente.

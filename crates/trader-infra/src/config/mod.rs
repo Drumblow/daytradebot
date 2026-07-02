@@ -9,6 +9,7 @@ pub struct AppConfig {
     pub app: AppSettings,
     pub database: DatabaseSettings,
     pub broker: BrokerSettings,
+    pub ibkr: IbkrSettings,
     pub risk: RiskSettings,
     pub logging: LoggingSettings,
 }
@@ -56,6 +57,15 @@ pub struct BrokerSettings {
     pub account_id: Option<String>,
     pub api_url: Option<String>,
     pub client_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IbkrSettings {
+    pub host: String,
+    pub port: u16,
+    pub client_id: i32,
+    pub paper: bool,
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
