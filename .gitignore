@@ -31,3 +31,4 @@ Thumbs.db
 
 # Docker volumes
 docker-volumes/
+# Books and large files\ndocs/books/
