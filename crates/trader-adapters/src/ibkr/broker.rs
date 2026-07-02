@@ -10,9 +10,9 @@ use tracing::{debug, info, warn};
 
 use trader_domain::market::{OrderEvent, SubscriptionHandle};
 use trader_domain::{
-    AccountSummary, BrokerError, Order, OrderId, OrderSide, OrderStatus, OrderType, Position,
+    AccountSummary, Broker, BrokerError, Order, OrderId, OrderSide, OrderStatus, OrderType,
+    Position,
 };
-use trader_infra::ports::Broker;
 
 use super::config::IbkrConfig;
 

@@ -52,6 +52,7 @@ pub enum RejectionReason {
     PositionAlreadyOpen,
     StopMissing,
     InvalidQuantity,
+    NotInPaperMode,
     BrokerError,
     Unknown,
 }

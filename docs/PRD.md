@@ -1,7 +1,7 @@
 # PRD — Robô Trader Baseado em Price Action e Estratégias Clássicas
 
-**Versão:** 0.1
-**Status:** Rascunho inicial
+**Versão:** 0.2
+**Status:** Em implementação — MVP de paper trading simulado funcional
 **Nome provisório:** **HumanStyle Trader Bot**
 **Objetivo:** Criar um robô trader que opere de forma mais parecida com um trader humano disciplinado, usando estratégias extraídas de livros de Price Action, análise técnica, gestão de risco e psicologia do trading.
 
@@ -525,14 +525,15 @@ O backend será desenvolvido em Rust desde o início, com as seguintes justifica
 O backend será dividido em crates internos:
 
 ```text
-trader-core          → lógica de estratégia, contexto, setup, risco
 trader-domain        → entidades, enums, traits (Order, Trade, Candle, etc.)
+trader-core          → lógica de estratégia, contexto, setup, risco, execução
 trader-adapters      → implementações de broker e data provider
-trader-infra         → banco de dados, fila de eventos, configuração, logging
-trader-journal        → diário automático e analytics
+trader-infra         → banco de dados, repositories, configuração, logging
 trader-backtest      → engine de backtest
-trader-api / cli     → entrypoint (HTTP API ou binário CLI)
+trader-cli           → entrypoint principal (binário CLI)
 ```
+
+> **Nota:** O diário automático e analytics estão atualmente implementados dentro do `trader-cli` e persistidos no banco (tabela `trades` com campo `journal`). Um crate separado `trader-journal` ou `trader-api` poderá ser criado em fases futuras.
 
 Não haverá código JavaScript/Node.js/TypeScript no backend.
 
@@ -992,21 +993,23 @@ Para trading, a decisão precisa ser repetível, auditável e testável.
 
 ## 22. Definição do MVP Final
 
-O MVP estará pronto quando o sistema conseguir:
+O MVP está funcional quando o sistema consegue:
 
 ```text
-1. Conectar na Interactive Brokers.
-2. Receber candles de SPY ou QQQ.
+1. Conectar na Interactive Brokers (codificado; validação real depende de conta liberada).
+2. Receber candles de SPY ou QQQ (via simulado ou IBKR).
 3. Salvar dados no PostgreSQL.
 4. Classificar contexto de mercado.
 5. Detectar pullback em tendência.
 6. Rejeitar setups ruins com motivo registrado.
-7. Enviar ordem em paper trading.
+7. Enviar ordem em paper trading simulado.
 8. Gerenciar stop e alvo.
 9. Registrar resultado do trade.
 10. Gerar diário automático.
-11. Exibir relatório básico de performance.
+11. Exibir relatório básico de performance (backtest no terminal).
 ```
+
+> **Status atual (2026-07-02):** Itens 3–11 estão implementados e testados no modo simulado/replay. Itens 1 e 2 com IBKR real aguardam validação com conta liberada.
 
 ---
 

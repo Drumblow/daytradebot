@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 trader-domain = { path = "../trader-domain" }
-trader-infra = { path = "../trader-infra" }
 
 chrono = { workspace = true }
 rust_decimal = { workspace = true }
@@ -22,6 +21,7 @@ uuid = { workspace = true }
 
 ibapi = { workspace = true }
 futures = "0.3"
+time = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true }

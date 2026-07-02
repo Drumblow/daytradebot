@@ -4,7 +4,7 @@ use anyhow::Result;
 use tracing::info;
 
 use trader_adapters::{ibkr::IbkrBrokerAdapter, simulated::SimulatedBroker};
-use trader_infra::ports::Broker;
+use trader_domain::Broker;
 
 use crate::config::CliConfig;
 
@@ -20,10 +20,13 @@ pub async fn run(config: &CliConfig) -> Result<()> {
                 .await?
         }
         "simulated" => {
-            SimulatedBroker::new(
-                Some("DU_SIM".to_string()),
-                rust_decimal::Decimal::from(100_000),
-            )
+            SimulatedBroker::new(trader_adapters::simulated::SimulatedBrokerConfig {
+                account_id: Some("DU_SIM".to_string()),
+                initial_cash: rust_decimal::Decimal::from(100_000),
+                commission_per_trade: rust_decimal::Decimal::from(35)
+                    / rust_decimal::Decimal::from(100),
+                slippage_pct: rust_decimal::Decimal::from(1) / rust_decimal::Decimal::from(1000),
+            })
             .get_account_summary()
             .await?
         }

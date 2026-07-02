@@ -12,6 +12,7 @@ pub mod ports;
 pub mod signals;
 pub mod strategy;
 pub mod trades;
+pub mod trading_mode;
 
 pub use context::*;
 pub use entities::*;
@@ -22,3 +23,4 @@ pub use ports::*;
 pub use signals::*;
 pub use strategy::*;
 pub use trades::*;
+pub use trading_mode::*;

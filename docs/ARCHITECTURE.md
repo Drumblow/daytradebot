@@ -82,8 +82,8 @@ A arquitetura prioriza:
 │  │ Analyzer     │  │ (Strategy)   │  │              │  │                  │ │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────┘ │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐ │
-│  │ Portfolio    │  │ OrderRouter  │  │ Journal      │  │ Scheduler        │ │
-│  │ Manager      │  │              │  │ Generator    │  │                  │ │
+│  │ Indicators   │  │ Portfolio    │  │ Journal      │  │ Scheduler        │ │
+│  │ (SMA/EMA/ATR)│  │ Manager*     │  │ Generator*   │  │ (futuro)         │ │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────┐ │
 └───────────────────────────────────────────────────────────────────────────┘
                                 │
@@ -95,18 +95,20 @@ A arquitetura prioriza:
 ┌───────────────────────────────▼─────────────────────────────────────────────┐
 │                            Camada de Infraestrutura                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐ │
-│  │ Repositories │  │ Event Store  │  │ Config       │  │ Logging/Tracing  │ │
+│  │ Repositories │  │ Event Store* │  │ Config       │  │ Logging/Tracing  │ │
 │  │ (sqlx)       │  │              │  │ Loader       │  │                  │ │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────┐ │
 └───────────────────────────────────────────────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────────────────────┐
 │                              Entrypoints                                     │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐  │
-│  │ trader-cli      │  │ trader-worker   │  │ trader-api (futuro)         │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ trader-cli (entrypoint principal: comandos, worker de paper trading)     │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+> **Nota sobre o diagrama:** Componentes marcados com `*` (`Portfolio Manager`, `Journal Generator`, `Event Store` e `Scheduler`) ainda não existem como módulos independentes. No estado atual, suas responsabilidades estão distribuídas entre `RiskState`, `ExecutionEngine`, `SqlxTradeRepository` e o campo `journal` da tabela `trades`. Serão extraídos para módulos próprios conforme o sistema amadurecer.
 
 ---
 
@@ -121,10 +123,9 @@ botdaytrade/
 │   ├── trader-domain/            # Entidades, enums, traits, erros de domínio
 │   ├── trader-core/              # Lógica de estratégia, contexto, risco, execução
 │   ├── trader-adapters/          # Implementações de broker e market data
-│   ├── trader-infra/             # DB, config, fila de eventos, logging
-│   ├── trader-journal/           # Diário automático e analytics
+│   ├── trader-infra/             # DB, config, logging, repositories
 │   ├── trader-backtest/          # Engine de backtest
-│   └── trader-cli/               # Binário CLI principal
+│   └── trader-cli/               # Binário CLI principal (entrypoint)
 └── docs/
 ```
 
@@ -152,7 +153,6 @@ botdaytrade/
 - `context::MarketContextAnalyzer` — classificação de mercado.
 - `risk::RiskManager` — validação de risco e sizing.
 - `execution::ExecutionEngine` — orquestração de ordens, stops e alvos.
-- `portfolio::PortfolioManager` — rastreamento de posições abertas.
 - `strategies/` — implementações concretas de estratégias.
   - `pullback_trend_v1/`
     - `mod.rs`
@@ -161,6 +161,8 @@ botdaytrade/
     - `entry.rs`
     - `config.rs`
 - `indicators/` — EMA, ATR, volume relativo, etc.
+
+> **Nota:** Um `PortfolioManager` dedicado ainda não foi criado. O rastreamento de P&L diário e exposição está atualmente no `RiskState`.
 
 **Contrato mínimo de estratégia:**
 
@@ -195,24 +197,15 @@ pub trait Strategy {
 
 **Módulos:**
 
-- `db` — conexão PostgreSQL, migrations sqlx, repositories.
+- `db` — conexão PostgreSQL, migrations sqlx.
+- `repositories` — implementações sqlx de `CandleRepository`, `SignalRepository`, `OrderRepository`, `TradeRepository`, `MarketContextRepository`, `AssetRepository`.
 - `config` — carregamento de configuração (arquivos + env vars).
-- `event_bus` — canal de eventos internos (tokio broadcast/mpsc).
 - `logging` — inicialização do `tracing`.
 - `clock` — abstração de tempo para testes determinísticos.
 
-### 5.5 `trader-journal`
+> **Nota:** Um `event_bus` interno ainda não foi implementado. Eventos importantes são persistidos diretamente nas tabelas (`signals`, `orders`, `fills`, `trades`, `system_events`).
 
-**Responsabilidade:** Transformar eventos em diário de trades e relatórios de performance.
-
-**Módulos:**
-
-- `trade_journal` — registro por trade.
-- `daily_journal` — resumo diário.
-- `analytics` — cálculo de métricas (win rate, profit factor, drawdown, Sharpe simplificado).
-- `reporters` — exportação CSV, JSON, PDF (futuro).
-
-### 5.6 `trader-backtest`
+### 5.5 `trader-backtest`
 
 **Responsabilidade:** Executar estratégias sobre dados históricos de forma determinística.
 
@@ -223,15 +216,16 @@ pub trait Strategy {
 - `metrics` — cálculo de métricas de performance.
 - `report` — geração de relatórios comparativos.
 
-### 5.7 `trader-cli`
+### 5.6 `trader-cli`
 
 **Responsabilidade:** Entrypoint principal do sistema.
 
 **Comandos iniciais:**
 
 ```text
-trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31
-trader-cli paper --strategy pullback-trend-v1 --symbol SPY
+trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31 --timeframe 15m
+trader-cli paper --strategy pullback-trend-v1 --symbol SPY --mode simulated --timeframe 15m
+trader-cli paper --strategy pullback-trend-v1 --symbol SPY --mode replay --timeframe 15m
 trader-cli ingest --symbol SPY --timeframe 15m
 trader-cli status
 trader-cli journal --date 2026-07-01
@@ -408,6 +402,8 @@ As decisões abaixo são detalhadas nos ADRs em `docs/decisions/`:
 | ADR-004 | Workspace com múltiplos crates | Separação de domínio, testabilidade, build incremental. |
 | ADR-005 | Estratégias como plugins via trait | Permite backtest e live compartilharem a mesma lógica. |
 | ADR-006 | Event sourcing para decisões | Auditoria completa e reprodução de cenários. |
+| ADR-007 | TWS API/IB Gateway para IBKR | Conexão persistente para streaming e ordens. |
+| ADR-008 | Paper trading com replay de candles do banco | Validação sem risco e auditoria completa antes do live. |
 
 ---
 

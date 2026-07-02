@@ -55,6 +55,9 @@ pub enum RepositoryError {
 
     #[error("registro não encontrado")]
     NotFound,
+
+    #[error("dados inválidos: {0}")]
+    InvalidData(String),
 }
 
 /// Erros de validação de domínio.

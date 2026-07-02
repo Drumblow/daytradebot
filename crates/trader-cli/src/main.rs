@@ -6,6 +6,7 @@ use tracing::info;
 
 mod commands;
 mod config;
+mod synthetic;
 
 use config::CliConfig;
 
@@ -52,8 +53,40 @@ enum Commands {
         #[arg(short, long, default_value = "SPY")]
         symbol: String,
         /// Estratégia ativa.
-        #[arg(short, long, default_value = "pullback-trend-v1")]
+        #[arg(long, default_value = "pullback-trend-v1")]
         strategy: String,
+        /// Modo de execução: simulated ou replay.
+        #[arg(long, default_value = "simulated")]
+        mode: String,
+        /// Timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d).
+        #[arg(short, long, default_value = "15m")]
+        timeframe: TimeFrameArg,
+    },
+    /// Executa backtest de uma estratégia.
+    Backtest {
+        /// Símbolo do ativo.
+        #[arg(short, long, default_value = "SPY")]
+        symbol: String,
+        /// Estratégia a testar.
+        #[arg(long, default_value = "pullback-trend-v1")]
+        strategy: String,
+        /// Data de início (YYYY-MM-DD).
+        #[arg(long)]
+        from: Option<String>,
+        /// Data de fim (YYYY-MM-DD).
+        #[arg(long)]
+        to: Option<String>,
+        /// Timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d).
+        #[arg(short, long, default_value = "15m")]
+        timeframe: TimeFrameArg,
+    },
+    /// Exibe status atual do bot.
+    Status,
+    /// Exibe diário automático de trades e rejeições.
+    Journal {
+        /// Data no formato YYYY-MM-DD.
+        #[arg(short, long)]
+        date: Option<String>,
     },
 }
 
@@ -128,9 +161,52 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Commands::Paper { symbol, strategy } => {
-            commands::paper::run(&app_config, commands::paper::Args { symbol, strategy }).await
+        Commands::Paper {
+            symbol,
+            strategy,
+            mode,
+            timeframe,
+        } => {
+            let mode = mode.parse::<commands::paper::PaperMode>()?;
+            commands::paper::run(
+                &app_config,
+                commands::paper::Args {
+                    symbol,
+                    strategy,
+                    mode,
+                    timeframe: timeframe.into(),
+                },
+            )
+            .await
         }
+        Commands::Backtest {
+            symbol,
+            strategy,
+            from,
+            to,
+            timeframe,
+        } => {
+            let from = from
+                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
+                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc());
+            let to = to
+                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
+                .map(|d| d.and_hms_opt(23, 59, 59).unwrap().and_utc());
+
+            commands::backtest::run(
+                &app_config,
+                commands::backtest::Args {
+                    symbol,
+                    strategy,
+                    from,
+                    to,
+                    timeframe: timeframe.into(),
+                },
+            )
+            .await
+        }
+        Commands::Status => commands::status::run(&app_config).await,
+        Commands::Journal { date } => commands::journal::run(&app_config, date).await,
     }
 }
 

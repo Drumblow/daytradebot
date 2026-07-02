@@ -1,8 +1,10 @@
 [workspace]
 members = [
     "crates/trader-domain",
+    "crates/trader-core",
     "crates/trader-infra",
     "crates/trader-adapters",
+    "crates/trader-backtest",
     "crates/trader-cli",
 ]
 resolver = "2"

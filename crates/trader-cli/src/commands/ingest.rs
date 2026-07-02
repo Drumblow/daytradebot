@@ -5,12 +5,8 @@ use chrono::{Duration, Utc};
 use tracing::{info, warn};
 
 use trader_adapters::{ibkr::IbkrMarketDataProvider, simulated::SimulatedMarketDataProvider};
-use trader_domain::{DataSource, TimeFrame};
-use trader_infra::{
-    db::create_pool,
-    ports::{CandleRepository, MarketDataProvider},
-    repositories::SqlxCandleRepository,
-};
+use trader_domain::{CandleRepository, DataSource, MarketDataProvider, TimeFrame};
+use trader_infra::{db::create_pool, repositories::SqlxCandleRepository};
 
 use crate::config::CliConfig;
 

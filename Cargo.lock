@@ -2578,10 +2578,28 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "time",
  "tokio",
  "tracing",
  "trader-domain",
- "trader-infra",
+ "uuid",
+]
+
+[[package]]
+name = "trader-backtest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "trader-adapters",
+ "trader-core",
+ "trader-domain",
  "uuid",
 ]
 
@@ -2602,19 +2620,41 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trader-adapters",
+ "trader-backtest",
+ "trader-core",
  "trader-domain",
  "trader-infra",
+]
+
+[[package]]
+name = "trader-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+ "tracing",
+ "trader-domain",
+ "uuid",
 ]
 
 [[package]]
 name = "trader-domain"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "rust_decimal",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "uuid",
 ]
 

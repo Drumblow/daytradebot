@@ -18,22 +18,28 @@ Todos os critérios de sucesso foram atendidos.
 ## 2. Entregáveis concluídos
 
 ### 2.1 Workspace Cargo
+
 - ✅ `Cargo.toml` raiz com workspace e dependências compartilhadas.
 - ✅ Crates `trader-domain` e `trader-infra` criados.
 - ✅ `.gitignore` configurado para Rust, IDEs, secrets e volumes Docker.
 
 ### 2.2 `trader-domain`
+
+- ✅ Ports (`MarketDataProvider`, `Broker`, `CandleRepository`, `Clock`, `Strategy`) definidos no crate `trader-domain` conforme ADR-004.
 - ✅ Entidades: `Candle`, `Quote`, `Tick`, `Signal`, `Order`, `Fill`, `Trade`, `Position`, `AccountSummary`, `MarketContext`.
-- ✅ Enums: `TimeFrame`, `DataSource`, `Direction`, `SignalStatus`, `RejectionReason`, `OrderType`, `OrderSide`, `OrderStatus`, `TimeInForce`, `TrendState`, `VolatilityRegime`, `MarketPhase`, `PositionStatus`, `ExitReason`.
+- ✅ Enums: `TimeFrame`, `DataSource`, `Direction`, `SignalStatus`, `RejectionReason`, `OrderType`, `OrderSide`, `OrderStatus`, `TimeInForce`, `TrendState`, `VolatilityRegime`, `MarketPhase`, `PositionStatus`, `ExitReason`, `TradingMode`.
 - ✅ Traits: `MarketDataProvider`, `Broker`, `CandleRepository`, `Clock`, `Strategy`.
 - ✅ Erros tipados: `DataError`, `BrokerError`, `RepositoryError`, `ValidationError`.
 - ✅ Testes unitários para validação de candle e cálculo de spread.
 
 ### 2.3 `trader-infra`
+
 - ✅ Conexão PostgreSQL via `sqlx` com pool async (`db/mod.rs`).
-- ✅ Migrations versionadas em `crates/trader-infra/src/db/migrations/0001_initial_schema.sql`.
+- ✅ Sistema de migrations (`crates/trader-infra/src/db/migrations/0001_initial_schema.sql`).
 - ✅ Implementações de repositories:
   - `SqlxCandleRepository` (com deduplicação via UPSERT)
+  - `SqlxAssetRepository`
+  - `SqlxMarketContextRepository`
   - `SqlxSignalRepository`
   - `SqlxOrderRepository`
   - `SqlxTradeRepository`
@@ -42,12 +48,14 @@ Todos os critérios de sucesso foram atendidos.
 - ✅ `SystemClock` e `MockClock`.
 
 ### 2.4 Infraestrutura DevOps
+
 - ✅ `docker-compose.yml` subindo PostgreSQL 15 na porta 5433.
 - ✅ `.env.example` com todas as variáveis necessárias.
 - ✅ `config/default.toml` e `config/strategies/pullback-trend-v1.toml`.
 - ✅ CI/CD inicial em `.github/workflows/ci.yml` (build, test, clippy, fmt, migrations).
 
 ### 2.5 Testes
+
 - ✅ Testes unitários no `trader-domain`.
 - ✅ Testes de integração `candle_repository_test.rs` com `sqlx::test`.
 - ✅ `cargo clippy --all-targets --all-features -- -D warnings` passando.
@@ -72,19 +80,21 @@ Todos os critérios de sucesso foram atendidos.
 ```bash
 $ source .env
 $ cargo build --all-targets           # ✅ OK
-$ cargo test --all-targets            # ✅ 5 tests passed
+$ cargo test --workspace              # ✅ 28 tests passed
 $ cargo clippy --all-targets --all-features -- -D warnings  # ✅ OK
 $ cargo fmt --all -- --check          # ✅ OK
 $ docker-compose up -d                # ✅ PostgreSQL acessível em localhost:5433
 $ sqlx migrate run --source crates/trader-infra/src/db/migrations  # ✅ OK
 ```
 
+> Nota: um warning de `field_reassign_with_default` em teste do `trader-core` foi corrigido para garantir que `cargo clippy --all-targets --all-features -- -D warnings` passe na CI.
+
 ---
 
 ## 5. Próximos passos (Fase 2)
 
 - Criar crate `trader-adapters`.
-- Implementar `IbkrMarketDataProvider` (avaliar Client Portal API vs TWS API).
+- Implementar `IbkrMarketDataProvider` (TWS API via IB Gateway).
 - Criar comandos iniciais no `trader-cli`: `ingest`, `test-connection`, `account`.
 - Ingestar candles históricos de SPY/QQQ.
 - Validar conexão com IBKR paper trading.

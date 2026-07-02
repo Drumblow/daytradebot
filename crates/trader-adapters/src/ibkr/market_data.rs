@@ -9,8 +9,7 @@ use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, warn};
 
 use trader_domain::market::{CandleRequest, ProviderHealth, SubscriptionHandle};
-use trader_domain::{Candle, DataError, DataSource, Quote, TimeFrame};
-use trader_infra::ports::MarketDataProvider;
+use trader_domain::{Candle, DataError, DataSource, MarketDataProvider, Quote, TimeFrame};
 
 use super::config::IbkrConfig;
 
@@ -179,7 +178,7 @@ fn historical_bar_to_candle(
     timeframe: TimeFrame,
     bar: &ibapi::market_data::historical::Bar,
 ) -> Option<Candle> {
-    let timestamp = Utc::now();
+    let timestamp = bar_timestamp_to_utc(&bar.date)?;
 
     Candle::new(
         symbol,
@@ -200,7 +199,7 @@ fn historical_bar_to_candle(
 
 /// Converte `ibapi::market_data::realtime::Bar` para `trader_domain::Candle`.
 fn realtime_bar_to_candle(symbol: &str, bar: &ibapi::market_data::realtime::Bar) -> Option<Candle> {
-    let timestamp = Utc::now();
+    let timestamp = offset_datetime_to_utc(bar.date)?;
 
     Candle::new(
         symbol,
@@ -217,6 +216,28 @@ fn realtime_bar_to_candle(symbol: &str, bar: &ibapi::market_data::realtime::Bar)
         c
     })
     .ok()
+}
+
+/// Converte `ibapi::market_data::historical::BarTimestamp` para `chrono::DateTime<Utc>`.
+///
+/// Barras diárias (apenas data) são convertidas para meia-noite UTC.
+fn bar_timestamp_to_utc(
+    ts: &ibapi::market_data::historical::BarTimestamp,
+) -> Option<chrono::DateTime<Utc>> {
+    match ts {
+        ibapi::market_data::historical::BarTimestamp::Date(d) => {
+            let dt = d.midnight().assume_utc();
+            chrono::DateTime::from_timestamp(dt.unix_timestamp(), dt.nanosecond())
+        }
+        ibapi::market_data::historical::BarTimestamp::DateTime(dt) => {
+            chrono::DateTime::from_timestamp(dt.unix_timestamp(), dt.nanosecond())
+        }
+    }
+}
+
+/// Converte `time::OffsetDateTime` para `chrono::DateTime<Utc>`.
+fn offset_datetime_to_utc(dt: time::OffsetDateTime) -> Option<chrono::DateTime<Utc>> {
+    chrono::DateTime::from_timestamp(dt.unix_timestamp(), dt.nanosecond())
 }
 
 /// Converte `ibapi::market_data::TickTypes` para `trader_domain::Quote`.

@@ -109,20 +109,22 @@ A estratégia vive no crate `trader-core`, dividida em:
 ```text
 trader-core/src/strategies/
   <nome_setup>/
-    mod.rs              → estrutura pública e factory
+    mod.rs              → estrutura pública e trait Strategy
     context.rs          → regras de contexto de mercado
     setup.rs            → detecção do setup
     entry.rs            → regras de entrada, stop e alvo
     config.rs           → parâmetros da estratégia (Deserialize)
 ```
 
-Contrato mínimo:
+Contrato mínimo (atual):
 
 ```rust
 pub trait Strategy {
+    fn id(&self) -> StrategyId;
     fn name(&self) -> &'static str;
     fn source(&self) -> &'static str; // livro/capítulo
-    fn analyze(&self, ctx: &MarketContext, state: &StrategyState) -> Signal;
+    fn version(&self) -> &'static str;
+    fn analyze(&self, ctx: &MarketContext, state: &StrategyState) -> SignalResult;
 }
 ```
 
@@ -309,8 +311,11 @@ Rejeições:
 
 ## 7. Próximos Passos
 
-1. Ler Parte III de *Trading Price Action Trends* (capítulos sobre pullbacks).
-2. Preencher o template `docs/strategies/pullback-trend-v1.md`.
-3. Refinar as regras objetivas com base nos exemplos do livro.
-4. Criar os testes unitários sintéticos.
-5. Implementar no crate `trader-core`.
+1. ✅ Ler Parte III de *Trading Price Action Trends* (capítulos sobre pullbacks).
+2. ✅ Preencher o template `docs/strategies/pullback-trend-v1.md`.
+3. ✅ Refinar as regras objetivas com base nos exemplos do livro.
+4. ✅ Criar os testes unitários sintéticos.
+5. ✅ Implementar no crate `trader-core`.
+6. Executar backtest com dados históricos reais do banco.
+7. Rodar paper trading simulado/replay por período significativo.
+8. Avaliar métricas mínimas de aprovação definidas no documento da estratégia.

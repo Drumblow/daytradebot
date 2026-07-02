@@ -1,11 +1,15 @@
 //! Implementações sqlx dos repositories de domínio.
 
+pub mod asset_repository;
 pub mod candle_repository;
+pub mod market_context_repository;
 pub mod order_repository;
 pub mod signal_repository;
 pub mod trade_repository;
 
+pub use asset_repository::SqlxAssetRepository;
 pub use candle_repository::SqlxCandleRepository;
+pub use market_context_repository::SqlxMarketContextRepository;
 pub use order_repository::SqlxOrderRepository;
 pub use signal_repository::SqlxSignalRepository;
 pub use trade_repository::SqlxTradeRepository;
@@ -57,6 +61,8 @@ async fn ensure_asset(
         return Ok(id);
     }
 
+    let tick_size = Decimal::from_f64_retain(0.01).unwrap_or(Decimal::from(1) / Decimal::from(100));
+
     let id = sqlx::query_scalar!(
         r#"
         INSERT INTO assets (symbol, name, asset_type, exchange, currency, tick_size, lot_size, sector, is_active)
@@ -68,7 +74,7 @@ async fn ensure_asset(
         "stock",
         None::<String>,
         "USD",
-        Decimal::from_f64_retain(0.01).unwrap_or_default(),
+        tick_size,
         Decimal::ONE,
         None::<String>,
         true,

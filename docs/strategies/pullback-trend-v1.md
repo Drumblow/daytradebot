@@ -272,13 +272,15 @@ pub struct PullbackTrendV1Config {
 ## 13. Checklist de Validação
 
 ```text
-[ ] Documentação da estratégia preenchida
-[ ] Regras objetivas definidas
-[ ] Especificação técnica completa
-[ ] Código revisado
-[ ] Testes unitários com candles sintéticos passando
-[ ] Backtest executado e relatório gerado
-[ ] Métricas mínimas atingidas
-[ ] Nenhuma violação de regra de segurança financeira
-[ ] Versionada no git como pullback-trend-v1
+[x] Documentação da estratégia preenchida
+[x] Regras objetivas definidas
+[x] Especificação técnica completa
+[x] Código revisado
+[x] Testes unitários com candles sintéticos passando
+[~] Backtest executado e relatório gerado (relatório impresso no terminal; exportação JSON/CSV futura)
+[ ] Métricas mínimas atingidas (aguardando backtest com dados históricos reais)
+[x] Nenhuma violação de regra de segurança financeira
+[x] Versionada no git como pullback-trend-v1
 ```
+
+> **Status (2026-07-02):** Estratégia implementada, testada e integrada ao `trader-cli`. Próximo passo é executar backtest extensivo com dados históricos do banco para avaliar se atinge as métricas mínimas de aprovação.

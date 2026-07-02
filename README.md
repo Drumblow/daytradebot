@@ -55,10 +55,9 @@ crates/
 ├── trader-domain/      # Entidades, enums, traits
 ├── trader-core/        # Lógica de estratégia, contexto, risco, execução
 ├── trader-adapters/    # Integrações com broker e data provider
-├── trader-infra/       # Banco, config, logging, event bus
-├── trader-journal/     # Diário e analytics
+├── trader-infra/       # Banco, config, logging, repositories
 ├── trader-backtest/    # Engine de backtest
-└── trader-cli/         # Interface de linha de comando
+└── trader-cli/         # Interface de linha de comando (entrypoint)
 ```
 
 Para detalhes, veja [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -137,8 +136,15 @@ cargo run --bin trader-cli -- paper --symbol SPY
 ## Comandos previstos
 
 ```bash
-trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31
-trader-cli paper --strategy pullback-trend-v1 --symbol SPY
+# Backtest com dados do banco (fallback para sintético se não houver dados)
+trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31 --timeframe 15m
+
+# Paper trading simulado (loop contínuo com candles sintéticos)
+trader-cli paper --symbol SPY --strategy pullback-trend-v1 --mode simulated --timeframe 15m
+
+# Paper trading em replay (candles do banco)
+trader-cli paper --symbol SPY --strategy pullback-trend-v1 --mode replay --timeframe 15m
+
 trader-cli ingest --symbol SPY --timeframe 15m
 trader-cli status
 trader-cli journal --date 2026-07-01
@@ -148,15 +154,23 @@ trader-cli journal --date 2026-07-01
 
 ## Status do projeto
 
+**Estado atual:** MVP de paper trading simulado funcional e auditável.
+
 - [x] Planejamento arquitetural
 - [x] Fundação do workspace Rust
-- [x] Conexão com dados e broker (TWS API / IB Gateway)
-- [ ] Motor de contexto de mercado
-- [ ] Primeira estratégia
-- [ ] Paper trading completo
-- [ ] Backtest
+- [x] Correção arquitetural: ports em `trader-domain`, crate `trader-core` criado
+- [x] Domínio e infraestrutura base (PostgreSQL, repositories)
+- [x] Motor de contexto de mercado (`MarketContextAnalyzer`)
+- [x] Primeira estratégia (`pullback-trend-v1`) com configuração e `market_snapshot`
+- [x] Gestão de risco (`RiskManager`)
+- [x] Paper trading simulado e replay de candles do banco
+- [x] Backtest com slippage, Sharpe e carregamento do banco
+- [x] Comandos `status` e `journal`
+- [~] Integração com IBKR via TWS API codificada, aguardando validação com conta liberada
 - [ ] Dashboard
 - [ ] Operação real (futuro)
+
+> **Nota:** A integração com Interactive Brokers (`IbkrBrokerAdapter`) está implementada para envio/cancelamento de ordens, mas as operações de consulta de conta, posições e eventos de fill ainda são stubs controlados. Eles só serão implementados após validação com conta liberada.
 
 ---
 

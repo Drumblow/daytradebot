@@ -2,9 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use trader_domain::{Candle, RepositoryError, TimeFrame};
-
-use crate::ports::CandleRepository;
+use trader_domain::{Candle, CandleRepository, RepositoryError, TimeFrame};
 
 use super::{ensure_asset, parse_source, parse_timeframe};
 

@@ -1,7 +1,7 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use crate::{MarketContext, SignalResult};
+use crate::{Candle, MarketContext, SignalResult};
 
 /// Identificador versionado de uma estratégia.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,5 +47,10 @@ pub trait Strategy: Send + Sync {
     fn name(&self) -> &'static str;
     fn source(&self) -> &'static str;
     fn version(&self) -> &'static str;
-    fn analyze(&self, ctx: &MarketContext, state: &StrategyState) -> SignalResult;
+    fn analyze(
+        &self,
+        ctx: &MarketContext,
+        state: &StrategyState,
+        candles: &[Candle],
+    ) -> SignalResult;
 }

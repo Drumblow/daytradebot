@@ -21,11 +21,12 @@ crates/
 ├── trader-domain/      # Entidades e traits
 ├── trader-core/        # Lógica de estratégia, risco, execução
 ├── trader-adapters/    # Implementações de broker e data provider
-├── trader-infra/       # DB, config, logging, event bus
-├── trader-journal/     # Diário e analytics
+├── trader-infra/       # DB, config, logging, repositories
 ├── trader-backtest/    # Engine de backtest
-└── trader-cli/         # Entrypoint
+└── trader-cli/         # Entrypoint principal
 ```
+
+> **Evolução:** O `trader-journal` foi inicialmente previsto como crate separado, mas no MVP suas responsabilidades foram absorvidas pelo `trader-cli` e pela tabela `trades.journal`. Um crate separado poderá ser criado futuramente conforme a complexidade do diário e analytics aumente.
 
 ## Justificativa
 

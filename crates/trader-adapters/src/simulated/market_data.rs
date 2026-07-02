@@ -5,8 +5,7 @@ use tokio::sync::mpsc::Sender;
 use tracing::{debug, warn};
 
 use trader_domain::market::{CandleRequest, ProviderHealth, SubscriptionHandle};
-use trader_domain::{Candle, DataError, Quote};
-use trader_infra::ports::MarketDataProvider;
+use trader_domain::{Candle, DataError, MarketDataProvider, Quote};
 
 /// Provedor de dados em memória para testes.
 ///

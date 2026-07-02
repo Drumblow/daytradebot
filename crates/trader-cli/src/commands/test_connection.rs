@@ -4,7 +4,7 @@ use anyhow::Result;
 use tracing::{error, info};
 
 use trader_adapters::{ibkr::IbkrMarketDataProvider, simulated::SimulatedMarketDataProvider};
-use trader_infra::ports::MarketDataProvider;
+use trader_domain::MarketDataProvider;
 
 use crate::config::CliConfig;
 

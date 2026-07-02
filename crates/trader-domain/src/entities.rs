@@ -173,6 +173,21 @@ pub struct Tick {
     pub timestamp: DateTime<Utc>,
 }
 
+/// Ativo negociado no mercado.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Asset {
+    pub id: Option<i32>,
+    pub symbol: String,
+    pub name: Option<String>,
+    pub asset_type: String,
+    pub exchange: Option<String>,
+    pub currency: String,
+    pub tick_size: Decimal,
+    pub lot_size: Decimal,
+    pub sector: Option<String>,
+    pub is_active: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

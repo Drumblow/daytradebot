@@ -2,8 +2,7 @@ use chrono::Utc;
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 
-use trader_domain::{Candle, TimeFrame};
-use trader_infra::ports::CandleRepository;
+use trader_domain::{Candle, CandleRepository, TimeFrame};
 use trader_infra::repositories::SqlxCandleRepository;
 
 #[sqlx::test(migrations = "src/db/migrations")]

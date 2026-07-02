@@ -1,0 +1,24 @@
+[package]
+name = "trader-backtest"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+trader-domain = { path = "../trader-domain" }
+trader-core = { path = "../trader-core" }
+trader-adapters = { path = "../trader-adapters" }
+
+anyhow = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
