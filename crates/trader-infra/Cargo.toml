@@ -1,0 +1,23 @@
+[package]
+name = "trader-infra"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+trader-domain = { path = "../trader-domain" }
+
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+sqlx = { workspace = true }
+config = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }

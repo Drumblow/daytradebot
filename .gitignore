@@ -1,0 +1,33 @@
+# Rust
+/target
+**/*.rs.bk
+# Cargo.lock é versionado para aplicações binárias; removido do ignore.
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Database
+*.dump
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+docker-volumes/

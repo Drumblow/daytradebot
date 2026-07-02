@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: trader-postgres
+    environment:
+      # Valores padrão para desenvolvimento local. Sobrescreva via .env.
+      POSTGRES_USER: ${POSTGRES_USER:-trader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trader_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-trader_db}
+    ports:
+      # 5433 evita conflito com PostgreSQL nativo comum em máquinas de dev.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - trader-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trader} -d ${POSTGRES_DB:-trader_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  trader-postgres-data:

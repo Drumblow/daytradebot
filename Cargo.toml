@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/trader-domain",
+    "crates/trader-infra",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["HumanStyle Trader Bot Team"]
+license = "MIT"
+repository = "https://github.com/jhu_j/botdaytrade"
+
+[workspace.dependencies]
+# Core
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1.35", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+
+# Async
+tokio = { version = "1.38", features = ["full"] }
+async-trait = "0.1"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "rust_decimal"] }
+
+# Config + logging
+config = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Misc
+uuid = { version = "1.9", features = ["serde", "v4"] }
+anyhow = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
