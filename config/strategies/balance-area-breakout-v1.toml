@@ -1,0 +1,43 @@
+[strategy]
+id = "balance-area-breakout-v1"
+version = "1.0.0"
+source = "James Dalton - Mind over Markets, Cap. 4 (Balance-Area Break-outs)"
+
+[strategy.parameters]
+# Timeframe operacional
+operational_timeframe = "15m"
+
+# Área de balanceamento (seção 4 do doc — interpretação nossa)
+# 78 candles ≈ 3 dias de 15min
+balance_lookback_candles = 78
+# Largura máxima da área: 2% do preço médio E 3xATR14
+balance_max_width_pct = 0.02
+balance_max_width_atr_mult = 10.0
+
+# Entrada, stop e alvo (seções 5–6 do doc)
+atr_period = 14
+# "stop" (1 tick além do candle de rompimento — default, ADR-009)
+entry_order_type = "stop"
+entry_offset_ticks = 1
+# Candles de validade da entrada stop esperando o rompimento (ADR-009)
+entry_validity_candles = 2
+# Stop de volta dentro da área: 0,3xATR ("a few ticks" do livro, ampliado)
+stop_buffer_atr_mult = 0.3
+max_stop_atr_mult = 3.0
+# Alvo único 2R (adaptação do "much bigger move" ao bracket de TP único)
+target_r_multiple = 2.0
+min_risk_reward = 1.5
+
+# Risco: usa o [risk].risk_per_trade_pct global (1,0) — sem override
+max_spread_pct = 0.05
+max_atr_pct = 1.5
+
+# Precisão do ativo
+tick_size = 0.01
+
+# Horário (UTC) — 09:45–15:30 ET, padrão do projeto.
+#   - Horário de verão americano (mar–nov): 13:45–19:30 UTC  ← ATUAL
+#   - Horário de inverno americano (nov–mar): 14:45–20:30 UTC
+# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
+trading_start_time = "13:45:00"
+trading_end_time = "19:30:00"

@@ -24,8 +24,14 @@ Livros aprovados como base inicial:
 |---|---|---|
 | **Trading Price Action Trends — Al Brooks** | Tendências, pullbacks, continuidade | Setup principal do MVP (pullback em tendência) |
 | **Trading Price Action Trading Ranges — Al Brooks** | Ranges, reversões, false breakouts | Fases futuras, quando o bot já operar com tendência |
+| **Reading Price Charts Bar by Bar — Al Brooks** | Price action barra a barra; failed breakouts, opening reversals | Setups de range/reversão e janela de abertura (análise: `docs/books/analysis/brooks-bar-by-bar.md`) |
+| **The Art and Science of Technical Analysis — Adam Grimes** | Estrutura de mercado, pullbacks validados, failure test (spring) | Fonte da `failure-test-long-v1` (análise: `docs/books/analysis/grimes-art-science-ta.md`) |
+| **Mind over Markets — James Dalton** | Market Profile: value area, initial balance, tipos de dia | Setups de abertura/balance via proxy de candles (análise: `docs/books/analysis/dalton-mind-over-markets.md`) |
+| **Advances in Financial Machine Learning — López de Prado** | Validação: triple-barrier, purged CV, Deflated Sharpe, meta-labeling | Método de validação/backtest, não setups (análise: `docs/books/analysis/lopez-afml.md`) |
 
 Novas fontes podem ser adicionadas, desde que passem pelo mesmo processo de análise.
+
+> Pendente: *Algorithmic Trading — Ernest Chan* (PDF escaneado sem camada de texto completa; requer OCR antes da análise).
 
 ---
 

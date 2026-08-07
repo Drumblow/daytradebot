@@ -4,7 +4,9 @@ use rust_decimal::Decimal;
 use serde_json::json;
 
 use crate::strategies::pullback_trend_v1::config::StrategyParameters;
-use trader_domain::{MarketContext, MarketPhase, RejectionReason, TrendState, VolatilityRegime};
+use trader_domain::{
+    Candle, MarketContext, MarketPhase, RejectionReason, TrendState, VolatilityRegime,
+};
 
 /// Resultado da avaliação de contexto.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,4 +57,73 @@ pub fn check_context(ctx: &MarketContext, params: &StrategyParameters) -> Contex
     }
 
     ContextCheck::Approved
+}
+
+/// Conta quantos candles consecutivos (do mais recente para trás) fecharam
+/// acima da EMA do período de contexto, calculada candle a candle sobre o
+/// prefixo da série (sem lookahead).
+///
+/// Implementa a regra de contexto "preço acima da EMA 20 por pelo menos N
+/// candles consecutivos" (`min_candles_above_ema20`).
+pub fn consecutive_closes_above_ema(candles: &[Candle], ema_period: usize) -> usize {
+    let mut streak = 0;
+    for i in (0..candles.len()).rev() {
+        let Some(ema_value) = crate::indicators::ema(&candles[..=i], ema_period) else {
+            break;
+        };
+        if candles[i].close > ema_value {
+            streak += 1;
+        } else {
+            break;
+        }
+    }
+    streak
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use trader_domain::TimeFrame;
+
+    fn candle_at(idx: u32, close: i64) -> Candle {
+        let ts = Utc.with_ymd_and_hms(2026, 8, 3, 14, 30, 0).unwrap()
+            + chrono::Duration::minutes(i64::from(idx) * 15);
+        Candle::new(
+            "SPY",
+            TimeFrame::M15,
+            ts,
+            Decimal::from(close) - Decimal::ONE,
+            Decimal::from(close) + Decimal::ONE,
+            Decimal::from(close) - Decimal::ONE,
+            Decimal::from(close),
+            Decimal::from(1000),
+        )
+        .expect("candle válido")
+    }
+
+    #[test]
+    fn rising_series_counts_full_streak() {
+        let candles: Vec<Candle> = (0..30).map(|i| candle_at(i, 100 + i64::from(i))).collect();
+        // Série subindo 1 ponto por candle: todo fechamento fica acima da EMA.
+        let streak = consecutive_closes_above_ema(&candles, 20);
+        // Os primeiros `period - 1` candles não têm EMA; o streak máximo é 30 - 19.
+        assert_eq!(streak, 11);
+    }
+
+    #[test]
+    fn drop_breaks_streak() {
+        let mut candles: Vec<Candle> = (0..30).map(|i| candle_at(i, 100 + i64::from(i))).collect();
+        // Último candle despenca para baixo da EMA.
+        let last = candles.len() - 1;
+        candles[last] = candle_at(last as u32, 90);
+
+        assert_eq!(consecutive_closes_above_ema(&candles, 20), 0);
+    }
+
+    #[test]
+    fn insufficient_data_returns_zero() {
+        let candles: Vec<Candle> = (0..5).map(|i| candle_at(i, 100 + i64::from(i))).collect();
+        assert_eq!(consecutive_closes_above_ema(&candles, 20), 0);
+    }
 }

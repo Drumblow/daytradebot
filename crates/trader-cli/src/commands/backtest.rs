@@ -5,12 +5,12 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use tracing::{info, warn};
 
-use trader_backtest::{
-    default_backtest_risk_config, BacktestConfig, BacktestEngine, BacktestReport,
+use trader_backtest::{BacktestConfig, BacktestEngine, BacktestReport};
+use trader_domain::{CandleRepository, Strategy, TimeFrame};
+use trader_infra::{
+    db::create_pool,
+    repositories::{BacktestRunRecord, SqlxBacktestRunRepository, SqlxCandleRepository},
 };
-use trader_core::strategies::pullback_trend_v1::PullbackTrendV1;
-use trader_domain::{CandleRepository, TimeFrame};
-use trader_infra::{db::create_pool, repositories::SqlxCandleRepository};
 
 use crate::config::CliConfig;
 
@@ -21,12 +21,18 @@ pub struct Args {
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
     pub timeframe: TimeFrame,
+    /// Permite rodar sobre série sintética quando não há dados no banco.
+    /// Sem esta flag, backtest sem dados reais FALHA — um backtest sobre
+    /// dados fabricados não é evidência de nada.
+    pub allow_synthetic: bool,
+    /// Caminho opcional para exportar o relatório em JSON.
+    pub output: Option<String>,
 }
 
 /// Executa um backtest da estratégia solicitada.
 ///
-/// Tenta carregar candles do banco. Se não houver dados suficientes, usa
-/// candles sintéticos como fallback.
+/// Usa o mesmo `RiskConfig` do live/paper (paridade de validação) e persiste
+/// o run no banco (`backtest_runs`) para comparação futura.
 pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     info!(
         symbol = %args.symbol,
@@ -44,22 +50,52 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     let strategy_toml = std::fs::read_to_string(&strategy_path)
         .with_context(|| format!("falha ao ler config da estratégia em {}", strategy_path))?;
 
-    let strategy = PullbackTrendV1::from_toml(&strategy_toml)
-        .with_context(|| "falha ao fazer parse da configuração TOML da estratégia")?;
+    let strategy = crate::dispatch::load_strategy(&args.strategy, &strategy_toml)?;
 
-    let candles = match load_candles(config, &args).await {
-        Ok(candles) if !candles.is_empty() => {
-            println!("   Fonte:      banco de dados ({} candles)", candles.len());
-            candles
-        }
-        Ok(_) => {
-            warn!("nenhum candle no banco; usando série sintética");
-            println!("   Fonte:      sintética (fallback)");
-            generate_synthetic_series(&args.symbol)
-        }
+    let pool = match config.app_config.database.url() {
+        Ok(url) => match create_pool(&url).await {
+            Ok(pool) => Some(pool),
+            Err(e) => {
+                warn!(error = %e, "falha ao conectar no banco");
+                None
+            }
+        },
         Err(e) => {
-            warn!(error = %e, "falha ao carregar candles do banco; usando série sintética");
-            println!("   Fonte:      sintética (fallback)");
+            warn!(error = %e, "DATABASE_URL não configurada");
+            None
+        }
+    };
+
+    let candles = match &pool {
+        Some(pool) => {
+            let loaded = load_candles(pool, &args).await?;
+            if loaded.is_empty() {
+                if !args.allow_synthetic {
+                    anyhow::bail!(
+                        "nenhum candle no banco para {} no timeframe {}. \
+                         Rode 'trader-cli ingest' primeiro, ou use --allow-synthetic \
+                         para um smoke test com dados fabricados.",
+                        args.symbol,
+                        args.timeframe
+                    );
+                }
+                warn!("nenhum candle no banco; usando série sintética (--allow-synthetic)");
+                println!("   Fonte:      sintética (--allow-synthetic)");
+                generate_synthetic_series(&args.symbol)
+            } else {
+                println!("   Fonte:      banco de dados ({} candles)", loaded.len());
+                loaded
+            }
+        }
+        None => {
+            if !args.allow_synthetic {
+                anyhow::bail!(
+                    "sem banco de dados disponível. Configure DATABASE_URL e rode \
+                     'trader-cli ingest', ou use --allow-synthetic para um smoke test."
+                );
+            }
+            warn!("sem banco; usando série sintética (--allow-synthetic)");
+            println!("   Fonte:      sintética (--allow-synthetic)");
             generate_synthetic_series(&args.symbol)
         }
     };
@@ -69,9 +105,13 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         initial_capital: Decimal::from(100_000),
         commission_per_trade: Decimal::from(35) / Decimal::from(100),
         slippage_pct: Decimal::from(1) / Decimal::from(1000),
+        entry_validity_candles: strategy.entry_validity_candles() as u32,
+        time_exit: strategy.time_exit(),
     };
 
-    let risk_config = default_backtest_risk_config();
+    // Paridade com o live: mesmos limites de risco e horário da estratégia.
+    let risk_config =
+        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params());
     let mut engine = BacktestEngine::new(backtest_config, risk_config);
 
     let run = engine.run(&strategy, &candles).await?;
@@ -79,20 +119,42 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
 
     println!("{}", report);
 
+    // Exporta o relatório em JSON, se solicitado.
+    if let Some(path) = &args.output {
+        let json = report.to_json()?;
+        std::fs::write(path, json)
+            .with_context(|| format!("falha ao escrever relatório em {}", path))?;
+        println!("   Relatório exportado para {}", path);
+    }
+
+    // Persiste o run no banco (melhor esforço: backtest já foi executado).
+    if let Some(pool) = &pool {
+        let record = BacktestRunRecord {
+            symbol: args.symbol.clone(),
+            strategy_id: strategy.id().id,
+            strategy_version: strategy.id().version,
+            config_hash: strategy.config_hash(),
+            timeframe: format!("{:?}", args.timeframe),
+            period_start: report.start_time,
+            period_end: report.end_time,
+            initial_capital: report.initial_capital,
+            final_equity: report.final_equity,
+            metrics: serde_json::to_value(&report.metrics)
+                .unwrap_or(serde_json::Value::Object(Default::default())),
+            label: None,
+        };
+        let repo = SqlxBacktestRunRepository::new(pool.clone());
+        match repo.save(&record).await {
+            Ok(id) => println!("   Run persistido no banco (id={})", id),
+            Err(e) => warn!(error = %e, "falha ao persistir run de backtest"),
+        }
+    }
+
     Ok(())
 }
 
-async fn load_candles(config: &CliConfig, args: &Args) -> Result<Vec<trader_domain::Candle>> {
-    let database_url = config
-        .app_config
-        .database
-        .url()
-        .map_err(|e| anyhow::anyhow!("DATABASE_URL não configurada: {e}"))?;
-
-    let pool = create_pool(&database_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("falha ao conectar no banco: {e}"))?;
-    let repo = SqlxCandleRepository::new(pool);
+async fn load_candles(pool: &sqlx::PgPool, args: &Args) -> Result<Vec<trader_domain::Candle>> {
+    let repo = SqlxCandleRepository::new(pool.clone());
 
     let to = args.to.unwrap_or_else(Utc::now);
     let from = args

@@ -1,0 +1,78 @@
+[strategy]
+id = "failure-test-long-v1"
+version = "1.0.0"
+source = "Adam Grimes - The Art and Science of Technical Analysis, Cap. 6 (Failure Test)"
+
+[strategy.parameters]
+# Timeframe operacional
+operational_timeframe = "15m"
+
+# Nível de suporte (seção 5.1 do doc — interpretação nossa)
+level_lookback_candles = 60
+level_min_touches = 2
+# Tolerância de toque do nível, em fração (0.001 = 0,10%)
+level_touch_tolerance_pct = 0.001
+level_min_age_candles = 8
+
+# Contexto de reversão (seção 4 do doc)
+# Canal de Keltner: parâmetros literais do autor (Cap. 3)
+keltner_ema_period = 20
+keltner_atr_mult = 2.25
+atr_period = 14
+climax_lookback_candles = 10
+overextension_atr_mult = 2.0
+# MACD modificado: literal do Apêndice B; janela de 40 barras (Cap. 7)
+macd_fast_sma = 3
+macd_slow_sma = 10
+macd_signal_sma = 16
+macd_lookback_candles = 40
+climax_bar_atr_mult = 2.5
+
+# Sonda e recuperação (seções 5.2–5.3 do doc — interpretação nossa)
+probe_max_bars = 2
+probe_max_atr_mult = 1.0
+signal_close_min_position = 0.50
+
+# Entrada, stop e alvo (seções 6–7 do doc)
+# "stop" (buy stop na máxima da recuperação + 1 tick — default) ou
+# "market_next_open" (mais fiel ao livro, sem confirmação extra)
+entry_order_type = "stop"
+entry_offset_ticks = 1
+# Candles de validade da entrada stop esperando o rompimento (ADR-009)
+entry_validity_candles = 2
+stop_jitter_atr_mult = 0.10
+# Stop nunca dentro de 1x o range médio de barra (literal, Cap. 8)
+min_stop_bar_ranges = 1.0
+max_stop_atr_mult = 3.0
+# Alvo único de 1,5R (adaptação do parcial em 1R ao bracket de TP único)
+target_r_multiple = 1.5
+min_risk_reward = 1.2
+
+# Reentrada na segunda falha (livro: "virtually obligatory") — v1 desabilitada
+allow_reentry = false
+reentry_window_candles = 3
+
+# Risco (seção 8 do doc): 0,5% por trade — "smaller size and risk" (Cap. 6).
+# Override por estratégia do [risk].risk_per_trade_pct global (1,0).
+risk_per_trade_pct = 0.5
+max_spread_pct = 0.05
+max_atr_pct = 1.5
+
+# Precisão do ativo
+tick_size = 0.01
+
+# Horário (UTC) — 09:45–15:30 ET, padrão do projeto.
+#   - Horário de verão americano (mar–nov): 13:45–19:30 UTC  ← ATUAL
+#   - Horário de inverno americano (nov–mar): 14:45–20:30 UTC
+# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
+trading_start_time = "13:45:00"
+trading_end_time = "19:30:00"
+
+[strategy.time_exit]
+# Saída ativa por tempo (validação pós-entrada): se a posição não atingir
+# +0,5R em 3 candles de 15min após o fill, encerrar a mercado no fechamento
+# do 3º candle (literal: "immediately profitable within one to three bars",
+# Cap. 6; limiar 0,5R é interpretação nossa).
+enabled = true
+min_r = 0.5
+candles = 3

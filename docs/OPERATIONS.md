@@ -21,7 +21,8 @@ Este documento define como operar, monitorar, fazer deploy e recuperar o sistema
 | `paper` | Validação em condições reais | PostgreSQL de produção | IBKR paper |
 | `production` | **NÃO USAR NO MVP** | — | — |
 
-> **Regra de ouro:** nenhum código opera dinheiro real sem passagem explícita por paper trading por no mínimo 3 meses e aprovação documentada.
+> **Regra de ouro:** nenhum código opera dinheiro real sem cumprir o **gate composto de go-live** (ADR-010): validação estatística da estratégia com dados históricos + **4 semanas de paper live contínuo** com ≥ 20 trades dentro de ±30% do backtest + aprovação documentada.
+> _(Redação anterior: "mínimo 3 meses de paper trading" — substituída pela ADR-010 em 2026-08-04, que torna explícitos os critérios que o calendário aproximava.)_
 
 ---
 

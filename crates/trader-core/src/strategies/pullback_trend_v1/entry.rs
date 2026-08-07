@@ -7,6 +7,7 @@ use crate::strategies::pullback_trend_v1::setup::Setup;
 use trader_domain::{Direction, MarketContext, Signal, SignalStatus, TimeFrame};
 
 /// Constrói um sinal aceito a partir de um setup válido.
+#[allow(clippy::too_many_arguments)]
 pub fn build_signal(
     symbol: impl Into<String>,
     timeframe: TimeFrame,
@@ -15,6 +16,7 @@ pub fn build_signal(
     strategy_id: impl Into<String>,
     strategy_version: impl Into<String>,
     config_hash: impl Into<String>,
+    entry_order_type: trader_domain::EntryOrderType,
 ) -> Signal {
     let rr = ((setup.target_price - setup.entry_price)
         / (setup.entry_price - setup.stop_price).abs())
@@ -46,6 +48,7 @@ pub fn build_signal(
         timestamp: chrono::Utc::now(),
         direction: Direction::Long,
         status: SignalStatus::Accepted,
+        entry_order_type,
         entry_price: Some(setup.entry_price),
         stop_price: Some(setup.stop_price),
         target_price: Some(setup.target_price),
@@ -78,4 +81,87 @@ pub fn position_size(
     let size = risk_amount / risk_distance;
     // Arredonda para quantidade inteira de ações.
     Some(size.trunc())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trader_domain::{MarketPhase, TrendState, VolatilityRegime};
+
+    fn make_setup() -> Setup {
+        Setup {
+            signal_index: 3,
+            pullback_start_index: 2,
+            entry_price: Decimal::from(101),
+            stop_price: Decimal::from(100),
+            target_price: Decimal::from(103),
+        }
+    }
+
+    fn make_context() -> MarketContext {
+        MarketContext {
+            symbol: "SPY".to_string(),
+            timeframe: TimeFrame::M15,
+            timestamp: chrono::Utc::now(),
+            candle_timestamp: None,
+            trend_state: TrendState::Uptrend,
+            volatility_regime: VolatilityRegime::Normal,
+            market_phase: MarketPhase::Regular,
+            ema_20: Some(Decimal::from(100)),
+            ema_50: None,
+            sma_200: None,
+            atr_14: None,
+            atr_percent_14: None,
+            volume_relative: None,
+            hh_hl_count: None,
+            lh_ll_count: None,
+            range_percent: None,
+            is_tradeable: true,
+            raw_values: serde_json::Value::Object(Default::default()),
+        }
+    }
+
+    #[test]
+    fn signal_carries_risk_reward_and_snapshot() {
+        let signal = build_signal(
+            "SPY",
+            TimeFrame::M15,
+            &make_setup(),
+            &make_context(),
+            "pullback-trend-v1",
+            "1.0.0",
+            "hash123",
+            trader_domain::EntryOrderType::Stop,
+        );
+
+        assert_eq!(signal.direction, Direction::Long);
+        assert_eq!(signal.status, SignalStatus::Accepted);
+        assert_eq!(signal.risk_reward_ratio, Some(Decimal::from(2)));
+        assert_eq!(signal.config_hash, "hash123");
+        assert!(signal.market_snapshot.get("trend_state").is_some());
+        assert!(signal.market_snapshot.get("signal_bar_index").is_some());
+    }
+
+    #[test]
+    fn position_size_risks_one_percent_of_capital() {
+        // capital 100k, risco 1% = 1000; distância 1.02 → 980 ações (truncado).
+        let size = position_size(
+            Decimal::from(100_000),
+            Decimal::ONE,
+            "101.01".parse().unwrap(),
+            "99.99".parse().unwrap(),
+        );
+        assert_eq!(size, Some(Decimal::from(980)));
+    }
+
+    #[test]
+    fn position_size_zero_distance_is_none() {
+        let size = position_size(
+            Decimal::from(100_000),
+            Decimal::ONE,
+            Decimal::from(100),
+            Decimal::from(100),
+        );
+        assert_eq!(size, None);
+    }
 }

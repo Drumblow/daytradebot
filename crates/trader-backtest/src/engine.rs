@@ -7,10 +7,11 @@ use tracing::{debug, info, warn};
 use trader_adapters::simulated::{SimulatedBroker, SimulatedBrokerConfig};
 use trader_core::{
     context::MarketContextAnalyzer,
+    execution::time_exit::{TimeExitConfig, TimeExitTracker},
     execution::{ExecutionEngine, ExecutionResult},
     risk::{RiskConfig, RiskManager, RiskState},
 };
-use trader_domain::{Broker, Candle, SignalResult, Strategy, TradingMode};
+use trader_domain::{Broker, Candle, ExitReason, SignalResult, Strategy, TradingMode};
 
 /// Configuração de uma execução de backtest.
 #[derive(Debug, Clone)]
@@ -23,6 +24,11 @@ pub struct BacktestConfig {
     pub commission_per_trade: Decimal,
     /// Slippage percentual aplicado no preço de execução.
     pub slippage_pct: Decimal,
+    /// Candles de validade da entrada stop aguardando o rompimento.
+    pub entry_validity_candles: u32,
+    /// Saída ativa por tempo (validação pós-entrada em R), quando a
+    /// estratégia a habilita. Mesma lógica do live (paridade).
+    pub time_exit: Option<TimeExitConfig>,
 }
 
 impl Default for BacktestConfig {
@@ -32,6 +38,8 @@ impl Default for BacktestConfig {
             initial_capital: Decimal::from(100_000),
             commission_per_trade: Decimal::from(35) / Decimal::from(100),
             slippage_pct: Decimal::from(1) / Decimal::from(1000), // 0.1%
+            entry_validity_candles: 1,
+            time_exit: None,
         }
     }
 }
@@ -56,6 +64,11 @@ pub struct BacktestEngine {
     broker: SimulatedBroker,
     execution_engine: ExecutionEngine,
     risk_state: RiskState,
+    /// Dia UTC corrente — o estado de risco é diário e reinicia a cada
+    /// virada de dia (paridade com o live, que reconstrói os limites do
+    /// banco a cada dia).
+    current_day: Option<chrono::NaiveDate>,
+    time_exit: Option<TimeExitTracker>,
     closed_trades: Vec<trader_domain::Trade>,
     daily_equity: Vec<(DateTime<Utc>, Decimal)>,
 }
@@ -68,16 +81,20 @@ impl BacktestEngine {
             initial_cash: config.initial_capital,
             commission_per_trade: config.commission_per_trade,
             slippage_pct: config.slippage_pct,
+            entry_validity_candles: config.entry_validity_candles,
         });
 
         let risk_manager = RiskManager::new(risk_config);
         let execution_engine = ExecutionEngine::new(risk_manager);
+        let time_exit = config.time_exit.map(TimeExitTracker::new);
 
         Self {
             config,
             broker,
             execution_engine,
             risk_state: RiskState::default(),
+            current_day: None,
+            time_exit,
             closed_trades: Vec::new(),
             daily_equity: Vec::new(),
         }
@@ -107,8 +124,22 @@ impl BacktestEngine {
         let end_time = candles.last().map(|c| c.timestamp).unwrap_or_else(Utc::now);
 
         for (idx, candle) in candles.iter().enumerate() {
-            // Atualiza preço de mercado para possíveis execuções de stop/alvo.
-            self.broker.set_market_price(&symbol, candle.close);
+            // Rollover diário: limites (perda diária, trades/dia, perdas
+            // consecutivas) valem por dia, não para o backtest inteiro.
+            let day = candle.timestamp.date_naive();
+            if self.current_day != Some(day) {
+                self.current_day = Some(day);
+                self.risk_state = RiskState::default();
+            }
+
+            // Atualiza mercado com o candle completo: stops/alvos são
+            // avaliados nos extremos intrabar (high/low), não só no close.
+            self.broker.set_market_candle(&symbol, candle);
+
+            // Saída ativa por tempo (quando a estratégia habilita): avaliada
+            // no fechamento de cada candle com posição aberta. O trade
+            // fechado aqui entra no sync logo abaixo, junto com stop/alvo.
+            self.evaluate_time_exit(&symbol, candle).await;
 
             // Registra equity no fechamento de cada candle para série diária.
             if let Ok(summary) = self.broker.get_account_summary().await {
@@ -167,6 +198,9 @@ impl BacktestEngine {
                             position_size,
                             ..
                         } => {
+                            // Contagem de trades/dia na entrada (paridade com
+                            // o loop live em paper.rs).
+                            self.risk_state.daily_trades += 1;
                             info!(
                                 idx,
                                 %order_id,
@@ -223,6 +257,48 @@ impl BacktestEngine {
             .sync_risk_state(&mut self.risk_state, &pnls);
         self.broker.clear_closed_trades();
         trades
+    }
+
+    /// Avalia a saída por tempo no fechamento do candle atual.
+    ///
+    /// Acompanha a posição aberta (entrada/stop reais do fill) e encerra a
+    /// mercado quando a janela de validação se esgota sem o lucro mínimo em
+    /// R. Sem posição aberta, o tracker é reiniciado para o próximo trade.
+    async fn evaluate_time_exit(&mut self, symbol: &str, candle: &Candle) {
+        let Some(tracker) = self.time_exit.as_mut() else {
+            return;
+        };
+
+        let position = match self.broker.get_position(symbol).await {
+            Ok(position) => position,
+            Err(e) => {
+                warn!(error = %e, "falha ao consultar posição para saída por tempo");
+                None
+            }
+        };
+
+        match position {
+            Some(position) => {
+                tracker.ensure_tracking(
+                    position.avg_entry_price,
+                    position.stop_price,
+                    position.direction,
+                );
+                if tracker.on_candle_close(candle.close)
+                    && self
+                        .broker
+                        .close_position_at_market(symbol, candle.close, ExitReason::Time)
+                {
+                    info!(
+                        idx_ts = %candle.timestamp,
+                        close = %candle.close,
+                        "saída por tempo: posição encerrada a mercado no fechamento"
+                    );
+                    tracker.reset();
+                }
+            }
+            None => tracker.reset(),
+        }
     }
 }
 
@@ -361,6 +437,118 @@ mod tests {
         assert_eq!(
             run.closed_trades[0].exit_reason,
             trader_domain::ExitReason::Target
+        );
+    }
+
+    /// Estratégia stub: emite um sinal long a mercado em todo candle, com
+    /// stop/alvo simétricos em torno do fechamento atual.
+    struct AlwaysSignal;
+
+    impl trader_domain::Strategy for AlwaysSignal {
+        fn id(&self) -> trader_domain::StrategyId {
+            trader_domain::StrategyId {
+                id: "always-signal".to_string(),
+                version: "0.0.1".to_string(),
+            }
+        }
+        fn name(&self) -> &'static str {
+            "Always Signal"
+        }
+        fn source(&self) -> &'static str {
+            "teste"
+        }
+        fn version(&self) -> &'static str {
+            "0.0.1"
+        }
+        fn analyze(
+            &self,
+            _ctx: &trader_domain::MarketContext,
+            _state: &trader_domain::StrategyState,
+            candles: &[Candle],
+        ) -> trader_domain::SignalResult {
+            let last = candles.last().expect("histórico não vazio");
+            let entry = last.close + Decimal::new(5, 1); // stop 0.5 acima
+            trader_domain::SignalResult::Signal(trader_domain::Signal {
+                symbol: last.symbol.clone(),
+                strategy_id: "always-signal".to_string(),
+                strategy_version: "0.0.1".to_string(),
+                config_hash: "test".to_string(),
+                timeframe: last.timeframe,
+                timestamp: last.timestamp,
+                direction: trader_domain::Direction::Long,
+                status: trader_domain::SignalStatus::Accepted,
+                entry_order_type: trader_domain::EntryOrderType::Stop,
+                entry_price: Some(entry),
+                stop_price: Some(entry - Decimal::from(2)),
+                target_price: Some(entry + Decimal::from(4)),
+                risk_reward_ratio: Some(Decimal::from(2)),
+                risk_amount: None,
+                risk_percent: None,
+                position_size: None,
+                entry_reason: None,
+                rejection_reason: None,
+                rejection_details: None,
+                market_snapshot: serde_json::Value::Object(Default::default()),
+                correlation_id: "test".to_string(),
+            })
+        }
+    }
+
+    /// Dois dias de candles (30/dia) em leve tendência de alta (fecha acima
+    /// da EMA20 → contexto operável). Cada candle rompe o gatilho na máxima
+    /// e estopa na mínima — trade abre e fecha no mesmo candle, liberando
+    /// novo sinal no candle seguinte.
+    fn two_day_range_series(symbol: &str) -> Vec<Candle> {
+        let mut candles = Vec::new();
+        for day in 0..2i64 {
+            let base = Utc
+                .with_ymd_and_hms(2026, 7, 2, 14, 30, 0)
+                .single()
+                .unwrap()
+                + chrono::Duration::days(day);
+            for i in 0..30 {
+                let n = day * 30 + i as i64;
+                let price = Decimal::from(500) + Decimal::new(5 * n, 2);
+                candles.push(candle(
+                    symbol,
+                    base + chrono::Duration::minutes(i as i64 * 15),
+                    price,
+                    price + Decimal::ONE,
+                    price - Decimal::from(2),
+                    price,
+                ));
+            }
+        }
+        candles
+    }
+
+    /// Regressão de paridade live/backtest: os limites de risco (trades/dia,
+    /// perdas consecutivas, perda diária) valem POR DIA. Antes da correção,
+    /// o estado acumulava para o backtest inteiro e 3 perdas consecutivas
+    /// bloqueavam a estratégia para sempre.
+    #[tokio::test]
+    async fn risk_limits_reset_daily() {
+        let candles = two_day_range_series("SPY");
+        let risk = RiskConfig {
+            max_trades_per_day: 1,
+            ..default_backtest_risk_config()
+        };
+        let mut engine = BacktestEngine::new(BacktestConfig::default(), risk);
+
+        let run = engine.run(&AlwaysSignal, &candles).await.unwrap();
+
+        let day1 = Utc.with_ymd_and_hms(2026, 7, 2, 0, 0, 0).unwrap();
+        let trades_d1 = run
+            .closed_trades
+            .iter()
+            .filter(|t| t.entry_time.date_naive() == day1.date_naive())
+            .count();
+        let trades_d2 = run.closed_trades.len() - trades_d1;
+
+        assert_eq!(trades_d1, 1, "limite de 1 trade/dia no dia 1");
+        assert_eq!(
+            trades_d2, 1,
+            "dia 2 deve operar de novo: limites resetam na virada do dia"
         );
     }
 }

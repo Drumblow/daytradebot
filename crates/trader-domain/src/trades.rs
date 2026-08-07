@@ -111,6 +111,18 @@ pub enum ExitReason {
     RiskManager,
 }
 
+impl Trade {
+    /// `true` se o trade foi marcado no journal como artefato operacional
+    /// (ex.: bug de latência já corrigido) — não deve entrar em métricas de
+    /// validação nem no estado de risco reconstruído.
+    pub fn is_latency_artifact(&self) -> bool {
+        self.journal
+            .get("latency_artifact")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+}
+
 /// Resumo da conta no broker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountSummary {

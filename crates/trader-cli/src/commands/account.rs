@@ -26,6 +26,7 @@ pub async fn run(config: &CliConfig) -> Result<()> {
                 commission_per_trade: rust_decimal::Decimal::from(35)
                     / rust_decimal::Decimal::from(100),
                 slippage_pct: rust_decimal::Decimal::from(1) / rust_decimal::Decimal::from(1000),
+                entry_validity_candles: 1,
             })
             .get_account_summary()
             .await?

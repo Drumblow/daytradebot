@@ -1,0 +1,48 @@
+[strategy]
+id = "opening-reversal-v1"
+version = "1.0.0"
+source = "Al Brooks - Reading Price Charts Bar by Bar, Cap. 11 (Opening Reversals)"
+
+[strategy.parameters]
+# Timeframe operacional
+operational_timeframe = "15m"
+
+# Zona de teste do nível de ontem (seção 4 do doc — interpretação nossa)
+level_zone_pct = 0.003
+
+# Barra de sinal forte (seção 5.1 do doc; Cap. 1 do livro)
+signal_body_min_pct = 0.30
+signal_wick_min_pct = 0.334
+
+# Vetos de momentum (seção 4 do doc)
+momentum_body_pct = 0.60
+momentum_bars = 2
+counter_trend_bars = 4
+counter_window = 6
+
+# Entrada, stop e alvo (seção 6 do doc)
+atr_period = 14
+# Risco > 1,5xATR → stop monetário de 60% do range da barra (literal, Fig. 10.19)
+stop_atr_mult = 1.5
+monetary_stop_range_pct = 0.60
+entry_order_type = "stop"
+entry_offset_ticks = 1
+# Candles de validade da entrada stop esperando o rompimento (ADR-009)
+entry_validity_candles = 2
+# Alvo único 2R (adaptação do "parcial em 2–3× risco", Cap. 11, ao TP único)
+target_r_multiple = 2.0
+min_risk_reward = 1.5
+
+# Risco: usa o [risk].risk_per_trade_pct global (1,0) — sem override
+max_spread_pct = 0.05
+max_atr_pct = 1.5
+
+# Precisão do ativo
+tick_size = 0.01
+
+# Horário (UTC) — janela exclusiva da primeira hora (09:30–10:30 ET).
+#   - Horário de verão americano (mar–nov): 13:30–14:30 UTC  ← ATUAL
+#   - Horário de inverno americano (nov–mar): 14:30–15:30 UTC
+# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
+trading_start_time = "13:30:00"
+trading_end_time = "14:30:00"

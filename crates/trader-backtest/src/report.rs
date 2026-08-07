@@ -53,7 +53,11 @@ impl std::fmt::Display for BacktestReport {
         writeln!(f, "   Net P&L:         {}", self.metrics.net_pnl)?;
         writeln!(f, "   Total trades:    {}", self.metrics.total_trades)?;
         writeln!(f, "   Win rate:        {}%", self.metrics.win_rate)?;
-        writeln!(f, "   Profit factor:   {}", self.metrics.profit_factor)?;
+        writeln!(
+            f,
+            "   Profit factor:   {}",
+            self.metrics.profit_factor_display()
+        )?;
         writeln!(
             f,
             "   Max drawdown:    {} ({}%)",

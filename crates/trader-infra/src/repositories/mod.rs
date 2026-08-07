@@ -1,17 +1,27 @@
 //! Implementações sqlx dos repositories de domínio.
 
 pub mod asset_repository;
+pub mod backtest_run_repository;
 pub mod candle_repository;
+pub mod fill_repository;
+pub mod ingestion_repository;
 pub mod market_context_repository;
 pub mod order_repository;
 pub mod signal_repository;
+pub mod system_event_repository;
 pub mod trade_repository;
 
 pub use asset_repository::SqlxAssetRepository;
+pub use backtest_run_repository::{
+    BacktestRunRecord, SqlxBacktestRunRepository, StoredBacktestRun,
+};
 pub use candle_repository::SqlxCandleRepository;
+pub use fill_repository::SqlxFillRepository;
+pub use ingestion_repository::{IngestionRecord, SqlxIngestionRepository};
 pub use market_context_repository::SqlxMarketContextRepository;
 pub use order_repository::SqlxOrderRepository;
 pub use signal_repository::SqlxSignalRepository;
+pub use system_event_repository::SqlxSystemEventRepository;
 pub use trade_repository::SqlxTradeRepository;
 
 use chrono::{DateTime, Utc};

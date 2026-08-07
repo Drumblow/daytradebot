@@ -1,0 +1,137 @@
+name: Deploy VM
+
+# Deploy da VM de producao paper (Oracle). Roda os mesmos checks do CI,
+# compila o binario release para Linux e publica na VM via SSH.
+# Fora do pregao as instancias estao paradas: o restart e condicional
+# (so reinicia o que estiver ativo); no pregao o restart e seguro
+# (estado reconstruido do banco no boot).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'config/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vm
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgres://trader:trader_secret@localhost:5432/trader_db
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: trader
+          POSTGRES_PASSWORD: trader_secret
+          POSTGRES_DB: trader_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features native-tls,postgres
+
+      - name: Run migrations
+        run: sqlx migrate run --source crates/trader-infra/src/db/migrations
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: vm-production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release -p trader-cli
+
+      - name: Package binary and configs
+        run: |
+          strip target/release/trader-cli
+          mkdir -p deploy/bin
+          cp target/release/trader-cli deploy/bin/
+          cp -r config deploy/
+          tar czf trader-deploy.tar.gz -C deploy .
+
+      - name: Setup SSH
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload package
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: scp -i ~/.ssh/deploy_key trader-deploy.tar.gz "$VM_USER@$VM_HOST:/tmp/trader-deploy.tar.gz"
+
+      - name: Deploy and conditional restart
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$VM_USER@$VM_HOST" 'sudo bash -se' <<'EOF'
+          set -e
+          cd /tmp
+          rm -rf trader-deploy && mkdir trader-deploy
+          tar xzf trader-deploy.tar.gz -C trader-deploy
+          # binario atomico: escreve .new e move por cima (processos ativos seguem no inode antigo)
+          install -o trader -g trader -m 755 trader-deploy/bin/trader-cli /opt/trader/bin/trader-cli.new
+          mv /opt/trader/bin/trader-cli.new /opt/trader/bin/trader-cli
+          # configs (sem sobrescrever ajustes locais de porta do default.toml da VM)
+          rsync -a --delete trader-deploy/config/strategies/ /opt/trader/config/strategies/ 2>/dev/null || cp -r trader-deploy/config/strategies/. /opt/trader/config/strategies/
+          chown -R trader:trader /opt/trader/bin /opt/trader/config
+          # restart condicional: so o que estiver ativo (fora do pregao, nada sobe)
+          restarted=""
+          for unit in $(systemctl list-units --type=service --state=active 'trader@*' --no-legend | awk '{print $1}'); do
+            systemctl restart "$unit"
+            restarted="$restarted $unit"
+          done
+          echo "instancias reiniciadas:${restarted:- nenhuma (fora do pregao)}"
+          EOF

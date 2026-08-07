@@ -5,8 +5,12 @@ use chrono::{Duration, Utc};
 use tracing::{info, warn};
 
 use trader_adapters::{ibkr::IbkrMarketDataProvider, simulated::SimulatedMarketDataProvider};
+use trader_core::data_quality::count_gaps;
 use trader_domain::{CandleRepository, DataSource, MarketDataProvider, TimeFrame};
-use trader_infra::{db::create_pool, repositories::SqlxCandleRepository};
+use trader_infra::{
+    db::create_pool,
+    repositories::{IngestionRecord, SqlxCandleRepository, SqlxIngestionRepository},
+};
 
 use crate::config::CliConfig;
 
@@ -59,7 +63,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     // Persiste no banco.
     let database_url = config.app_config.database.url()?;
     let pool = create_pool(&database_url).await?;
-    let repo = SqlxCandleRepository::new(pool);
+    let repo = SqlxCandleRepository::new(pool.clone());
 
     let enriched: Vec<trader_domain::Candle> = candles
         .into_iter()
@@ -72,9 +76,33 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         })
         .collect();
 
-    let inserted = repo.save(&enriched).await?;
-    info!(inserted, "candles persistidos");
+    let gaps = count_gaps(&enriched, args.timeframe);
+    let start_time = enriched.first().map(|c| c.timestamp).unwrap_or(from);
+    let end_time = enriched.last().map(|c| c.timestamp).unwrap_or(to);
 
+    let inserted = repo.save(&enriched).await?;
+    info!(inserted, gaps, "candles persistidos");
+
+    // Registra a ingestão para rastreabilidade de qualidade de dados.
+    let ingestion_repo = SqlxIngestionRepository::new(pool);
+    let record = IngestionRecord {
+        symbol: args.symbol.clone(),
+        timeframe: args.timeframe.to_string(),
+        source: config.provider.clone(),
+        start_time,
+        end_time,
+        candles_inserted: inserted as i32,
+        gaps_detected: gaps as i32,
+        status: "completed".to_string(),
+        error_message: None,
+    };
+    if let Err(e) = ingestion_repo.save(&record).await {
+        warn!(error = %e, "falha ao registrar ingestão");
+    }
+
+    if gaps > 0 {
+        println!("⚠️  {} gap(s) intraday detectado(s) na série", gaps);
+    }
     println!("✅ Ingestão concluída: {} candles inseridos", inserted);
 
     Ok(())

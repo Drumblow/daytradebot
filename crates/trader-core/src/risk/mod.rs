@@ -33,8 +33,8 @@ impl Default for RiskConfig {
             max_trades_per_day: 3,
             max_consecutive_losses: 3,
             min_risk_reward: Decimal::from(2),
-            max_spread_pct: Decimal::from(5) / Decimal::from(10000), // 0.05%
-            max_atr_pct: Decimal::from(15) / Decimal::from(10),      // 1.5%
+            max_spread_pct: Decimal::from(5) / Decimal::from(100), // 0.05 (unidade percentual)
+            max_atr_pct: Decimal::from(15) / Decimal::from(10),    // 1.5%
             trading_start_time_utc: (14, 30, 0),
             trading_end_time_utc: (21, 0, 0),
         }
@@ -203,12 +203,35 @@ impl RiskManager {
         // Tamanho da posição.
         let risk_amount = capital * self.config.risk_per_trade_pct / Decimal::from(100);
         // Arredonda para baixo para quantidade inteira de ações.
-        let position_size = (risk_amount / risk_distance).trunc();
+        let qty_by_risk = (risk_amount / risk_distance).trunc();
 
-        if position_size <= Decimal::ZERO {
+        if qty_by_risk <= Decimal::ZERO {
             return RiskCheck::Rejected(
                 RejectionReason::InvalidQuantity,
                 "tamanho da posição zero ou negativo".to_string(),
+            );
+        }
+
+        // Cap de notional: qty × entry não pode exceder o capital disponível
+        // (1x equity, sem margem — default seguro para o MVP).
+        // Melhoria futura: tornar o multiplicador de cap configurável no RiskConfig.
+        let qty_by_notional = (capital / entry).trunc();
+        let position_size = qty_by_risk.min(qty_by_notional);
+
+        if position_size < Decimal::ONE {
+            return RiskCheck::Rejected(
+                RejectionReason::InsufficientBuyingPower,
+                format!(
+                    "capital {capital} insuficiente para 1 unidade a {entry} (risco permitiria {qty_by_risk})"
+                ),
+            );
+        }
+
+        if position_size < qty_by_risk {
+            debug!(
+                qty_by_risk = %qty_by_risk,
+                qty_by_notional = %qty_by_notional,
+                "position size limitada pelo cap de notional (1x equity)"
             );
         }
 
@@ -227,10 +250,13 @@ impl RiskManager {
         }
     }
 
-    /// Atualiza o estado de risco com o resultado de um trade.
+    /// Atualiza o estado de risco com o resultado de um trade fechado.
+    ///
+    /// `daily_trades` NÃO é incrementado aqui: a contagem de trades do dia é
+    /// feita na entrada (ordem enviada), não no fechamento — um trade que
+    /// fica aberto o dia inteiro também conta para o limite diário.
     pub fn update_state(&self, state: &mut RiskState, pnl: Decimal) {
         state.daily_pnl += pnl;
-        state.daily_trades += 1;
 
         if pnl < Decimal::ZERO {
             state.consecutive_losses += 1;
@@ -297,6 +323,7 @@ mod tests {
             timestamp: Utc::now(),
             direction: Direction::Long,
             status: SignalStatus::Accepted,
+            entry_order_type: trader_domain::EntryOrderType::Stop,
             entry_price: Some(entry),
             stop_price: Some(stop),
             target_price: Some(target),
@@ -316,7 +343,7 @@ mod tests {
     fn approves_valid_long_signal() {
         let config = RiskConfig::default();
         let manager = RiskManager::new(config);
-        let ctx = make_context(Utc::now());
+        let ctx = make_context(within_trading_hours());
         let signal = make_signal(Decimal::from(500), Decimal::from(495), Decimal::from(510));
         let state = RiskState::default();
 
@@ -334,7 +361,7 @@ mod tests {
     fn rejects_poor_risk_reward() {
         let config = RiskConfig::default();
         let manager = RiskManager::new(config);
-        let ctx = make_context(Utc::now());
+        let ctx = make_context(within_trading_hours());
         let signal = make_signal(Decimal::from(500), Decimal::from(499), Decimal::from(501));
         let state = RiskState::default();
 
@@ -371,13 +398,76 @@ mod tests {
             ..RiskConfig::default()
         };
         let manager = RiskManager::new(config);
-        let ctx = make_context(Utc::now());
+        let ctx = make_context(within_trading_hours());
         let signal = make_signal(Decimal::from(500), Decimal::from(495), Decimal::from(510));
         let state = RiskState::default();
 
         match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
             RiskCheck::Rejected(RejectionReason::NotInPaperMode, _) => {}
             other => panic!("esperado rejeição por modo real, obtido {:?}", other),
+        }
+    }
+
+    /// Timestamp determinístico dentro do horário de negociação (14:30–21:00 UTC).
+    fn within_trading_hours() -> DateTime<Utc> {
+        Utc::now()
+            .date_naive()
+            .and_hms_opt(15, 0, 0)
+            .unwrap()
+            .and_utc()
+    }
+
+    #[test]
+    fn caps_position_size_by_notional() {
+        let config = RiskConfig::default();
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(Decimal::from(500), Decimal::from(499), Decimal::from(502));
+        let state = RiskState::default();
+
+        // Risco 1% de $10k = $100 / $1 de stop = 100 ações, mas o notional de
+        // 100 ações ($50k) excede o capital: cap em floor(10k / 500) = 20.
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(10_000)) {
+            RiskCheck::Approved { position_size, .. } => {
+                assert_eq!(position_size, Decimal::from(20));
+            }
+            other => panic!("esperado aprovado com cap de notional, obtido {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rejects_when_capital_insufficient_for_one_share() {
+        let config = RiskConfig::default();
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(Decimal::from(500), Decimal::from(499), Decimal::from(502));
+        let state = RiskState::default();
+
+        // $400 não compra 1 ação de $500 (cap = 0), mesmo com o risco permitindo.
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(400)) {
+            RiskCheck::Rejected(RejectionReason::InsufficientBuyingPower, _) => {}
+            other => panic!(
+                "esperado rejeição por buying power insuficiente, obtido {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn approves_risk_sized_position_when_notional_fits() {
+        let config = RiskConfig::default();
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(Decimal::from(100), Decimal::from(95), Decimal::from(110));
+        let state = RiskState::default();
+
+        // Risco 1% de $100k = $1000 / $5 de stop = 200 ações; notional de
+        // $20k cabe no capital (cap = 1000) — sizing por risco prevalece.
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+            RiskCheck::Approved { position_size, .. } => {
+                assert_eq!(position_size, Decimal::from(200));
+            }
+            other => panic!("esperado aprovado sem cap, obtido {:?}", other),
         }
     }
 }

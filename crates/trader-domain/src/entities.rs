@@ -27,6 +27,19 @@ impl TimeFrame {
             TimeFrame::D1 => "1d",
         }
     }
+
+    /// Duração nominal de um candle do timeframe.
+    pub fn duration(&self) -> chrono::Duration {
+        match self {
+            TimeFrame::M1 => chrono::Duration::minutes(1),
+            TimeFrame::M5 => chrono::Duration::minutes(5),
+            TimeFrame::M15 => chrono::Duration::minutes(15),
+            TimeFrame::M30 => chrono::Duration::minutes(30),
+            TimeFrame::H1 => chrono::Duration::hours(1),
+            TimeFrame::H4 => chrono::Duration::hours(4),
+            TimeFrame::D1 => chrono::Duration::days(1),
+        }
+    }
 }
 
 impl std::fmt::Display for TimeFrame {

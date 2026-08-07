@@ -20,7 +20,14 @@ impl SqlxMarketContextRepository {
         let asset_id = super::ensure_asset(&self.pool, &ctx.symbol).await?;
         let trend_state = format!("{:?}", ctx.trend_state).to_lowercase();
         let volatility_regime = format!("{:?}", ctx.volatility_regime).to_lowercase();
-        let market_phase = format!("{:?}", ctx.market_phase).to_lowercase();
+        // Mapeamento explícito: o formato Debug ("PreMarket") não casa com o
+        // CHECK do banco ('pre_market').
+        let market_phase = match ctx.market_phase {
+            trader_domain::MarketPhase::PreMarket => "pre_market",
+            trader_domain::MarketPhase::Regular => "regular",
+            trader_domain::MarketPhase::AfterHours => "after_hours",
+            trader_domain::MarketPhase::Unknown => "unknown",
+        };
 
         let id = sqlx::query_scalar!(
             r#"

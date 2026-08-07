@@ -136,14 +136,23 @@ cargo run --bin trader-cli -- paper --symbol SPY
 ## Comandos previstos
 
 ```bash
-# Backtest com dados do banco (fallback para sintético se não houver dados)
-trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31 --timeframe 15m
+# Backtest com dados do banco (falha sem dados reais; --allow-synthetic para smoke test)
+trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31 --timeframe 15m --output relatorio.json
+
+# Validação walk-forward out-of-sample (só dados reais)
+trader-cli walkforward --symbol SPY --windows 4
+
+# Análise do live/paper vs backtest, com veredito dos critérios de aceitação
+trader-cli analyze --symbol SPY
 
 # Paper trading simulado (loop contínuo com candles sintéticos)
 trader-cli paper --symbol SPY --strategy pullback-trend-v1 --mode simulated --timeframe 15m
 
 # Paper trading em replay (candles do banco)
 trader-cli paper --symbol SPY --strategy pullback-trend-v1 --mode replay --timeframe 15m
+
+# Paper trading live (dados e ordens na conta paper da IBKR)
+trader-cli paper --symbol SPY --strategy pullback-trend-v1 --mode live --timeframe 5m
 
 trader-cli ingest --symbol SPY --timeframe 15m
 trader-cli status
@@ -166,11 +175,12 @@ trader-cli journal --date 2026-07-01
 - [x] Paper trading simulado e replay de candles do banco
 - [x] Backtest com slippage, Sharpe e carregamento do banco
 - [x] Comandos `status` e `journal`
-- [~] Integração com IBKR via TWS API codificada, aguardando validação com conta liberada
+- [x] Integração com IBKR via TWS API validada com conta paper (conexão, conta, posições, ordens abertas)
+- [x] Paper trading live contra a conta paper da IBKR (ordens bracket server-side)
 - [ ] Dashboard
 - [ ] Operação real (futuro)
 
-> **Nota:** A integração com Interactive Brokers (`IbkrBrokerAdapter`) está implementada para envio/cancelamento de ordens, mas as operações de consulta de conta, posições e eventos de fill ainda são stubs controlados. Eles só serão implementados após validação com conta liberada.
+> **Nota:** A integração com Interactive Brokers (`IbkrBrokerAdapter`) está validada em conta paper: envio/cancelamento de ordens, resumo de conta, posições e ordens abertas funcionam. A subscrição de eventos de fill (`subscribe_order_events`) ainda é um stub controlado — exige um `Client` persistente no adapter (decisão arquitetural pendente).
 
 ---
 

@@ -30,6 +30,22 @@ impl OrderSide {
     }
 }
 
+/// Tipo da ordem de ENTRADA de um bracket.
+///
+/// Não confundir com `OrderType`: o bracket como um todo é o instrumento de
+/// execução; isto define como a perna de entrada é trabalhada.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryOrderType {
+    /// Stop (buy stop / sell stop): só executa se o preço romper o gatilho.
+    /// É a regra de entrada documentada de estratégias de breakout/pullback
+    /// (ex.: High 2 do Al Brooks).
+    #[default]
+    Stop,
+    /// Limit: executa imediatamente a preço igual ou melhor que o gatilho.
+    Limit,
+}
+
 /// Status de uma ordem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +102,8 @@ pub struct Order {
     pub symbol: String,
     pub side: OrderSide,
     pub order_type: OrderType,
+    /// Tipo da perna de entrada (relevante para `OrderType::Bracket`).
+    pub entry_order_type: EntryOrderType,
     pub status: OrderStatus,
     pub time_in_force: TimeInForce,
     pub quantity: Decimal,
@@ -127,6 +145,7 @@ impl Order {
             symbol: symbol.into(),
             side,
             order_type,
+            entry_order_type: EntryOrderType::default(),
             status: OrderStatus::Pending,
             time_in_force: TimeInForce::Day,
             quantity,
@@ -162,6 +181,7 @@ pub struct Fill {
     pub id: Option<i64>,
     pub order_id: i64,
     pub symbol: String,
+    pub side: OrderSide,
     pub fill_price: Decimal,
     pub quantity: Decimal,
     pub commission: Decimal,
@@ -174,6 +194,7 @@ impl Fill {
     pub fn new(
         order_id: i64,
         symbol: impl Into<String>,
+        side: OrderSide,
         fill_price: Decimal,
         quantity: Decimal,
         timestamp: DateTime<Utc>,
@@ -187,6 +208,7 @@ impl Fill {
             id: None,
             order_id,
             symbol: symbol.into(),
+            side,
             fill_price,
             quantity,
             commission: Decimal::ZERO,

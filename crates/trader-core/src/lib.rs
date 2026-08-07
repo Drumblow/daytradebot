@@ -10,6 +10,7 @@
 //! brokers, banco de dados ou HTTP.
 
 pub mod context;
+pub mod data_quality;
 pub mod execution;
 pub mod indicators;
 pub mod risk;

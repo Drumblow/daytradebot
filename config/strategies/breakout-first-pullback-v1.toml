@@ -1,0 +1,64 @@
+[strategy]
+id = "breakout-first-pullback-v1"
+version = "1.0.0"
+source = "Adam Grimes - The Art and Science of Technical Analysis, Cap. 6 (Breakout, First Pullback)"
+
+[strategy.parameters]
+# Timeframe operacional
+operational_timeframe = "15m"
+
+# Nível R — resistência testada (seção 4 do doc — interpretação nossa)
+level_lookback_candles = 80
+level_min_touches = 2
+# Tolerância de toque do nível, em fração (0.001 = 0,10%)
+level_touch_tolerance_pct = 0.001
+
+# Breakout válido (seção 4 do doc; expansão é literal do Cap. 5, limiares nossos)
+atr_period = 14
+# Fechamento deve superar o nível por 0,25×ATR
+breakout_close_atr_mult = 0.25
+# Expansão mínima de range e volume vs média de 20 barras.
+# Calibrado na distribuição medida de breakouts 15min em ETFs (2025-02→2026-08):
+# p75 do range_ratio = 1,20 e o p90 = 1,44 — 1,5x (interpretação inicial) deixava
+# o funil praticamente vazio. Volume é confirmação secundária no livro: 1,1x.
+breakout_range_mult = 1.2
+breakout_volume_mult = 1.1
+avg_period = 20
+
+# Pullback (seção 5 do doc — interpretação nossa)
+pullback_min_candles = 2
+pullback_max_candles = 6
+# Retração máxima do impulso pós-breakout (Fig. 6.21; limiar nosso)
+max_retrace_pct = 0.618
+# Janela da base para o pivô pré-breakout (maior mínima) — referência de stop
+pivot_lookback_candles = 20
+
+# Entrada, stop e alvo (seção 6 do doc)
+# "stop" (buy stop na máxima da barra de gatilho + 1 tick — default, ADR-009)
+entry_order_type = "stop"
+entry_offset_ticks = 1
+# Candles de validade da entrada stop esperando o rompimento (ADR-009)
+entry_validity_candles = 2
+# Stop nunca dentro de 1x o range médio de barra (literal, Cap. 8)
+min_stop_bar_ranges = 1.0
+# Stop no pivô pré-breakout tende a ser largo (base inteira abaixo); 3xATR
+# cortava quase tudo — 4x (interpretação, medida na distribuição real)
+max_stop_atr_mult = 4.0
+# Alvo = min(MMO = H + impulso, target_r_multiple × risco) — adaptação do
+# "deixar espaço para o movimento maior" ao bracket de TP único
+target_r_multiple = 2.0
+min_risk_reward = 1.5
+
+# Risco: usa o [risk].risk_per_trade_pct global (1,0) — sem override
+max_spread_pct = 0.05
+max_atr_pct = 1.5
+
+# Precisão do ativo
+tick_size = 0.01
+
+# Horário (UTC) — 09:45–15:30 ET, padrão do projeto.
+#   - Horário de verão americano (mar–nov): 13:45–19:30 UTC  ← ATUAL
+#   - Horário de inverno americano (nov–mar): 14:45–20:30 UTC
+# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
+trading_start_time = "13:45:00"
+trading_end_time = "19:30:00"

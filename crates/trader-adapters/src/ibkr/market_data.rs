@@ -45,9 +45,12 @@ impl MarketDataProvider for IbkrMarketDataProvider {
         let contract = Contract::stock(&request.symbol).build();
         let bar_size = timeframe_to_historical_bar_size(request.timeframe)?;
 
+        // Respeita o intervalo solicitado em `CandleRequest` (antes era fixo em 1 dia).
+        let days = (request.to - request.from).num_days().max(1) as i32;
+
         let historical_data = client
             .historical_data(&contract, bar_size)
-            .duration(1.days())
+            .duration(days.days())
             .what_to_show(HistoricalWhatToShow::Trades)
             .fetch()
             .await

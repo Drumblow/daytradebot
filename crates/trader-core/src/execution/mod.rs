@@ -8,6 +8,9 @@
 //! que devem chamar `RiskManager::update_state` com o P&L real quando a
 //! posição for fechada.
 
+pub mod time_exit;
+pub mod trade_tracker;
+
 use rust_decimal::Decimal;
 use tracing::{debug, info, warn};
 
@@ -57,6 +60,24 @@ impl ExecutionEngine {
         risk_state: &RiskState,
         capital: Decimal,
     ) -> ExecutionResult {
+        // Invariante de segurança: nunca abrir posição se já houver uma no
+        // mesmo ativo — garantido na engine, não depende do caller.
+        match broker.get_position(&signal.symbol).await {
+            Ok(Some(_)) => {
+                return ExecutionResult::RejectedByRisk {
+                    reason: RejectionReason::PositionAlreadyOpen,
+                    detail: "já existe posição aberta no ativo".to_string(),
+                };
+            }
+            Ok(None) => {}
+            Err(e) => {
+                // Falha ao confirmar ausência de posição: fail closed.
+                return ExecutionResult::RejectedByBroker {
+                    error: format!("falha ao consultar posições: {e}"),
+                };
+            }
+        }
+
         match self
             .risk_manager
             .validate(signal, ctx, quote, risk_state, capital)
@@ -127,10 +148,14 @@ fn build_bracket_order(signal: &Signal, position_size: Decimal) -> Result<Order,
     .map_err(|e| BrokerError::OrderRejected(e.to_string()))?;
 
     order.signal_id = None;
+    order.entry_order_type = signal.entry_order_type;
     order.price = signal.entry_price;
     order.stop_price = signal.stop_price;
     order.target_price = signal.target_price;
     order.time_in_force = trader_domain::TimeInForce::Day;
+    order.metadata = serde_json::json!({
+        "entry_order_type": signal.entry_order_type,
+    });
 
     Ok(order)
 }
@@ -239,6 +264,7 @@ mod tests {
             timestamp: Utc::now(),
             direction: Direction::Long,
             status: SignalStatus::Accepted,
+            entry_order_type: trader_domain::EntryOrderType::Stop,
             entry_price: Some(Decimal::from(500)),
             stop_price: Some(Decimal::from(495)),
             target_price: Some(Decimal::from(510)),
@@ -258,7 +284,13 @@ mod tests {
     async fn executes_valid_signal() {
         let broker = MockBroker::default();
         let engine = ExecutionEngine::new(RiskManager::new(RiskConfig::default()));
-        let ctx = make_context(Utc::now());
+        let ctx = make_context(
+            Utc::now()
+                .date_naive()
+                .and_hms_opt(15, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
         let signal = make_signal();
         let risk_state = RiskState::default();
 
@@ -283,7 +315,13 @@ mod tests {
     async fn rejects_signal_with_poor_risk_reward() {
         let broker = MockBroker::default();
         let engine = ExecutionEngine::new(RiskManager::new(RiskConfig::default()));
-        let ctx = make_context(Utc::now());
+        let ctx = make_context(
+            Utc::now()
+                .date_naive()
+                .and_hms_opt(15, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
         let mut signal = make_signal();
         signal.target_price = Some(Decimal::from(501)); // risco/retorno ruim
         let risk_state = RiskState::default();

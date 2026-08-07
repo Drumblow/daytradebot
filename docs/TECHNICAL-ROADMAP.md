@@ -122,7 +122,7 @@ Configuração é carregada corretamente de arquivo e variáveis de ambiente. �
 
 **Duração estimada:** 2–3 semanas  
 **Objetivo:** Estabelecer comunicação bidirecional com a Interactive Brokers em paper trading.  
-**Status:** ✅ Concluída (com stubs controlados para operações de conta)
+**Status:** ✅ Concluída (validada com conta paper IBKR em 2026-08-03)
 
 ### Entregáveis
 
@@ -142,26 +142,26 @@ Configuração é carregada corretamente de arquivo e variáveis de ambiente. �
 - [x] Envio de ordem simples (market/limit/stop/bracket) — codificado, aguarda validação com conta liberada.
 - [x] Cancelamento de ordem.
 - [x] `SimulatedBroker` rejeita nova posição se já existir posição aberta no mesmo ativo.
-- [~] Consulta de status e ordens abertas — **stub controlado**.
-- [~] Consulta de posições e saldo paper — **stub controlado**.
-- [~] Subscrição de eventos de fill — **stub controlado**.
+- [x] Consulta de status e ordens abertas — validada com conta paper.
+- [x] Consulta de posições e saldo paper — validada com conta paper.
+- [~] Subscrição de eventos de fill — **stub controlado** (exige `Client` persistente no adapter; decisão arquitetural pendente).
 
 #### 5.3 CLI
 
 - [x] Comando `trader-cli ingest`.
 - [x] Comando `trader-cli test-connection`.
 - [x] Comando `trader-cli account`.
-- [x] Comando `trader-cli paper` (modos `simulated` e `replay`).
+- [x] Comando `trader-cli paper` (modos `simulated`, `replay` e `live` — live validado em smoke test com conta paper).
 - [x] Comando `trader-cli backtest`.
 - [x] Comandos `trader-cli status` e `trader-cli journal`.
 
 ### Critérios de sucesso
 
 ```text
-Sistema conecta na IBKR paper e mantém sessão ativa por 8h.       # ⏳ depende de conta liberada
-Ingesta 1 mês de candles de SPY sem duplicatas.                  # ✅ via simulado
-Envia ordem de teste de 1 ação de SPY e recebe confirmação.      # ⏳ depende de conta liberada
-Recebe atualização de posição/saldo consistente.                 # ⏳ depende de conta liberada
+Sistema conecta na IBKR paper e mantém sessão ativa por 8h.       # ⏳ teste de longa duração pendente
+Ingesta 1 mês de candles de SPY sem duplicatas.                  # ✅ validado com dados reais IBKR (dedup ON CONFLICT)
+Envia ordem de teste de 1 ação de SPY e recebe confirmação.      # ⏳ bracket codificado; aguarda sinal real em sessão live
+Recebe atualização de posição/saldo consistente.                 # ✅ account/positions/open_orders validados na conta paper
 ```
 
 > Ver detalhes em `docs/phase2-progress.md`.

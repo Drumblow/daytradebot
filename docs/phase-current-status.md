@@ -1,9 +1,16 @@
 # Status Atual do Projeto — Pós-Sprint de Auditabilidade
 
-**Data:** 2026-07-02  
+> **Atualização 2026-08-03 (ciclo de validação):** foi concluído um ciclo de 6
+> sprints focado em validação para operação real — persistência completa do
+> live (ordens/fills/trades), estado de risco durável, correções de backtest,
+> walk-forward, comparador live-vs-backtest (`analyze`) e hardening
+> operacional. Detalhes completos em **`docs/cto-validation-plan-2026-08.md`**.
+> O texto abaixo descreve o estado ao fim da sprint anterior.
+
+**Data:** 2026-08-03 (atualizado)  
 **Sprint:** Correção do core, auditabilidade e MVP de paper trading simulado  
 **Responsável:** CTO / Agente de IA  
-**Status geral:** ✅ MVP de paper trading simulado funcional e auditável
+**Status geral:** ✅ MVP de paper trading funcional e auditável — **incluindo modo live validado na conta paper da IBKR**
 
 ---
 
@@ -18,7 +25,7 @@ Principais conquistas:
 - O backtest aplica slippage, calcula Sharpe simplificado e pode carregar candles do PostgreSQL.
 - O comando `paper` suporta loop contínuo simulado, modo `replay` com candles do banco e persistência completa.
 - Comandos `status` e `journal` permitem acompanhar operações e decisões rejeitadas.
-- A integração com IBKR via TWS API/IB Gateway está codificada, mas ainda não validada com conta liberada.
+- A integração com IBKR via TWS API/IB Gateway foi **validada com conta paper** (2026-08-03): conexão, resumo de conta, posições, ordens abertas, ingest de candles reais e paper trading em modo `live`.
 
 ---
 
@@ -56,7 +63,7 @@ Principais conquistas:
 ### 4. Paper Trading (`trader-cli paper`)
 
 - Loop contínuo com shutdown gracioso via Ctrl+C.
-- Modos `simulated` (candles sintéticos em memória) e `replay` (candles históricos do banco).
+- Modos `simulated` (candles sintéticos em memória), `replay` (candles históricos do banco) e `live` (dados e ordens bracket na conta paper da IBKR).
 - Persiste sinais, ordens, trades e contextos no PostgreSQL durante o loop.
 - Reconciliação simples: não busca novo sinal se já houver posição aberta no mesmo ativo.
 - `SimulatedBroker` rejeita nova posição se já existir posição aberta.
@@ -66,7 +73,7 @@ Principais conquistas:
 - `test-connection --provider {ibkr,simulated}`
 - `account --provider {ibkr,simulated}`
 - `ingest --symbol <s> --timeframe <tf> --days <n> --provider <p>`
-- `paper --symbol <s> --strategy <id> --mode {simulated,replay} --timeframe <tf>`
+- `paper --symbol <s> --strategy <id> --mode {simulated,replay,live} --timeframe <tf>`
 - `backtest --symbol <s> --strategy <id> --from <date> --to <date> --timeframe <tf>`
 - `status`: modo, saldo simulado, posições abertas, sinais e trades recentes.
 - `journal --date <date>`: trades e sinais rejeitados do dia.
@@ -84,11 +91,13 @@ Principais conquistas:
 
 | Item | Status | Nota |
 |------|--------|------|
-| Integração real com IBKR | Codificada, não testada | Requer conta liberada para TWS/Gateway. |
-| `IbkrBrokerAdapter::get_open_orders` | Stub controlado | Retorna vazio; implementar após validação com conta. |
-| `IbkrBrokerAdapter::get_positions` | Stub controlado | Retorna vazio; implementar após validação com conta. |
-| `IbkrBrokerAdapter::get_account_summary` | Stub controlado | Retorna zeros/aviso; implementar após validação com conta. |
-| `IbkrBrokerAdapter::subscribe_order_events` | Stub controlado | Não envia eventos; implementar após validação com conta. |
+| Integração real com IBKR | ✅ Validada em paper | Conexão, account summary, posições, ordens abertas e ingest testados contra gateway real (2026-08-03). |
+| `IbkrBrokerAdapter::get_open_orders` | ✅ Implementado | Via `client.open_orders()`, consolida status no mesmo stream. |
+| `IbkrBrokerAdapter::get_positions` | ✅ Implementado | Via `client.positions()`, ignora zeradas. |
+| `IbkrBrokerAdapter::get_account_summary` | ✅ Implementado | Tags NetLiquidation/TotalCashValue/BuyingPower; `daily_pnl` segue zero (exigiria stream `pnl()`). |
+| `IbkrBrokerAdapter::subscribe_order_events` | Stub controlado | Exige `Client` persistente no adapter (mudança arquitetural pendente). |
+| Paper trading modo `live` | ✅ Implementado | Dados e ordens bracket na conta paper IBKR; smoke test OK. Ordens/trades do live ainda não persistem no banco (depende de eventos de fill). |
+| `.env` não era carregado | ✅ Corrigido | `dotenvy` adicionado ao `trader-cli`. |
 | Detecção de gaps e qualidade de dados | Parcial | `ingestions` registra `gaps_detected`, mas lógica automática ainda simples. |
 | `PortfolioManager` dedicado | Não iniciado | P&L diário e exposição estão no `RiskState`. |
 | Alertas de risco/falha | Não iniciado | Apenas logs por enquanto. |
@@ -101,10 +110,9 @@ Principais conquistas:
 
 ## Próximos passos recomendados
 
-1. **Validar IBKR com conta liberada**
-   - Testar `test-connection --provider ibkr`.
-   - Implementar stubs do `IbkrBrokerAdapter` relacionados a conta/posições/eventos.
-   - Rodar paper trading com dados reais da IBKR.
+1. **Sessão longa de paper trading live**
+   - Rodar `paper --mode live` por uma sessão completa de mercado para validar estabilidade, reconexão e o envio de ordens bracket em sinal real.
+   - Implementar `subscribe_order_events` (requer `Client` persistente no adapter) para persistir ordens/trades do live e rastrear `consecutive_losses`.
 
 2. **Hardening operacional**
    - Reconexão automática do data provider/broker.

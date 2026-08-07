@@ -6,7 +6,9 @@
 pub mod engine;
 pub mod metrics;
 pub mod report;
+pub mod walkforward;
 
 pub use engine::*;
 pub use metrics::*;
 pub use report::*;
+pub use walkforward::*;

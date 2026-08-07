@@ -9,9 +9,20 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-trader}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trader_secret}
       POSTGRES_DB: ${POSTGRES_DB:-trader_db}
+    # Tunagem conservadora: o compose roda tanto no dev local quanto na VM de
+    # 1GB (docs/runbooks/live-operations.md). Valores seguros para ambos.
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=384MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=50
+    restart: unless-stopped
     ports:
       # 5433 evita conflito com PostgreSQL nativo comum em máquinas de dev.
-      - "${POSTGRES_PORT:-5433}:5432"
+      # Binding em localhost: o banco nunca é exposto fora da máquina.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - trader-postgres-data:/var/lib/postgresql/data
     healthcheck:

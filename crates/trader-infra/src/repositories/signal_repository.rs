@@ -28,7 +28,11 @@ impl SqlxSignalRepository {
             SignalStatus::Pending => "pending",
             SignalStatus::Expired => "expired",
         };
-        let rejection_reason = signal.rejection_reason.map(|r| format!("{:?}", r));
+        // Persiste em snake_case (serde), o mesmo formato usado na leitura.
+        let rejection_reason = signal
+            .rejection_reason
+            .and_then(|r| serde_json::to_value(r).ok())
+            .and_then(|v| v.as_str().map(str::to_string));
         let correlation_id = uuid::Uuid::parse_str(&signal.correlation_id)
             .map_err(|e| RepositoryError::InvalidData(format!("correlation_id inválido: {e}")))?;
 
@@ -95,7 +99,7 @@ impl SqlxSignalRepository {
                 s.position_size,
                 s.entry_reason,
                 s.rejection_reason,
-                s.rejection_details as "rejection_details!: serde_json::Value",
+                s.rejection_details,
                 s.market_snapshot as "market_snapshot!: serde_json::Value",
                 s.correlation_id
             FROM signals s
@@ -139,7 +143,7 @@ impl SqlxSignalRepository {
                 s.position_size,
                 s.entry_reason,
                 s.rejection_reason,
-                s.rejection_details as "rejection_details!: serde_json::Value",
+                s.rejection_details,
                 s.market_snapshot as "market_snapshot!: serde_json::Value",
                 s.correlation_id
             FROM signals s
@@ -193,7 +197,7 @@ impl SqlxSignalRepository {
                 s.position_size,
                 s.entry_reason,
                 s.rejection_reason,
-                s.rejection_details as "rejection_details!: serde_json::Value",
+                s.rejection_details,
                 s.market_snapshot as "market_snapshot!: serde_json::Value",
                 s.correlation_id
             FROM signals s
@@ -239,7 +243,7 @@ impl SqlxSignalRepository {
                 s.position_size,
                 s.entry_reason,
                 s.rejection_reason,
-                s.rejection_details as "rejection_details!: serde_json::Value",
+                s.rejection_details,
                 s.market_snapshot as "market_snapshot!: serde_json::Value",
                 s.correlation_id
             FROM signals s
@@ -283,6 +287,43 @@ impl SqlxSignalRepository {
     }
 }
 
+/// Faz parse do `rejection_reason` lido do banco.
+///
+/// Formato atual: snake_case (serde). Linhas antigas foram gravadas em
+/// formato Debug (`MaxTradesReached`); o fallback mantém a leitura delas.
+fn parse_rejection_reason(raw: &str) -> Option<trader_domain::RejectionReason> {
+    use trader_domain::RejectionReason as R;
+
+    if let Ok(parsed) = serde_json::from_str::<R>(&format!("\"{raw}\"")) {
+        return Some(parsed);
+    }
+
+    // Legado: nomes em PascalCase (formato Debug).
+    match raw {
+        "NoContext" => Some(R::NoContext),
+        "MarketLateral" => Some(R::MarketLateral),
+        "HighVolatility" => Some(R::HighVolatility),
+        "LowVolatility" => Some(R::LowVolatility),
+        "PoorRiskReward" => Some(R::PoorRiskReward),
+        "HighSpread" => Some(R::HighSpread),
+        "OutsideTradingHours" => Some(R::OutsideTradingHours),
+        "DailyLossLimitReached" => Some(R::DailyLossLimitReached),
+        "MaxTradesReached" => Some(R::MaxTradesReached),
+        "ConsecutiveLosses" => Some(R::ConsecutiveLosses),
+        "IncompleteSetup" => Some(R::IncompleteSetup),
+        "SetupInvalidated" => Some(R::SetupInvalidated),
+        "WeakConfirmation" => Some(R::WeakConfirmation),
+        "PositionAlreadyOpen" => Some(R::PositionAlreadyOpen),
+        "StopMissing" => Some(R::StopMissing),
+        "InvalidQuantity" => Some(R::InvalidQuantity),
+        "InsufficientBuyingPower" => Some(R::InsufficientBuyingPower),
+        "NotInPaperMode" => Some(R::NotInPaperMode),
+        "BrokerError" => Some(R::BrokerError),
+        "Unknown" => Some(R::Unknown),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct SignalRow {
@@ -304,7 +345,7 @@ struct SignalRow {
     position_size: Option<Decimal>,
     entry_reason: Option<String>,
     rejection_reason: Option<String>,
-    rejection_details: serde_json::Value,
+    rejection_details: Option<serde_json::Value>,
     market_snapshot: serde_json::Value,
     correlation_id: uuid::Uuid,
 }
@@ -340,10 +381,13 @@ impl From<SignalRow> for Signal {
             risk_percent: row.risk_percent,
             position_size: row.position_size,
             entry_reason: row.entry_reason,
+            // Execução (stop/limit) não é persistida por coluna; o default
+            // (stop) só afeta leitura analítica, nunca a execução.
+            entry_order_type: trader_domain::EntryOrderType::default(),
             rejection_reason: row
                 .rejection_reason
-                .and_then(|r| serde_json::from_str(&format!("\"{r}\"")).ok()),
-            rejection_details: Some(row.rejection_details),
+                .and_then(|r| parse_rejection_reason(&r)),
+            rejection_details: row.rejection_details,
             market_snapshot: row.market_snapshot,
             correlation_id: row.correlation_id.to_string(),
         }

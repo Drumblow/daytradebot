@@ -294,6 +294,7 @@ CREATE TABLE fills (
     order_id        BIGINT NOT NULL REFERENCES orders(id),
     asset_id        INTEGER NOT NULL REFERENCES assets(id),
 
+    side            TEXT NOT NULL DEFAULT 'buy',   -- migração 0002
     fill_price      NUMERIC NOT NULL,
     quantity        NUMERIC NOT NULL,
     commission      NUMERIC NOT NULL DEFAULT 0,
@@ -306,9 +307,35 @@ CREATE TABLE fills (
 );
 
 CREATE INDEX idx_fills_order ON fills (order_id);
+-- migração 0002: dedupe/idempotência do replay de execuções do dia
+CREATE UNIQUE INDEX idx_fills_broker_fill_id ON fills (broker_fill_id) WHERE broker_fill_id IS NOT NULL;
 ```
 
-**Justificativa:** Separa fills de ordens para suportar execuções parciais.
+**Justificativa:** Separa fills de ordens para suportar execuções parciais. `side` torna o fill autodescritivo (fills de saída do bracket pertencem a ordens filhas que não existem no banco). O índice único parcial em `broker_fill_id` garante idempotência: o replay diário de execuções da IBKR nunca grava o mesmo fill duas vezes.
+
+---
+
+### 3.7.1 `backtest_runs` (migração 0003)
+
+Histórico de execuções de backtest / walk-forward, para comparação entre runs e com o live (`trader-cli analyze`).
+
+```sql
+CREATE TABLE backtest_runs (
+    id               BIGSERIAL PRIMARY KEY,
+    asset_id         INTEGER NOT NULL REFERENCES assets(id),
+    strategy_id      TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    config_hash      TEXT NOT NULL,
+    timeframe        TEXT NOT NULL,
+    period_start     TIMESTAMPTZ NOT NULL,
+    period_end       TIMESTAMPTZ NOT NULL,
+    initial_capital  NUMERIC NOT NULL,
+    final_equity     NUMERIC NOT NULL,
+    metrics          JSONB NOT NULL,
+    label            TEXT,              -- ex.: "walkforward-oos-4w"
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
 
 ---
 

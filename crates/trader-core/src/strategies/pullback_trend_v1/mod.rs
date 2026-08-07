@@ -55,6 +55,11 @@ impl PullbackTrendV1 {
         &self.config.strategy.parameters
     }
 
+    /// Hash de auditoria da configuração carregada.
+    pub fn config_hash(&self) -> String {
+        self.config.config_hash()
+    }
+
     /// Analisa uma série de candles e retorna sinal ou rejeição.
     pub fn analyze_candles(&self, symbol: &str, candles: &[Candle]) -> SignalResult {
         let timeframe = match self
@@ -96,8 +101,51 @@ impl PullbackTrendV1 {
             context::ContextCheck::Approved => {}
         }
 
+        // Regra de tendência (min_candles_above_ema20): preço acima da EMA de
+        // contexto por N candles consecutivos.
+        let params = &self.config.strategy.parameters;
+        let streak = context::consecutive_closes_above_ema(candles, params.ema_context_period);
+        if streak < params.min_candles_above_ema20 {
+            debug!(
+                streak,
+                min = params.min_candles_above_ema20,
+                "sequência de candles acima da EMA insuficiente"
+            );
+            return SignalResult::Rejected {
+                reason: RejectionReason::NoContext,
+                details: Some(serde_json::json!({
+                    "reason": "price not above context EMA for enough consecutive candles",
+                    "streak": streak,
+                    "min_required": params.min_candles_above_ema20,
+                })),
+            };
+        }
+
         match setup::detect_setup(candles, &self.config.strategy.parameters) {
             SetupResult::Found(setup) => {
+                // Guard anti-latência: se o candle mais recente já fechou além
+                // do gatilho, o rompimento aconteceu antes da nossa ordem estar
+                // trabalhando. Entrar agora seria pagar o preço corrente (buy
+                // stop vira marketable), não o gatilho do setup — e o alvo pode
+                // ficar abaixo do preço, fechando o trade no mesmo instante.
+                // Observado em live em 2026-08-04.
+                let last_close = candles.last().map(|c| c.close).unwrap_or_default();
+                if last_close >= setup.entry_price {
+                    debug!(
+                        %last_close,
+                        entry = %setup.entry_price,
+                        "setup invalidado: preço já além do gatilho"
+                    );
+                    return SignalResult::Rejected {
+                        reason: RejectionReason::SetupInvalidated,
+                        details: Some(serde_json::json!({
+                            "reason": "price already beyond entry trigger",
+                            "last_close": last_close,
+                            "entry_price": setup.entry_price,
+                        })),
+                    };
+                }
+
                 info!(
                     entry = %setup.entry_price,
                     stop = %setup.stop_price,
@@ -113,6 +161,7 @@ impl PullbackTrendV1 {
                     &self.config.strategy.id,
                     &self.config.strategy.version,
                     self.config.config_hash(),
+                    parse_entry_order_type(&self.config.strategy.parameters.entry_order_type),
                 );
 
                 SignalResult::Signal(signal)
@@ -156,6 +205,15 @@ impl StrategyTrait for PullbackTrendV1 {
         }
 
         self.analyze_candles(&ctx.symbol, candles)
+    }
+}
+
+/// Faz parse do parâmetro `entry_order_type` da config ("stop" | "limit").
+/// Qualquer valor desconhecido cai no default seguro do livro: stop.
+fn parse_entry_order_type(raw: &str) -> trader_domain::EntryOrderType {
+    match raw.trim().to_lowercase().as_str() {
+        "limit" => trader_domain::EntryOrderType::Limit,
+        _ => trader_domain::EntryOrderType::Stop,
     }
 }
 
@@ -327,6 +385,31 @@ mod tests {
                 assert_eq!(reason, RejectionReason::OutsideTradingHours);
             }
             _ => panic!("esperado rejeição por horário"),
+        }
+    }
+
+    #[test]
+    fn price_beyond_trigger_invalidates_setup() {
+        let mut candles = make_uptrend_candles(Decimal::from(480));
+        // O último candle rompe o gatilho (máxima da barra de sinal + tick)
+        // ANTES da ordem ser enviada: a entrada seria a mercado, não no gatilho.
+        // (sem sombra inferior grande, para não virar barra de sinal por conta própria)
+        let last_ts = candles.last().unwrap().timestamp;
+        candles.push(candle(
+            last_ts + chrono::Duration::minutes(5),
+            Decimal::new(4815, 1),
+            Decimal::new(4831, 1),
+            Decimal::new(4814, 1),
+            Decimal::from(483),
+        ));
+
+        let strategy = PullbackTrendV1::new(PullbackTrendV1Config::default());
+        match strategy.analyze_candles("SPY", &candles) {
+            SignalResult::Rejected { reason, details } => {
+                assert_eq!(reason, RejectionReason::SetupInvalidated);
+                assert!(details.unwrap().get("entry_price").is_some());
+            }
+            other => panic!("esperado SetupInvalidated, obtido {:?}", other),
         }
     }
 }

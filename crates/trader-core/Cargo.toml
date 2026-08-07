@@ -10,6 +10,7 @@ trader-domain = { path = "../trader-domain" }
 
 async-trait = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

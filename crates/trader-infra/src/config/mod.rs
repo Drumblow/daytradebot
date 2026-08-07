@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub ibkr: IbkrSettings,
     pub risk: RiskSettings,
     pub logging: LoggingSettings,
+    #[serde(default)]
+    pub alerts: AlertsSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,12 +73,46 @@ pub struct IbkrSettings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RiskSettings {
     pub profile: String,
+    /// Risco por trade, em % do capital (ex.: 1.0 = 1%).
+    #[serde(default = "default_risk_per_trade_pct")]
+    pub risk_per_trade_pct: f64,
+    /// Perda diária máxima, em % do capital (ex.: 2.0 = 2%).
+    #[serde(default = "default_max_daily_loss_pct")]
+    pub max_daily_loss_pct: f64,
+    /// Máximo de trades por dia.
+    #[serde(default = "default_max_trades_per_day")]
+    pub max_trades_per_day: usize,
+    /// Para de operar após N perdas consecutivas.
+    #[serde(default = "default_max_consecutive_losses")]
+    pub max_consecutive_losses: usize,
+}
+
+fn default_risk_per_trade_pct() -> f64 {
+    1.0
+}
+fn default_max_daily_loss_pct() -> f64 {
+    2.0
+}
+fn default_max_trades_per_day() -> usize {
+    3
+}
+fn default_max_consecutive_losses() -> usize {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoggingSettings {
     pub level: String,
     pub format: String,
+}
+
+/// Configuração de alertas operacionais.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AlertsSettings {
+    /// Webhook HTTP(S) para alertas críticos (Slack/Discord/Teams compatível:
+    /// POST JSON `{"text": "..."}`). Vazio = alertas só no log.
+    #[serde(default)]
+    pub webhook_url: String,
 }
 
 impl AppConfig {

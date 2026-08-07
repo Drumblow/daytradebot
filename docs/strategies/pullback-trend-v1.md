@@ -110,6 +110,15 @@ Observação: a entrada só é executada se o próximo candle romper a máxima d
 Se o rompimento não ocorrer, cancelar a ordem e aguardar novo setup.
 ```
 
+> **Nota de implementação (2026-08-04, ADR-009):** a entrada é enviada como
+> **buy stop** no preço de gatilho (bracket com parent STP na IBKR; entrada
+> pendente com fill no rompimento no simulador), expirando após
+> `entry_validity_candles` candles sem rompimento — conforme a regra acima.
+> O tipo de entrada é configurável (`entry_order_type = "stop" | "limit"` na
+> config da estratégia). Backtest, replay e live compartilham a mesma
+> semântica. (Até 2026-08-03 a entrada era limit imediata — backtests
+> anteriores a essa data não são comparáveis.)
+
 ---
 
 ## 6. Stop e Alvo

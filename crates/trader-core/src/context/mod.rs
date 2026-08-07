@@ -142,16 +142,20 @@ fn classify_volatility(
 
 /// Classifica a fase do mercado com base no timestamp UTC.
 ///
-/// Para o MVP, considera-se "regular" o horário de pregão dos EUA em UTC
-/// (aproximadamente 14:30–21:00 UTC). O risk manager deve aplicar filtros mais
-/// específicos de timezone e horário de estratégia.
+/// Para o MVP, considera-se "regular" a união das janelas de verão e inverno
+/// do pregão dos EUA (13:30–21:00 UTC cobre 9h30–16h ET tanto em DST quanto
+/// em horário padrão). Esta classificação é propositalmente ampla: o filtro
+/// preciso de horário (que respeita DST) fica no risk manager, com a janela
+/// da config da estratégia.
 fn classify_market_phase(timestamp: DateTime<Utc>) -> MarketPhase {
-    let time = timestamp.time();
-    let hour = time.hour();
+    let minutes = timestamp.time().hour() * 60 + timestamp.time().minute();
 
-    if (14..=20).contains(&hour) {
+    const REGULAR_START: u32 = 13 * 60 + 30; // 13:30 UTC (abertura em DST)
+    const REGULAR_END: u32 = 21 * 60; // 21:00 UTC (fechamento fora de DST)
+
+    if (REGULAR_START..=REGULAR_END).contains(&minutes) {
         MarketPhase::Regular
-    } else if hour < 14 {
+    } else if minutes < REGULAR_START {
         MarketPhase::PreMarket
     } else {
         MarketPhase::AfterHours

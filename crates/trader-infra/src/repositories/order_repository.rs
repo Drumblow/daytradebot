@@ -313,6 +313,12 @@ impl From<OrderRow> for Order {
                 "bracket" => OrderType::Bracket,
                 _ => OrderType::Market,
             },
+            entry_order_type: row
+                .metadata
+                .get("entry_order_type")
+                .and_then(|v| v.as_str())
+                .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok())
+                .unwrap_or_default(),
             status: match row.status.as_str() {
                 "submitted" => OrderStatus::Submitted,
                 "accepted" => OrderStatus::Accepted,

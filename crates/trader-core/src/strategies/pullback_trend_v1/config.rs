@@ -36,6 +36,13 @@ pub struct StrategyParameters {
     pub stop_offset_ticks: Decimal,
     pub reward_multiple: Decimal,
 
+    /// Tipo da ordem de entrada: "stop" (buy stop no gatilho — regra do
+    /// livro) ou "limit" (executa imediatamente).
+    pub entry_order_type: String,
+    /// Quantos candles após o sinal a ordem de entrada stop permanece válida
+    /// esperando o rompimento (1 = só o candle seguinte; regra do livro).
+    pub entry_validity_candles: usize,
+
     pub max_spread_pct: Decimal,
     pub max_atr_pct: Decimal,
     pub min_risk_reward: Decimal,
@@ -76,7 +83,9 @@ impl Default for PullbackTrendV1Config {
                     entry_offset_ticks: Decimal::from(1),
                     stop_offset_ticks: Decimal::from(1),
                     reward_multiple: Decimal::from(2),
-                    max_spread_pct: Decimal::from(5) / Decimal::from(10000),
+                    entry_order_type: "stop".to_string(),
+                    entry_validity_candles: 1,
+                    max_spread_pct: Decimal::from(5) / Decimal::from(100),
                     max_atr_pct: Decimal::from(15) / Decimal::from(10),
                     min_risk_reward: Decimal::from(2),
                     tick_size: Decimal::from(1) / Decimal::from(100),
@@ -85,5 +94,30 @@ impl Default for PullbackTrendV1Config {
                 },
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_hash_is_stable_and_sensitive() {
+        let config = PullbackTrendV1Config::default();
+        assert_eq!(config.config_hash(), config.config_hash());
+        assert_eq!(config.config_hash().len(), 16);
+
+        let mut changed = config.clone();
+        changed.strategy.parameters.reward_multiple = Decimal::from(3);
+        assert_ne!(config.config_hash(), changed.config_hash());
+    }
+
+    #[test]
+    fn parses_project_toml() {
+        let toml_str = include_str!("../../../../../config/strategies/pullback-trend-v1.toml");
+        let config: PullbackTrendV1Config =
+            toml::from_str(toml_str).expect("TOML do projeto deve fazer parse");
+        assert_eq!(config.strategy.id, "pullback-trend-v1");
+        assert_eq!(config.strategy.parameters.min_candles_above_ema20, 10);
     }
 }
