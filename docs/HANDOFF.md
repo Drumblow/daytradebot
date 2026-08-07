@@ -1,16 +1,16 @@
 # HANDOFF — Estado do projeto e do que já foi testado
 
-**Atualizado:** 2026-08-06 (fim do dia 3) — pipeline multi-estratégia + expansão de ativos
+**Atualizado:** 2026-08-07 (fim do dia 4) — migração para VM Oracle + portfólio expandido para 8 instâncias/3 estratégias
 **Público:** próximo agente (ou humano) que assumir o projeto. Leia isto antes de qualquer outra coisa.
 
 ---
 
 ## 1. Onde o projeto está
 
-Bot de day trade em Rust (workspace multi-crates), operando a estratégia `pullback-trend-v1` (High 2, Al Brooks) em **paper trading live na IBKR** (conta paper DUR507388). O objetivo atual é cumprir o **gate composto de go-live (ADR-010)** para operar dinheiro real:
+Bot de day trade em Rust (workspace multi-crates), **operando na VM Oracle Cloud desde 2026-08-07 13h30 ET** (ADR-011), em **paper trading live na IBKR** (conta paper DUR507388). O PC Windows está fora da operação — serve só para dev e acesso via SSH. O objetivo atual é cumprir o **gate composto de go-live (ADR-010)** para operar dinheiro real:
 
 - **A. Estratégia (estatística):** backtest ≥ 6 meses com ≥ 50 trades, win rate ≥ 40%, PF ≥ 1.3, DD ≤ 10%, avg R > 0.15 + walk-forward OOS. **✅ FECHADA para pullback-trend-v1 em IWM, IWV e IWO** (walk-forward 6 janelas sobre 17,5 meses, 2026-08-06). Duas novas estratégias aprovadas em qualidade OOS (amostra < 50): `opening-reversal-v1` (IWM/IWN/IJR/VB/SLYV) e `balance-area-breakout-v1` (9 ativos) — ver §10/§11.
-- **B. Operação:** 4 semanas de paper live contínuo (uptime ≥ 99%) + ≥ 20 trades reais dentro de ±30% do backtest + zero violações de risco + reconciliação semanal. **Em andamento desde 2026-08-04 (3/20 pregões, 1/20 trades — ritmo em risco).**
+- **B. Operação:** 4 semanas de paper live contínuo (uptime ≥ 99%) + ≥ 20 trades reais dentro de ±30% do backtest + zero violações de risco + reconciliação semanal. **Em andamento desde 2026-08-04 (4/20 pregões, 1/20 trades) — portfólio expandido para 8 instâncias/3 estratégias em 2026-08-07 para dar ritmo à amostra.**
 - **C. Governança:** ADR de go-live + primeiro mês com risco reduzido. Pendente.
 
 Documentos-chave: `docs/cto-validation-plan-2026-08.md` (plano completo S1–S7), `docs/decisions/ADR-009` (entrada stop), `docs/decisions/ADR-010` (gate), `docs/runbooks/` (operação diária, checklist go-live, troubleshooting).
@@ -42,25 +42,32 @@ Testes automatizados: **145 passando, 0 falhando; `cargo clippy --workspace --al
 - ~~Fill real de uma entrada stop no live~~ ✅ aconteceu em 2026-08-04 (2 trades completos: sinal → STP → fill → trade persistido → alerta → risco atualizado).
 - ~~Cancelamento de entrada expirada em sessão real~~ ✅ **verificado 2026-08-04 19:00:32 UTC**: ordem 16 (STP 772.45) cancelada após 1 candle sem rompimento; confirmação [202] do gateway e status `cancelled` no banco.
 
-## 3.2 Operação multi-ativo (desde 2026-08-04 ~19:00 UTC)
+## 3.2 Operação multi-ativo (desde 2026-08-07 — topologia VM Oracle)
 
-Três instâncias do live rodando, uma por ativo (uma por processo — não é refactor multi-símbolo):
+**8 instâncias do live rodando na VM Oracle** (uma por ativo, um processo systemd `trader@<nome>` cada — não é refactor multi-símbolo), cobrindo as 3 estratégias aprovadas:
 
-| Ativo | client_id | Observação |
-|-------|-----------|------------|
-| SPY | 1 (padrão) | desde 2026-08-04 manhã |
-| QQQ | 2 (`TRADER__IBKR__CLIENT_ID=2`) | ingest 45d feito (1166 candles) |
-| IWM | 3 (`TRADER__IBKR__CLIENT_ID=3`) | ingest 45d feito (1166 candles) |
+| client_id | Ativo | Estratégia |
+|-----------|-------|------------|
+| 1 | IWM | pullback-trend-v1 |
+| 2 | IWV | pullback-trend-v1 |
+| 3 | IWO | pullback-trend-v1 |
+| 4 | IJS | balance-area-breakout-v1 |
+| 5 | VBR | balance-area-breakout-v1 |
+| 6 | AVUV | balance-area-breakout-v1 |
+| 7 | IWM | opening-reversal-v1 |
+| 8 | IWN | opening-reversal-v1 |
+
+**Justificativa (decisão do dono, 2026-08-07):** o gate B precisava de ritmo — 1/20 trades após 3 pregões. SPY/QQQ foram cortados (reprovados estatisticamente em tudo). Novas estratégias vão ao paper live para **acumular amostra forward** — resolve a pendência de amostra do §5 item 1 pela opção "seguir acumulando".
 
 Cuidados:
-- **Risco é por processo**: 3 instâncias ⇒ até 9 trades/dia e 6% de perda diária somada. OK para paper; **antes de dinheiro real é obrigatório um limite global de portfólio** (PortfolioManager).
-- A TWS API exige um `client_id` por conexão — nunca subir duas instâncias com o mesmo id.
-- O filtro de fills por símbolo já separa as execuções das 3 instâncias na mesma conta (verificado: instância QQQ ignorou fills de SPY).
-- Backtest/walkforward aceitam `--symbol QQQ`/`--symbol IWM` normalmente.
-- **Alertas via webhook** (`[alerts].webhook_url` vazio — configurar e testar).
-- **Comissões reais**: fills gravam comissão 0 (CommissionReport não parseado) — P&L do live é levemente otimista.
+- **Risco é por processo**: 8 instâncias ⇒ limites diários somados proporcionalmente maiores. OK para paper; **antes de dinheiro real é obrigatório um limite global de portfólio** (PortfolioManager).
+- A API exige um `client_id` por conexão — nunca subir duas instâncias com o mesmo id (mapeamento nos envs `/etc/trader/instances/*.env`).
+- O filtro de fills por símbolo já separa as execuções das instâncias na mesma conta.
+- **Sessão única IBKR**: nunca abrir TWS/Gateway local com o usuário do bot — derruba a sessão da VM (aconteceu em 2026-08-07 13h04 ET; ver ADR-011 e §7).
+- **Alertas via webhook** (`[alerts].webhook_url` vazio — configurar e testar; com a operação na VM, é o único canal se o CB disparar).
+- **Comissões reais**: parse de `CommissionReport` implementado no dia 3 — fills novos têm comissão real; fills antigos (antes de 2026-08-06) gravaram comissão 0.
 - `get_order_status` assume `Filled` para ordem que some das abertas (sem caller em produção hoje).
-- **Market data**: `get_quote` falha com erro 10168 (conta paper sem inscrição de dados em tempo real). **Não afeta o bot hoje**: a estratégia usa candles históricos (chegam ~30s após o fechamento — medido) e nunca chama `get_quote` (o filtro de spread fica inativo enquanto `quote=None` nas chamadas). Se quotes forem necessários, ativar dados atrasados ou assinar market data na TWS.
+- **Market data**: `get_quote` falha com erro 10168 (conta paper sem inscrição de dados em tempo real). **Não afeta o bot hoje**: as estratégias usam candles históricos (chegam ~30s após o fechamento — medido) e nunca chamam `get_quote` (o filtro de spread fica inativo enquanto `quote=None` nas chamadas).
 - `exit_reason` dos 2 primeiros trades ficou `manual` mas era alvo (TP abaixo do mercado encheu a preço melhor) — classificação por proximidade de preço não cobre esse caso.
 
 ## 3.1 Incidentes de 2026-08-04 (resolvidos)
@@ -73,18 +80,35 @@ Cuidados:
 
 ## 4. Como operar (rotina diária — usuário no Canadá, fuso ET)
 
-1. ~9h15: ligar PC, abrir IB Gateway (conta paper), confirmar login.
-2. Garantir Postgres no ar: `docker start trader-postgres` (o Docker Desktop pode não subir os containers no boot — o live **recusa subir sem banco**, então o erro é visível).
-3. `cargo run -p trader-cli -- paper --mode live --symbol SPY` — deixar rodando até ~16h.
-4. `Ctrl+C` para encerrar. Posições abertas ficam protegidas (bracket server-side).
-5. Sexta: `cargo run -p trader-cli -- analyze` + reconciliação bot vs TWS.
-6. Queda/restart: subir de novo — estado é reconstruído do banco.
+**A rotina manual acabou.** Desde 2026-08-07 tudo roda na VM Oracle, automático:
+
+- Os timers systemd sobem as 8 instâncias seg–sex às **9h25 ET** (`trader-start.timer`) e param às **16h10 ET** (`trader-stop.timer`).
+- IB Gateway (headless, IBC) e Postgres ficam no ar 24/7 na VM, com `Restart=always`.
+- Sexta: `analyze` + reconciliação bot vs IBKR podem rodar na própria VM.
+
+Comandos úteis (a partir do PC Windows):
+
+```bash
+# acesso à VM
+ssh -i ~/.ssh/humanbot.key ubuntu@137.131.186.91
+
+# seguir o log de uma instância
+sudo journalctl -u trader@iwm-pullback -f
+
+# ver o estado das 8 instâncias
+systemctl list-units 'trader@*'
+
+# reiniciar tudo (seguro em pregão — estado vem do banco)
+sudo systemctl restart trader-instances.target
+```
+
+⚠️ **NUNCA abrir TWS/Gateway local com o mesmo usuário do bot** — a IBKR permite uma única sessão por usuário e o login local derruba a sessão da VM (derrubou as 8 instâncias em 2026-08-07 13h04 ET). Ver ADR-011.
 
 ## 5. Pendências priorizadas
 
-1. **Decisão do dono — gate A e portfólio de estratégias:** há agora **3 estratégias com qualidade OOS aprovada**: pullback-trend-v1 (IWM), opening-reversal-v1 (IWM/IWN/IJR) e balance-area-breakout-v1 (IWN/IWM/QQQ) — todas com amostra OOS < 50 por ativo (ver §10). Opções: (a) aceitar **amostra agregada** por estratégia nos ativos aprovados; (b) buscar mais histórico (a IBKR entregou 17,5 meses de 15min — talvez mais em 30min/1h, com re-backtest nesses timeframes); (c) seguir acumulando e decidir depois do gate B. Detalhes: `docs/reports/day2-2026-08-05.md` §5 e docs das estratégias.
+1. ~~**Decisão do dono — gate A e portfólio de estratégias**~~ ✅ **decidida em 2026-08-07:** opção "seguir acumulando" — as 3 estratégias aprovadas em qualidade OOS foram ao paper live (8 instâncias, §3.2) para acumular amostra forward. Amostras OOS < 50 por ativo (ver §10) continuam abertas para fechamento formal do gate A dessas estratégias.
 2. **failure-test-long-v1 arquivada** (amostra 10–12 trades em 17,5 meses; negativa fora de IWM). Revisar seletividade só com decisão explícita (v1.1 = nova versão).
-3. **Webhook de alertas: mecanismo pronto e testado** (ver §8). Falta só o dono escolher o serviço (Slack/Discord/Teams) e colocar a URL em `config/local.toml` (`[alerts] webhook_url`) ou env `TRADER__ALERTS__WEBHOOK_URL`.
+3. **Webhook de alertas: mecanismo pronto e testado** (ver §8). Falta só o dono escolher o serviço (Slack/Discord/Teams) e colocar a URL em `config/local.toml` (`[alerts] webhook_url`) ou env `TRADER__ALERTS__WEBHOOK_URL`. **Com a operação na VM ficou MAIS importante**: é o único canal de notificação se o circuit breaker disparar — sem ele, um CB na madrugada ou em dia de ausência só seria descoberto no próximo acesso SSH.
 4. Fase 7 (dashboard) — não iniciada, não é bloqueio para go-live.
 
 ## 6. Decisões recentes (não reverter sem discutir)
@@ -100,6 +124,7 @@ Cuidados:
 - **Dia 1 — 2026-08-04:** `docs/reports/day1-2026-08-04.md`. 5 bugs encontrados e corrigidos; 1 trade válido (IWM, stop -521.01); 2 trades-artefato excluídos; 1 entrada expirada/cancelada corretamente; amostra do gate: 1/20 trades.
 - **Dia 2 — 2026-08-05:** `docs/reports/day2-2026-08-05.md`. 3 instâncias (SPY/QQQ/IWM) 9h39–16h20 ET; 1 interrupção de ~2 min às 10h08 (processos morreram ao fechar a sessão do CLI; relançados detached — nova rotina padrão). **Zero sinais e zero trades** — mercado sem setup H2. Amostra do gate segue 1/20 trades. `failure-test-long-v1` implementada e smoke-testada no mesmo dia (fora do pregão).
 - **Dia 3 — 2026-08-06:** `docs/reports/day3-2026-08-06.md`. Live estável o pregão todo; **zero sinais/trades** (2º dia seguido sem setup H2 — amostra do gate segue 1/20; ritmo dos 20 trades em risco, depende da expansão). Dev: bug do alerta do CB corrigido (verificado com webhook local), comissões reais implementadas, 3 novas estratégias validadas (2 aprovadas em qualidade OOS), expansão de 8 ativos — **pullback fecha o gate A em IWM/IWV/IWO**.
+- **Dia 4 — 2026-08-07:** **portfólio expandido para 8 instâncias / 3 estratégias** (§3.2) por decisão do dono — novas estratégias ao paper live para acumular amostra forward. Manhã **sem sinais** (pullback sem streak EMA20; balance sem área válida — exceção VBR com área ativa 248,05–251,67 sem rompimento; opening-reversal sem setup na janela). **Migração para a VM Oracle executada à tarde** (ADR-011): IB Gateway headless via IBC + Xvfb, Postgres migrado por pg_dump, 8 instâncias systemd com timers 9h25/16h10 ET, CI/CD de deploy (GitHub Actions → scp → restart condicional). **Interrupção 13h04–13h30 ET documentada:** o login do Gateway na VM derrubou o TWS local (sessão única IBKR) e as 8 instâncias locais morreram — cutover antecipado para 13h30 ET por causa disso.
 
 ## 8. Nova estratégia implementada: `failure-test-long-v1` (2026-08-05)
 
