@@ -75,6 +75,22 @@ jobs:
     runs-on: ubuntu-latest
     environment: vm-production
 
+    services:
+      # sqlx valida queries em tempo de compilação — o build precisa do banco.
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: trader
+          POSTGRES_PASSWORD: trader_secret
+          POSTGRES_DB: trader_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +99,14 @@ jobs:
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
+
+      - name: Install sqlx-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+
+      - name: Run migrations
+        run: sqlx migrate run --source crates/trader-infra/src/db/migrations
 
       - name: Build release binary
         run: cargo build --release -p trader-cli
