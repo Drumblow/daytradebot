@@ -39,7 +39,19 @@ impl CandleRepository for SqlxCandleRepository {
                     asset_id, timeframe, timestamp, open, high, low, close, volume, vwap, source, is_complete
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                ON CONFLICT (asset_id, timeframe, timestamp) DO NOTHING
+                ON CONFLICT (asset_id, timeframe, timestamp) DO UPDATE SET
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    vwap = EXCLUDED.vwap
+                -- Auto-reparo: só sobrescreve quando a linha existente é uma
+                -- barra degenerada (1 print, high==low). Barras boas são
+                -- imutáveis; barras degeneradas são corrigidas quando a versão
+                -- consolidada chega (live aguarda consolidação desde 2026-08-17
+                -- ou ingest posterior repara o histórico).
+                WHERE candles.high <= candles.low
                 "#,
                 asset_id,
                 timeframe,

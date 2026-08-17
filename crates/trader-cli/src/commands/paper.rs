@@ -574,6 +574,10 @@ const LIVE_MAX_CANDLES: usize = 200;
 /// espúrias isoladas não devem acordar ninguém.
 const DEGENERATE_BAR_ALERT_THRESHOLD: u32 = 5;
 
+/// Polls de 30s esperando uma barra degenerada consolidar antes de desistir
+/// dela (30 polls ≈ 15 min; consolidação medida em ~3–4 min em 2026-08-17).
+const MAX_DEGENERATE_WAIT_POLLS: u32 = 30;
+
 /// Falhas consecutivas de infra (dados/reconciliação) que disparam o
 /// circuit breaker: o live encerra com erro em vez de ficar "morto" em
 /// silêncio.
@@ -703,9 +707,13 @@ async fn run_live(
     let mut last_processed: Option<chrono::DateTime<chrono::Utc>> = None;
     let mut current_day = chrono::Utc::now().date_naive();
     let mut consecutive_failures: u32 = 0;
-    // Barras degeneradas consecutivas (1 print, high==low — feed sem
-    // subscrição de dados). Ver guarda no loop de candles.
+    // Barras degeneradas consecutivas que desistimos de esperar (nunca
+    // consolidaram) — alimenta o alerta de sequência.
     let mut degenerate_streak: u32 = 0;
+    // Barra degenerada sendo aguardada (timestamp, polls esperadas): o feed
+    // sem dados em tempo real entrega a barra recém-fechada como 1 print e
+    // consolida alguns minutos depois — o cursor não avança até consolidar.
+    let mut pending_degenerate: Option<(chrono::DateTime<chrono::Utc>, u32)> = None;
 
     record_event(
         repos,
@@ -819,47 +827,74 @@ async fn run_live(
                 }
             }
 
-            // Guarda de qualidade de dados: barra degenerada (1 print,
-            // high==low — assinatura do feed sem subscrição de dados em
-            // tempo real, ver docs/reports/validacao-live-vs-backtest-2026-08-07_a_08-14.md).
-            // A barra fica persistida para auditoria, mas NÃO alimenta
-            // estratégia nem gestão de posição: price action sem high/low é
-            // cego. Alerta uma vez por sequência a partir do limiar.
+            // Guarda de qualidade de dados COM ESPERA DE CONSOLIDAÇÃO:
+            // barra recém-fechada chega como 1 print (high==low) quando o
+            // feed não tem dados em tempo real, e consolida alguns minutos
+            // depois (medido: ~3–4 min em 2026-08-17). Em vez de operar a
+            // barra degenerada, o cursor NÃO avança — a próxima poll rebusca
+            // a janela e, quando a barra consolidar, ela é processada (e o
+            // upsert do repositório repara a linha flat no banco). Com feed
+            // em tempo real a consolidação é imediata e o custo é zero.
+            // Desiste após MAX_DEGENERATE_WAIT_POLLS polls (~15 min).
+            // Ver docs/reports/validacao-live-vs-backtest-2026-08-07_a_08-14.md.
             if candles[i].is_degenerate() {
-                degenerate_streak += 1;
-                warn!(
-                    symbol = %args.symbol,
-                    ts = %candles[i].timestamp,
-                    degenerate_streak,
-                    "barra degenerada (high==low); avaliação da barra pulada"
-                );
-                if degenerate_streak == DEGENERATE_BAR_ALERT_THRESHOLD {
-                    record_event(
-                        repos,
-                        "warn",
-                        "data_quality",
-                        "degenerate_bar_streak",
-                        &format!(
-                            "{}: {} barras degeneradas consecutivas; sinais suspensos",
-                            args.symbol, degenerate_streak
-                        ),
-                    )
-                    .await;
-                    alerter
-                        .critical_await(&format!(
-                            "⚠️ {}: {} barras degeneradas seguidas (feed sem high/low); sinais suspensos até o feed normalizar",
-                            args.symbol, degenerate_streak
-                        ))
+                let waits = match pending_degenerate {
+                    Some((ts, n)) if ts == candles[i].timestamp => n + 1,
+                    _ => 0,
+                };
+                if waits > MAX_DEGENERATE_WAIT_POLLS {
+                    // Nunca consolidou: desiste da barra (fica flat no banco,
+                    // auditável) e segue em frente. Alerta em sequência.
+                    degenerate_streak += 1;
+                    pending_degenerate = None;
+                    warn!(
+                        symbol = %args.symbol,
+                        ts = %candles[i].timestamp,
+                        degenerate_streak,
+                        "barra degenerada não consolidou após ~15min; barra abandonada"
+                    );
+                    if degenerate_streak == DEGENERATE_BAR_ALERT_THRESHOLD {
+                        record_event(
+                            repos,
+                            "warn",
+                            "data_quality",
+                            "degenerate_bar_streak",
+                            &format!(
+                                "{}: {} barras degeneradas consecutivas sem consolidar; sinais suspensos",
+                                args.symbol, degenerate_streak
+                            ),
+                        )
                         .await;
+                        alerter
+                            .critical_await(&format!(
+                                "⚠️ {}: {} barras degeneradas seguidas sem consolidar (feed sem high/low); sinais suspensos até o feed normalizar",
+                                args.symbol, degenerate_streak
+                            ))
+                            .await;
+                    }
+                    last_processed = Some(candles[i].timestamp);
+                    continue;
                 }
-                last_processed = Some(candles[i].timestamp);
-                continue;
-            } else if degenerate_streak >= DEGENERATE_BAR_ALERT_THRESHOLD {
+                pending_degenerate = Some((candles[i].timestamp, waits));
+                if waits == 0 || waits % 10 == 0 {
+                    warn!(
+                        symbol = %args.symbol,
+                        ts = %candles[i].timestamp,
+                        polls_esperadas = waits,
+                        "barra degenerada (1 print); aguardando consolidação do feed"
+                    );
+                }
+                // Não avança o cursor nem processa barras mais novas fora de
+                // ordem: a próxima poll reavalia a mesma barra.
+                break;
+            }
+            if degenerate_streak >= DEGENERATE_BAR_ALERT_THRESHOLD {
                 info!(
                     symbol = %args.symbol,
                     degenerate_streak, "feed normalizou após sequência de barras degeneradas"
                 );
             }
+            pending_degenerate = None;
             degenerate_streak = 0;
 
             // Expiração da entrada stop (regra do livro): se o rompimento não
