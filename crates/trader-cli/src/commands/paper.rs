@@ -574,9 +574,9 @@ const LIVE_MAX_CANDLES: usize = 200;
 /// espúrias isoladas não devem acordar ninguém.
 const DEGENERATE_BAR_ALERT_THRESHOLD: u32 = 5;
 
-/// Polls de 30s esperando uma barra degenerada consolidar antes de desistir
-/// dela (30 polls ≈ 15 min; consolidação medida em ~3–4 min em 2026-08-17).
-const MAX_DEGENERATE_WAIT_POLLS: u32 = 30;
+/// Polls de 30s esperando uma barra estabilizar/consolidar antes de desistir
+/// (30 polls ≈ 15 min; consolidação medida em ~3–4 min em 2026-08-17).
+const MAX_BAR_SETTLE_POLLS: u32 = 30;
 
 /// Falhas consecutivas de infra (dados/reconciliação) que disparam o
 /// circuit breaker: o live encerra com erro em vez de ficar "morto" em
@@ -710,10 +710,11 @@ async fn run_live(
     // Barras degeneradas consecutivas que desistimos de esperar (nunca
     // consolidaram) — alimenta o alerta de sequência.
     let mut degenerate_streak: u32 = 0;
-    // Barra degenerada sendo aguardada (timestamp, polls esperadas): o feed
-    // sem dados em tempo real entrega a barra recém-fechada como 1 print e
-    // consolida alguns minutos depois — o cursor não avança até consolidar.
-    let mut pending_degenerate: Option<(chrono::DateTime<chrono::Utc>, u32)> = None;
+    // Barra aguardando estabilizar: o feed sem dados em tempo real entrega a
+    // barra recém-fechada incompleta (1 print ou parcial) e ela consolida
+    // alguns minutos depois — o cursor não avança até os valores pararem de
+    // mudar entre polls (ou até desistir, ver guarda no loop).
+    let mut pending_bar: Option<PendingBar> = None;
 
     record_event(
         repos,
@@ -827,31 +828,43 @@ async fn run_live(
                 }
             }
 
-            // Guarda de qualidade de dados COM ESPERA DE CONSOLIDAÇÃO:
-            // barra recém-fechada chega como 1 print (high==low) quando o
-            // feed não tem dados em tempo real, e consolida alguns minutos
-            // depois (medido: ~3–4 min em 2026-08-17). Em vez de operar a
-            // barra degenerada, o cursor NÃO avança — a próxima poll rebusca
-            // a janela e, quando a barra consolidar, ela é processada (e o
-            // upsert do repositório repara a linha flat no banco). Com feed
-            // em tempo real a consolidação é imediata e o custo é zero.
-            // Desiste após MAX_DEGENERATE_WAIT_POLLS polls (~15 min).
+            // Guarda de qualidade de dados — espera a barra ESTABILIZAR.
+            // O feed sem dados em tempo real entrega a barra recém-fechada
+            // incompleta: primeiro como 1 print (high==low, volume 0), depois
+            // parcial (poucos minutos de dados), e só ~3–4 min após o
+            // fechamento ela consolida (medido em 2026-08-17). Regras:
+            //  - barra degenerada (flat): nunca é operada; espera consolidar
+            //    e desiste após MAX_BAR_SETTLE_POLLS (alerta em sequência);
+            //  - barra não-degenerada: só é operada quando os valores param
+            //    de mudar entre duas polls (estável) — senão espera;
+            //  - o upsert do repositório repara a linha no banco quando a
+            //    versão consolidada chega.
+            // Com feed em tempo real a barra já chega consolidada e o custo
+            // é de 1 poll (~30s) por barra.
             // Ver docs/reports/validacao-live-vs-backtest-2026-08-07_a_08-14.md.
-            if candles[i].is_degenerate() {
-                let waits = match pending_degenerate {
-                    Some((ts, n)) if ts == candles[i].timestamp => n + 1,
-                    _ => 0,
-                };
-                if waits > MAX_DEGENERATE_WAIT_POLLS {
+            let bar = &candles[i];
+            let same_as_pending = matches!(&pending_bar, Some(p)
+                if p.timestamp == bar.timestamp
+                    && p.high == bar.high
+                    && p.low == bar.low
+                    && p.close == bar.close
+                    && p.volume == bar.volume);
+            let pending_polls = match &pending_bar {
+                Some(p) if p.timestamp == bar.timestamp => p.polls + 1,
+                _ => 0,
+            };
+
+            if bar.is_degenerate() {
+                if pending_polls > MAX_BAR_SETTLE_POLLS {
                     // Nunca consolidou: desiste da barra (fica flat no banco,
                     // auditável) e segue em frente. Alerta em sequência.
                     degenerate_streak += 1;
-                    pending_degenerate = None;
+                    pending_bar = None;
                     warn!(
                         symbol = %args.symbol,
-                        ts = %candles[i].timestamp,
+                        ts = %bar.timestamp,
                         degenerate_streak,
-                        "barra degenerada não consolidou após ~15min; barra abandonada"
+                        "barra degenerada não consolidou; barra abandonada"
                     );
                     if degenerate_streak == DEGENERATE_BAR_ALERT_THRESHOLD {
                         record_event(
@@ -872,21 +885,40 @@ async fn run_live(
                             ))
                             .await;
                     }
-                    last_processed = Some(candles[i].timestamp);
+                    last_processed = Some(bar.timestamp);
                     continue;
                 }
-                pending_degenerate = Some((candles[i].timestamp, waits));
-                if waits == 0 || waits % 10 == 0 {
+                if pending_polls == 0 || pending_polls % 10 == 0 {
                     warn!(
                         symbol = %args.symbol,
-                        ts = %candles[i].timestamp,
-                        polls_esperadas = waits,
+                        ts = %bar.timestamp,
+                        pending_polls,
                         "barra degenerada (1 print); aguardando consolidação do feed"
                     );
                 }
+                pending_bar = Some(PendingBar::from_candle(bar, pending_polls));
                 // Não avança o cursor nem processa barras mais novas fora de
                 // ordem: a próxima poll reavalia a mesma barra.
                 break;
+            }
+
+            if !same_as_pending && pending_polls <= MAX_BAR_SETTLE_POLLS {
+                // Barra ainda mudando entre polls (parcial): espera estabilizar.
+                info!(
+                    symbol = %args.symbol,
+                    ts = %bar.timestamp,
+                    pending_polls,
+                    "aguardando barra estabilizar antes de avaliar"
+                );
+                pending_bar = Some(PendingBar::from_candle(bar, pending_polls));
+                break;
+            }
+            if !same_as_pending {
+                warn!(
+                    symbol = %args.symbol,
+                    ts = %bar.timestamp,
+                    "barra não estabilizou após ~15min; avaliando com o melhor dado disponível"
+                );
             }
             if degenerate_streak >= DEGENERATE_BAR_ALERT_THRESHOLD {
                 info!(
@@ -894,7 +926,7 @@ async fn run_live(
                     degenerate_streak, "feed normalizou após sequência de barras degeneradas"
                 );
             }
-            pending_degenerate = None;
+            pending_bar = None;
             degenerate_streak = 0;
 
             // Expiração da entrada stop (regra do livro): se o rompimento não
@@ -1026,6 +1058,31 @@ async fn run_live(
     // Aguarda a entrega: o processo encerra ao retornar.
     alerter.info_await("Live encerrado").await;
     Ok(())
+}
+
+/// Snapshot da barra em espera de estabilização (guarda de qualidade do feed).
+/// A barra recém-fechada só é avaliada quando os valores param de mudar
+/// entre polls — ou quando o cap de espera estoura.
+struct PendingBar {
+    timestamp: chrono::DateTime<chrono::Utc>,
+    high: Decimal,
+    low: Decimal,
+    close: Decimal,
+    volume: Decimal,
+    polls: u32,
+}
+
+impl PendingBar {
+    fn from_candle(candle: &trader_domain::Candle, polls: u32) -> Self {
+        Self {
+            timestamp: candle.timestamp,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume,
+            polls,
+        }
+    }
 }
 
 /// Estado do rastreamento de fills do modo live.
