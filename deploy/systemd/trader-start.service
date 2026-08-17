@@ -1,0 +1,6 @@
+[Unit]
+Description=Start all trader instances (market open)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl start trader-instances.target

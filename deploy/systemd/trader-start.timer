@@ -1,0 +1,9 @@
+[Unit]
+Description=Start trader instances before market open (9h25 ET)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:25:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

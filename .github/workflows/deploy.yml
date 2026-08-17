@@ -12,6 +12,7 @@ on:
     paths:
       - 'crates/**'
       - 'config/**'
+      - 'deploy/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/deploy.yml'
@@ -114,10 +115,11 @@ jobs:
       - name: Package binary and configs
         run: |
           strip target/release/trader-cli
-          mkdir -p deploy/bin
-          cp target/release/trader-cli deploy/bin/
-          cp -r config deploy/
-          tar czf trader-deploy.tar.gz -C deploy .
+          mkdir -p /tmp/pkg/bin
+          cp target/release/trader-cli /tmp/pkg/bin/
+          cp -r config /tmp/pkg/
+          cp -r deploy/systemd deploy/scripts deploy/cron /tmp/pkg/
+          tar czf trader-deploy.tar.gz -C /tmp/pkg .
 
       - name: Setup SSH
         env:
@@ -151,6 +153,17 @@ jobs:
           # configs (sem sobrescrever ajustes locais de porta do default.toml da VM)
           rsync -a --delete trader-deploy/config/strategies/ /opt/trader/config/strategies/ 2>/dev/null || cp -r trader-deploy/config/strategies/. /opt/trader/config/strategies/
           chown -R trader:trader /opt/trader/bin /opt/trader/config
+          # infra versionada (deploy/): units systemd, timers, backup e retencao de journal
+          install -o root -g root -m 644 trader-deploy/systemd/trader@.service trader-deploy/systemd/trader-instances.target trader-deploy/systemd/trader-start.timer trader-deploy/systemd/trader-start.service trader-deploy/systemd/trader-stop.timer trader-deploy/systemd/trader-stop.service -t /etc/systemd/system/
+          mkdir -p /etc/systemd/journald.conf.d
+          install -o root -g root -m 644 trader-deploy/systemd/journald-retention.conf /etc/systemd/journald.conf.d/retention.conf
+          install -o trader -g trader -m 755 trader-deploy/scripts/backup.sh /opt/trader/bin/backup.sh
+          install -o root -g root -m 644 trader-deploy/cron/trader-backup /etc/cron.d/trader-backup
+          mkdir -p /opt/trader/backups && chown trader:trader /opt/trader/backups
+          systemctl daemon-reload
+          systemctl restart systemd-journald
+          systemctl enable --now cron
+          systemctl enable trader-start.timer trader-stop.timer
           # restart condicional: so o que estiver ativo (fora do pregao, nada sobe)
           restarted=""
           for unit in $(systemctl list-units --type=service --state=active 'trader@*' --no-legend | awk '{print $1}'); do

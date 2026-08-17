@@ -1,0 +1,8 @@
+[Unit]
+Description=Stop all trader instances (market close)
+
+[Service]
+Type=oneshot
+# Funciona porque as instâncias têm PartOf=trader-instances.target
+# (ver trader@.service). Sem o PartOf, parar o target não para as unidades.
+ExecStart=/bin/systemctl stop trader-instances.target

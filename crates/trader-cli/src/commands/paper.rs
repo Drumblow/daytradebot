@@ -1107,7 +1107,12 @@ async fn finalize_live_trade(
     let exit_reason = if state.time_exit_triggered {
         trader_domain::ExitReason::Time
     } else {
-        classify_exit_reason(closed.exit_price, ctx.stop_price, ctx.target_price)
+        classify_exit_reason(
+            closed.direction,
+            closed.exit_price,
+            ctx.stop_price,
+            ctx.target_price,
+        )
     };
     state.time_exit_triggered = false;
     let result_in_r = if ctx.risk_amount > Decimal::ZERO {

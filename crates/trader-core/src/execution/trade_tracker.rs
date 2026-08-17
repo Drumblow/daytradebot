@@ -40,11 +40,18 @@ pub struct ClosedTrade {
 }
 
 /// Classifica o motivo da saída comparando o preço médio de saída com o stop
-/// e o alvo planejados. Heurística: tolerância de ~2 ticks, pois o fill real
-/// raramente é exatamente no preço do stop/alvo (slippage). Se não bater em
-/// nenhum dos dois, considera `Manual` (saída fora do plano — ex.: ordem
-/// cancelada/fechada manualmente na corretora).
+/// e o alvo planejados. Heurística direction-aware: uma perna de alvo (limit)
+/// executa a preço igual ou MELHOR que o limite, e uma perna de stop
+/// (stop-market) executa a preço igual ou PIOR que o gatilho. Por isso a
+/// comparação é assimétrica: para long, `exit >= alvo - tolerância` é alvo
+/// e `exit <= stop + tolerância` é stop; para short, o inverso. Isso cobre o
+/// caso do TP marketable (alvo abaixo do mercado enchendo a preço melhor, ex.:
+/// gap através do gatilho — trades de 2026-08-04 e 2026-08-13), que a
+/// comparação por proximidade simétrica classificava errado como `Manual`.
+/// Se não bater em nenhum dos dois, considera `Manual` (saída fora do plano —
+/// ex.: ordem cancelada/fechada manualmente na corretora).
 pub fn classify_exit_reason(
+    direction: Direction,
     exit_price: Decimal,
     stop_price: Decimal,
     target_price: Option<Decimal>,
@@ -53,11 +60,19 @@ pub fn classify_exit_reason(
     let tick = Decimal::new(1, 2); // 0.01 — tick padrão de ações US
     let tolerance = tick * Decimal::from(TOLERANCE_TICKS);
 
-    if (exit_price - stop_price).abs() <= tolerance {
+    let hit_stop = match direction {
+        Direction::Long => exit_price <= stop_price + tolerance,
+        Direction::Short => exit_price >= stop_price - tolerance,
+    };
+    if hit_stop {
         return trader_domain::ExitReason::Stop;
     }
     if let Some(target) = target_price {
-        if (exit_price - target).abs() <= tolerance {
+        let hit_target = match direction {
+            Direction::Long => exit_price >= target - tolerance,
+            Direction::Short => exit_price <= target + tolerance,
+        };
+        if hit_target {
             return trader_domain::ExitReason::Target;
         }
     }
@@ -268,15 +283,73 @@ mod tests {
         let target = Some(Decimal::from(110));
 
         assert_eq!(
-            classify_exit_reason(Decimal::new(9499, 2), stop, target),
+            classify_exit_reason(Direction::Long, Decimal::new(9499, 2), stop, target),
             ExitReason::Stop
         );
         assert_eq!(
-            classify_exit_reason(Decimal::new(11001, 2), stop, target),
+            classify_exit_reason(Direction::Long, Decimal::new(11001, 2), stop, target),
             ExitReason::Target
         );
         assert_eq!(
-            classify_exit_reason(Decimal::from(102), stop, target),
+            classify_exit_reason(Direction::Long, Decimal::from(102), stop, target),
+            ExitReason::Manual
+        );
+    }
+
+    #[test]
+    fn exit_reason_target_filled_at_better_price_is_target() {
+        use trader_domain::ExitReason;
+        // Trade 11 (2026-08-13, IWO): gap através do gatilho deixou o TP limit
+        // abaixo do mercado; a perna de alvo encheu a preço MELHOR que o limite.
+        // A heurística simétrica antiga classificava isso como Manual.
+        let stop = Decimal::new(39338, 2);
+        let target = Some(Decimal::new(39389, 2));
+
+        assert_eq!(
+            classify_exit_reason(Direction::Long, Decimal::new(39401, 2), stop, target),
+            ExitReason::Target
+        );
+    }
+
+    #[test]
+    fn exit_reason_stop_filled_at_worse_price_is_stop() {
+        use trader_domain::ExitReason;
+        // Stop-market com slippage: long sai abaixo do gatilho; short, acima.
+        let stop = Decimal::from(95);
+        let target = Some(Decimal::from(110));
+
+        assert_eq!(
+            classify_exit_reason(Direction::Long, Decimal::new(9450, 2), stop, target),
+            ExitReason::Stop
+        );
+        // Short: stop acima da entrada, alvo abaixo.
+        let stop_short = Decimal::from(110);
+        let target_short = Some(Decimal::from(95));
+        assert_eq!(
+            classify_exit_reason(
+                Direction::Short,
+                Decimal::new(11050, 2),
+                stop_short,
+                target_short
+            ),
+            ExitReason::Stop
+        );
+        assert_eq!(
+            classify_exit_reason(
+                Direction::Short,
+                Decimal::new(9450, 2),
+                stop_short,
+                target_short
+            ),
+            ExitReason::Target
+        );
+        assert_eq!(
+            classify_exit_reason(
+                Direction::Short,
+                Decimal::from(102),
+                stop_short,
+                target_short
+            ),
             ExitReason::Manual
         );
     }

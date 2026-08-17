@@ -26,8 +26,9 @@ Onde ficam as coisas na VM:
 | IBC / credenciais do Gateway | `/opt/trader/ibc/` (`ibc.ini`, permissão 600) |
 | Env das 8 instâncias | `/etc/trader/instances/*.env` (client_ids 1–8) |
 | Env compartilhado | `/etc/trader/trader.env` |
-| Backups do banco | `/opt/trader/backups` |
+| Backups do banco | `/opt/trader/backups` (cron diário 21:30 UTC — serviço `cron` precisa estar ativo; o deploy garante isso) |
 | Compose do Postgres | `docker-compose.yml` do repo (deploy na VM) |
+| Units systemd / timers / script de backup | versionados em `deploy/` no repo e instalados pelo CI — **não editar à mão na VM** (editar o repo e dar push) |
 
 ## Monitorar
 

@@ -1,0 +1,24 @@
+[Unit]
+Description=Trader bot instance %i
+After=network-online.target docker.service ibgateway.service
+Wants=network-online.target
+# Propagação de stop/restart do target agregador: sem isto, `systemctl stop
+# trader-instances.target` parava só o target e as instâncias seguiam rodando
+# (bug operacional de 2026-08-07..16 — bot 24/7 com loops de circuit breaker
+# fora do pregão). Ver docs/reports/day9-2026-08-14.md §4.
+PartOf=trader-instances.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/opt/trader
+EnvironmentFile=/etc/trader/trader.env
+EnvironmentFile=/etc/trader/instances/%i.env
+ExecStart=/opt/trader/bin/trader-cli paper --mode live --symbol ${SYMBOL} --strategy ${STRATEGY}
+Restart=on-failure
+RestartSec=30
+OOMScoreAdjust=300
+
+[Install]
+WantedBy=trader-instances.target

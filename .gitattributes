@@ -1,0 +1,3 @@
+# Shell scripts e units instalados na VM Linux precisam de LF.
+*.sh text eol=lf
+deploy/** text eol=lf
