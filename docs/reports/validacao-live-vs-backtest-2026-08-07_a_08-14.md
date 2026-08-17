@@ -88,7 +88,25 @@ O backtest "achou" um short às 10h00 que o live não viu: artefato da série de
 6. **Reparar o histórico:** apagar os candles degenerados de 08-07 em diante e re-ingerir da IBKR (barras passadas vêm restated/completas) — manter registro do reparo. Depois disso, **refazer esta validação cruzada**.
 
 ## 7. Notas de método (para auditoria)
-
 - Backtests rodados com o binário local, mesmo commit do deploy, contra restore do banco da VM (`trader_compare`), janela 2026-07-27 → 2026-08-14, timeframe 15m, configs de `config/strategies/` — runs persistidos (ids 201–208 no banco de comparação).
 - O EMA do snapshot do sinal 297 (440.1834) bate com o EMA recomputado sobre os candles persistidos (440.1924, algoritmo do projeto — seed SMA dos últimos 20 + 19 iterações), confirmando que o live avaliou a série degenerada persistida.
 - Divergência de preenchimento conhecida e separada: o simulador do backtest preenche stop-entry em `trigger × (1+0.1%)`, enquanto o live preenche a mercado real — P&L de trades individuais nunca bate centavo a centavo; a comparação válida é de **sinais**, e é ela que falha por causa do dado.
+
+---
+
+## 8. Revalidação com dados reparados (2026-08-17, fim do dia)
+
+Após o deploy do upsert de auto-reparo, o histórico de 08-07→08-17 foi re-ingerido da IBKR (barras consolidadas). IWV: 26/26 barras com range por dia (antes: 2–8), range médio 0.17–0.38 (antes: 0.01). O buraco do cutover de 08-07 também foi preenchido. **Os 8 backtests foram refeitos sobre os dados bons.** Resultado na janela:
+
+| Combinação | Backtest (dados bons) | Live real | Leitura |
+|------------|----------------------|-----------|---------|
+| IWM pullback | **08-07 13h30 ET long +$71.56 (alvo)** | 3 sinais, 0 ordens (sessão morta no cutover) | **winner perdido pela migração** |
+| IWV pullback | **08-10 11h45 ET long -$63.27 (stop)** | 3 sinais, entradas expiradas sem toque | setup diferente do que o live viu (dado degradado em tempo real) |
+| IWM opening-reversal | **08-12 10h00 ET short +$117.46 (alvo)** | sem sinal | **winner perdido pelo dado degradado** (não era artefato de barra flat — persiste com dados bons) |
+| IWV pullback 08-12 | sem setup | trade real +$69.42 | o win do live **não existiria** com dados bons |
+| IWO pullback 08-13 | sem setup | trade real -$83.39 | o loss do live **não existiria** com dados bons |
+| IWO/IWN/IJS/VBR/AVUV | 0 trades | 0 trades | consistente |
+
+**Conclusão final:** com dados íntegros, live e backtest da semana são **descorrelacionados** — as decisões do live foram tomadas sobre barras degradadas em tempo real, ponto. Os dois trades reais da semana (o win e o loss) não teriam acontecido; dois outros trades (um win, um loss) teriam. **Recomendação formal: excluir os pregões 4–9 da amostra estatística do gate B** (trades 10 e 11 marcados `data_quality_suspect`), tratando a semana como teste de infraestrutura. A contagem válida recomeça com o feed estabilizado (guarda v3, deploy de 2026-08-17 ~15h ET). O dia 10 (08-17) também é de transição (dado degradado até ~15h ET) — avaliar ao fechar.
+
+**Aprendizado para o processo:** a validação cruzada live × backtest, rodada semanalmente, teria pego a degradação no dia 8-10. Sugestão: incluir `debug-candles` (ou contagem de barras flat no banco) na reconciliação semanal do gate.
