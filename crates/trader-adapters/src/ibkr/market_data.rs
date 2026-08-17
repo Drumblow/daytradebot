@@ -266,8 +266,79 @@ fn tick_to_quote(symbol: &str, tick: &TickTypes) -> Result<Quote, DataError> {
     }
 }
 
+/// Fotografia crua de uma barra histórica — diagnóstico de qualidade do feed.
+///
+/// Criado em 2026-08-17 para investigar a degeneração de barras na VM Oracle
+/// (conta paper sem subscrição de dados recebe barras recentes de 1 print).
+#[derive(Debug)]
+pub struct RawBar {
+    /// Timestamp da barra como veio do gateway (formato Debug do BarTimestamp).
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+}
+
+impl RawBar {
+    /// Barra de 1 print (high == low) — assinatura de feed sem dados em tempo real.
+    pub fn is_degenerate(&self) -> bool {
+        self.high <= self.low
+    }
+}
+
+/// Busca barras históricas cruas para diagnóstico, sem transformar nem persistir.
+///
+/// Com `realtime = true`, pede `MarketDataType::Realtime` antes de buscar —
+/// sem subscrição, a IBKR serve barras recentes degradadas e a chamada pode
+/// falhar ou mudar o conteúdo retornado (é exatamente isso que o diagnóstico
+/// quer observar).
+pub async fn fetch_raw_bars(
+    config: &IbkrConfig,
+    symbol: &str,
+    timeframe: TimeFrame,
+    days: i32,
+    realtime: bool,
+) -> Result<Vec<RawBar>, DataError> {
+    let client = ibapi::Client::connect(&config.connection_string(), config.client_id)
+        .await
+        .map_err(|e| DataError::ProviderUnavailable(e.to_string()))?;
+
+    if realtime {
+        client
+            .switch_market_data_type(ibapi::market_data::MarketDataType::Realtime)
+            .await
+            .map_err(|e| DataError::Provider(format!("switch para Realtime falhou: {e}")))?;
+    }
+
+    let contract = Contract::stock(symbol).build();
+    let bar_size = timeframe_to_historical_bar_size(timeframe)?;
+
+    let data = client
+        .historical_data(&contract, bar_size)
+        .duration(days.days())
+        .what_to_show(HistoricalWhatToShow::Trades)
+        .fetch()
+        .await
+        .map_err(|e| DataError::Provider(e.to_string()))?;
+
+    Ok(data
+        .bars
+        .iter()
+        .map(|b| RawBar {
+            date: format!("{:?}", b.date),
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: b.volume,
+        })
+        .collect())
+}
+
 /// Mapeia `TimeFrame` do domínio para `ibapi::market_data::historical::BarSize`.
-fn timeframe_to_historical_bar_size(
+pub fn timeframe_to_historical_bar_size(
     timeframe: TimeFrame,
 ) -> Result<ibapi::market_data::historical::BarSize, DataError> {
     use ibapi::market_data::historical::BarSize;

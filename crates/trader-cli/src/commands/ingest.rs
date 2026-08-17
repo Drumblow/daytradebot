@@ -60,6 +60,22 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         return Ok(());
     }
 
+    // Qualidade do feed: barras degeneradas (1 print, high==low) indicam
+    // feed sem subscrição de dados em tempo real — ingerir isso corrompe
+    // backtests (ver docs/reports/validacao-live-vs-backtest-2026-08-07_a_08-14.md).
+    let degenerate = candles.iter().filter(|c| c.is_degenerate()).count();
+    if degenerate > 0 {
+        warn!(
+            degenerate,
+            total = candles.len(),
+            "barras degeneradas na série recebida — verifique a subscrição de dados do feed"
+        );
+        println!(
+            "⚠️  {degenerate}/{} barras degeneradas (high==low) recebidas do feed",
+            candles.len()
+        );
+    }
+
     // Persiste no banco.
     let database_url = config.app_config.database.url()?;
     let pool = create_pool(&database_url).await?;

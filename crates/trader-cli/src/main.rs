@@ -128,6 +128,24 @@ enum Commands {
         #[arg(short, long)]
         date: Option<String>,
     },
+    /// Diagnóstico cru do feed de candles da IBKR (não persiste nada).
+    DebugCandles {
+        /// Símbolo do ativo.
+        #[arg(short, long, default_value = "IWV")]
+        symbol: String,
+        /// Timeframe (1m, 5m, 15m, 30m, 1h, 4h, 1d).
+        #[arg(short, long, default_value = "15m")]
+        timeframe: TimeFrameArg,
+        /// Quantidade de dias para trás.
+        #[arg(short, long, default_value_t = 1)]
+        days: i32,
+        /// Quantas barras finais imprimir.
+        #[arg(short, long, default_value_t = 30)]
+        bars: usize,
+        /// Pede MarketDataType::Realtime antes de buscar.
+        #[arg(long)]
+        realtime: bool,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -257,6 +275,25 @@ async fn main() -> Result<()> {
             commands::analyze::run(&app_config, commands::analyze::Args { symbol, strategy }).await
         }
         Commands::Journal { date } => commands::journal::run(&app_config, date).await,
+        Commands::DebugCandles {
+            symbol,
+            timeframe,
+            days,
+            bars,
+            realtime,
+        } => {
+            commands::debug_candles::run(
+                &app_config,
+                commands::debug_candles::Args {
+                    symbol,
+                    timeframe: timeframe.into(),
+                    days,
+                    bars,
+                    realtime,
+                },
+            )
+            .await
+        }
         Commands::Walkforward {
             symbol,
             strategy,

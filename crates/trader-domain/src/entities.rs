@@ -124,6 +124,15 @@ impl Candle {
         self.high - self.low
     }
 
+    /// Barra degenerada: um único print (high == low), típica de feed sem
+    /// subscrição de dados em tempo real — barras recentes chegam como
+    /// "last price only", volume 0. Price action depende de high/low;
+    /// operar sobre barras assim é operar cego. Ver
+    /// `docs/reports/validacao-live-vs-backtest-2026-08-07_a_08-14.md`.
+    pub fn is_degenerate(&self) -> bool {
+        self.high <= self.low
+    }
+
     /// Corpo do candle (|close - open|).
     pub fn body(&self) -> Decimal {
         (self.close - self.open).abs()
@@ -218,6 +227,35 @@ mod tests {
             Decimal::from(1000),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn degenerate_bar_detection() {
+        let flat = Candle::new(
+            "IWV",
+            TimeFrame::M15,
+            Utc::now(),
+            Decimal::new(44198, 2),
+            Decimal::new(44198, 2),
+            Decimal::new(44198, 2),
+            Decimal::new(44198, 2),
+            Decimal::ZERO,
+        )
+        .expect("barra flat é válida estruturalmente");
+        assert!(flat.is_degenerate());
+
+        let normal = Candle::new(
+            "IWV",
+            TimeFrame::M15,
+            Utc::now(),
+            Decimal::new(44170, 2),
+            Decimal::new(44199, 2),
+            Decimal::new(44167, 2),
+            Decimal::new(44170, 2),
+            Decimal::from(649),
+        )
+        .expect("barra normal");
+        assert!(!normal.is_degenerate());
     }
 
     #[test]

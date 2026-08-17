@@ -569,6 +569,11 @@ const LIVE_POLL_SECS: u64 = 30;
 /// bordas e setups marginais sumiam; divergência observada em 2026-08-05).
 const LIVE_MAX_CANDLES: usize = 200;
 
+/// Barras degeneradas consecutivas (1 print, high==low) que disparam alerta
+/// crítico + evento em `system_events`. Abaixo disso, apenas log: barras
+/// espúrias isoladas não devem acordar ninguém.
+const DEGENERATE_BAR_ALERT_THRESHOLD: u32 = 5;
+
 /// Falhas consecutivas de infra (dados/reconciliação) que disparam o
 /// circuit breaker: o live encerra com erro em vez de ficar "morto" em
 /// silêncio.
@@ -698,6 +703,9 @@ async fn run_live(
     let mut last_processed: Option<chrono::DateTime<chrono::Utc>> = None;
     let mut current_day = chrono::Utc::now().date_naive();
     let mut consecutive_failures: u32 = 0;
+    // Barras degeneradas consecutivas (1 print, high==low — feed sem
+    // subscrição de dados). Ver guarda no loop de candles.
+    let mut degenerate_streak: u32 = 0;
 
     record_event(
         repos,
@@ -810,6 +818,49 @@ async fn run_live(
                     warn!(error = %e, "falha ao persistir candle do live");
                 }
             }
+
+            // Guarda de qualidade de dados: barra degenerada (1 print,
+            // high==low — assinatura do feed sem subscrição de dados em
+            // tempo real, ver docs/reports/validacao-live-vs-backtest-2026-08-07_a_08-14.md).
+            // A barra fica persistida para auditoria, mas NÃO alimenta
+            // estratégia nem gestão de posição: price action sem high/low é
+            // cego. Alerta uma vez por sequência a partir do limiar.
+            if candles[i].is_degenerate() {
+                degenerate_streak += 1;
+                warn!(
+                    symbol = %args.symbol,
+                    ts = %candles[i].timestamp,
+                    degenerate_streak,
+                    "barra degenerada (high==low); avaliação da barra pulada"
+                );
+                if degenerate_streak == DEGENERATE_BAR_ALERT_THRESHOLD {
+                    record_event(
+                        repos,
+                        "warn",
+                        "data_quality",
+                        "degenerate_bar_streak",
+                        &format!(
+                            "{}: {} barras degeneradas consecutivas; sinais suspensos",
+                            args.symbol, degenerate_streak
+                        ),
+                    )
+                    .await;
+                    alerter
+                        .critical_await(&format!(
+                            "⚠️ {}: {} barras degeneradas seguidas (feed sem high/low); sinais suspensos até o feed normalizar",
+                            args.symbol, degenerate_streak
+                        ))
+                        .await;
+                }
+                last_processed = Some(candles[i].timestamp);
+                continue;
+            } else if degenerate_streak >= DEGENERATE_BAR_ALERT_THRESHOLD {
+                info!(
+                    symbol = %args.symbol,
+                    degenerate_streak, "feed normalizou após sequência de barras degeneradas"
+                );
+            }
+            degenerate_streak = 0;
 
             // Expiração da entrada stop (regra do livro): se o rompimento não
             // aconteceu em `entry_validity_candles` candles, cancela a ordem
