@@ -103,6 +103,17 @@ pub enum RejectionReason {
     MomentumAgainst,
     /// Últimos candles não formam área de balanceamento (balance breakout).
     NoBalanceArea,
+    // --- Range Extreme Fade (docs/strategies/range-extreme-fade-v1.md, seção 10) ---
+    /// Filtro de contexto: dia com tendência/EMA inclinada/range grande demais.
+    NotARangeDay,
+    /// Rompimento estendeu além do máximo em ATR (momentum real, não é fade).
+    BreakoutTooStrong,
+    /// Regra da EMA do Cap. 5 violada (fade contra o lado dominante da EMA).
+    WrongSideOfEma,
+    /// Veto meio do dia + meio do range (Cap. 5).
+    MiddayMidrange,
+    /// Equilíbrio total detectado (3+ barras sobrepostas com doji, Cap. 5).
+    BarbWire,
     StopMissing,
     InvalidQuantity,
     InsufficientBuyingPower,

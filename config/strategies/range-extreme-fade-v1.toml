@@ -1,0 +1,65 @@
+[strategy]
+id = "range-extreme-fade-v1"
+version = "1.0.0"
+source = "Al Brooks - Reading Price Charts Bar by Bar, Cap. 9 (Failed HH/LL Breakouts) + Cap. 5 (Barb Wire)"
+
+[strategy.parameters]
+# Timeframe operacional
+operational_timeframe = "15m"
+
+# Detector de dia de range (seção 4.1 do doc — interpretação nossa)
+structure_lookback = 12
+max_ema_slope_pct_per_bar = 0.0005
+daily_atr_period = 14
+max_day_range_atr_mult = 1.5
+
+# Extremo rompido (seção 4.2 do doc). Calibrado no teste de frequência de
+# 2026-08-17 (§12.1 do doc): 0.3 era raro demais (27 sinais/ativo em 17,5m);
+# 0.5 passa de ~50 sinais/ativo sem a regra da EMA.
+max_extension_atr_mult = 0.5
+
+# Regra da EMA (seção 4.3 do doc; no livro vale para Barb Wire — Cap. 5).
+# Desligada por default conforme a calibração de frequência (variante C).
+use_ema_side_rule = false
+ema_side_lookback = 8
+
+# Veto meio do dia + meio do range (seção 4.4 do doc; literal, Cap. 5).
+# Em UTC, horário de verão americano: 11:30–14:00 ET = 15:30–18:00 UTC.
+# Ajustar na virada do DST (16:30–19:00 UTC no inverno).
+midday_start_time = "15:30:00"
+midday_end_time = "18:00:00"
+
+# Veto Barb Wire (seção 4.5 do doc; literal, Cap. 5)
+barb_wire_bars = 3
+barb_wire_overlap_pct = 0.5
+barb_wire_doji_body_pct = 0.3
+
+# Barra de sinal forte (seção 5.1 do doc; Cap. 1/9)
+signal_body_min_pct = 0.30
+signal_wick_min_pct = 0.334
+
+# Entrada, stop e alvo (seção 6 do doc)
+atr_period = 14
+entry_order_type = "stop"
+entry_offset_ticks = 1
+# Candles de validade da entrada stop esperando o rompimento (ADR-009)
+entry_validity_candles = 2
+# Alvo fixo 1,5R (adaptação do "scalp de volta ao interior do range" ao TP
+# único; alvo estrutural no lado oposto do range é candidato de v2)
+target_r_multiple = 1.5
+min_risk_reward = 1.2
+
+# Risco: usa o [risk].risk_per_trade_pct global (1,0) — sem override
+max_spread_pct = 0.05
+max_atr_pct = 1.5
+
+# Precisão do ativo
+tick_size = 0.01
+
+# Horário (UTC) — janela 09:45–15:15 ET (fora a primeira hora, território da
+# opening-reversal-v1, e o trecho final, para o fade ter tempo de voltar).
+#   - Horário de verão americano (mar–nov): 13:45–19:15 UTC  ← ATUAL
+#   - Horário de inverno americano (nov–mar): 14:45–20:15 UTC
+# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
+trading_start_time = "13:45:00"
+trading_end_time = "19:15:00"

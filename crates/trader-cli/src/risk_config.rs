@@ -12,6 +12,7 @@ use trader_core::strategies::breakout_first_pullback_v1::config::StrategyParamet
 use trader_core::strategies::failure_test_long_v1::config::StrategyParameters as FailureTestParams;
 use trader_core::strategies::opening_reversal_v1::config::StrategyParameters as OpeningReversalParams;
 use trader_core::strategies::pullback_trend_v1::config::StrategyParameters as PullbackParams;
+use trader_core::strategies::range_extreme_fade_v1::config::StrategyParameters as RangeFadeParams;
 use trader_domain::TradingMode;
 use trader_infra::config::RiskSettings;
 
@@ -72,6 +73,19 @@ impl From<&BalanceAreaParams> for StrategyRiskParams {
 
 impl From<&OpeningReversalParams> for StrategyRiskParams {
     fn from(p: &OpeningReversalParams) -> Self {
+        Self {
+            min_risk_reward: p.min_risk_reward,
+            max_spread_pct: p.max_spread_pct,
+            max_atr_pct: p.max_atr_pct,
+            trading_start_time: p.trading_start_time.clone(),
+            trading_end_time: p.trading_end_time.clone(),
+            risk_per_trade_pct: p.risk_per_trade_pct,
+        }
+    }
+}
+
+impl From<&RangeFadeParams> for StrategyRiskParams {
+    fn from(p: &RangeFadeParams) -> Self {
         Self {
             min_risk_reward: p.min_risk_reward,
             max_spread_pct: p.max_spread_pct,
