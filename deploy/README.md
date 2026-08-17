@@ -15,7 +15,7 @@ inativo). Desde 2026-08-17 o deploy do GitHub Actions instala tudo daqui
 | `systemd/trader-stop.{timer,service}` | `/etc/systemd/system/` | para as instâncias seg–sex 16h10 ET |
 | `systemd/journald-retention.conf` | `/etc/systemd/journald.conf.d/retention.conf` | retenção explícita de logs (21 dias / 1 GB) |
 | `scripts/backup.sh` | `/opt/trader/bin/backup.sh` | pg_dump diário + retenção 7 dias |
-| `cron/trader-backup` | `/etc/cron.d/trader-backup` | agenda o backup (21:30 UTC) |
+| `systemd/trader-backup.{timer,service}` | `/etc/systemd/system/` | agenda o backup (21:30 UTC) — substitui o `/etc/cron.d/trader-backup` original: a VM nem tinha o pacote `cron` instalado (por isso o backup nunca rodou, 08-07→08-17) |
 
 **Não** estão aqui (seguem manuais na VM): `/etc/trader/trader.env` e
 `/etc/trader/instances/*.env` (contêm config sensível/local), `ibgateway.service`

@@ -1,3 +1,0 @@
-# Backup diário do banco — 21:30 UTC, retenção de 7 dias (script faz a limpeza).
-# Instalado em /etc/cron.d/trader-backup pelo deploy (ver .github/workflows/deploy.yml).
-30 21 * * * root /opt/trader/bin/backup.sh

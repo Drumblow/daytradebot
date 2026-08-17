@@ -26,7 +26,7 @@ Onde ficam as coisas na VM:
 | IBC / credenciais do Gateway | `/opt/trader/ibc/` (`ibc.ini`, permissão 600) |
 | Env das 8 instâncias | `/etc/trader/instances/*.env` (client_ids 1–8) |
 | Env compartilhado | `/etc/trader/trader.env` |
-| Backups do banco | `/opt/trader/backups` (cron diário 21:30 UTC — serviço `cron` precisa estar ativo; o deploy garante isso) |
+| Backups do banco | `/opt/trader/backups` (timer systemd `trader-backup.timer`, diário 21:30 UTC — instalado e habilitado pelo deploy) |
 | Compose do Postgres | `docker-compose.yml` do repo (deploy na VM) |
 | Units systemd / timers / script de backup | versionados em `deploy/` no repo e instalados pelo CI — **não editar à mão na VM** (editar o repo e dar push) |
 
@@ -92,10 +92,10 @@ Se uma instância encerrar com `circuit breaker: ...`:
 
 ## Backup do banco
 
-Backup diário automático via cron: `pg_dump` às **21:30 UTC**, retenção de **7 dias**, em `/opt/trader/backups`. Para um backup manual ou restore:
+Backup diário automático via timer systemd `trader-backup.timer`: `pg_dump` às **21:30 UTC**, retenção de **7 dias**, em `/opt/trader/backups`. (Até 2026-08-17 era um job de `/etc/cron.d`, mas a VM não tinha o pacote `cron` — nunca executou.) Para um backup manual ou restore:
 
 ```bash
-docker exec trader-postgres pg_dump -U trader trader | gzip > /opt/trader/backups/manual-$(date +%F).sql.gz
+docker exec trader-postgres pg_dump -U trader trader_db | gzip > /opt/trader/backups/manual-$(date +%F).sql.gz
 ```
 
 ## ⚠️ Sessão única IBKR

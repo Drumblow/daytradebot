@@ -1,0 +1,6 @@
+[Unit]
+Description=Daily pg_dump backup of the trader database
+
+[Service]
+Type=oneshot
+ExecStart=/opt/trader/bin/backup.sh
