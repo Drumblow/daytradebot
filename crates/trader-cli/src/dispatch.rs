@@ -10,6 +10,7 @@ use trader_core::execution::time_exit::TimeExitConfig;
 use trader_core::strategies::balance_area_breakout_v1::BalanceAreaBreakoutV1;
 use trader_core::strategies::breakout_first_pullback_v1::BreakoutFirstPullbackV1;
 use trader_core::strategies::failure_test_long_v1::FailureTestLongV1;
+use trader_core::strategies::low2_m2s_short_v1::Low2M2sShortV1;
 use trader_core::strategies::opening_reversal_v1::OpeningReversalV1;
 use trader_core::strategies::pullback_trend_v1::PullbackTrendV1;
 use trader_core::strategies::range_extreme_fade_v1::RangeExtremeFadeV1;
@@ -25,6 +26,7 @@ pub enum LoadedStrategy {
     OpeningReversalV1(OpeningReversalV1),
     BalanceAreaBreakoutV1(BalanceAreaBreakoutV1),
     RangeExtremeFadeV1(RangeExtremeFadeV1),
+    Low2M2sShortV1(Low2M2sShortV1),
 }
 
 /// Carrega a estratégia pelo id (nome do arquivo em `config/strategies/`).
@@ -54,8 +56,12 @@ pub fn load_strategy(strategy_id: &str, toml_str: &str) -> Result<LoadedStrategy
             RangeExtremeFadeV1::from_toml(toml_str)
                 .with_context(|| "falha ao fazer parse da configuração TOML da estratégia")?,
         )),
+        "low2-m2s-short-v1" => Ok(LoadedStrategy::Low2M2sShortV1(
+            Low2M2sShortV1::from_toml(toml_str)
+                .with_context(|| "falha ao fazer parse da configuração TOML da estratégia")?,
+        )),
         other => anyhow::bail!(
-            "estratégia desconhecida: {other} (suportadas: pullback-trend-v1, failure-test-long-v1, breakout-first-pullback-v1, opening-reversal-v1, balance-area-breakout-v1, range-extreme-fade-v1)"
+            "estratégia desconhecida: {other} (suportadas: pullback-trend-v1, failure-test-long-v1, breakout-first-pullback-v1, opening-reversal-v1, balance-area-breakout-v1, range-extreme-fade-v1, low2-m2s-short-v1)"
         ),
     }
 }
@@ -70,6 +76,7 @@ impl LoadedStrategy {
             Self::OpeningReversalV1(s) => s.parameters().entry_validity_candles,
             Self::BalanceAreaBreakoutV1(s) => s.parameters().entry_validity_candles,
             Self::RangeExtremeFadeV1(s) => s.parameters().entry_validity_candles,
+            Self::Low2M2sShortV1(s) => s.parameters().entry_validity_candles,
         }
     }
 
@@ -82,6 +89,7 @@ impl LoadedStrategy {
             Self::OpeningReversalV1(s) => s.config_hash(),
             Self::BalanceAreaBreakoutV1(s) => s.config_hash(),
             Self::RangeExtremeFadeV1(s) => s.config_hash(),
+            Self::Low2M2sShortV1(s) => s.config_hash(),
         }
     }
 
@@ -94,6 +102,7 @@ impl LoadedStrategy {
             Self::OpeningReversalV1(s) => StrategyRiskParams::from(s.parameters()),
             Self::BalanceAreaBreakoutV1(s) => StrategyRiskParams::from(s.parameters()),
             Self::RangeExtremeFadeV1(s) => StrategyRiskParams::from(s.parameters()),
+            Self::Low2M2sShortV1(s) => StrategyRiskParams::from(s.parameters()),
         }
     }
 
@@ -107,6 +116,7 @@ impl LoadedStrategy {
             Self::OpeningReversalV1(_) => None,       // sem saída por tempo na v1 (doc §6)
             Self::BalanceAreaBreakoutV1(_) => None,   // sem saída por tempo na v1 (doc §6)
             Self::RangeExtremeFadeV1(_) => None,      // sem saída por tempo na v1 (doc §6)
+            Self::Low2M2sShortV1(_) => None,          // sem saída por tempo na v1 (doc §6)
         }
     }
 }
@@ -120,6 +130,7 @@ impl Strategy for LoadedStrategy {
             Self::OpeningReversalV1(s) => s.id(),
             Self::BalanceAreaBreakoutV1(s) => s.id(),
             Self::RangeExtremeFadeV1(s) => s.id(),
+            Self::Low2M2sShortV1(s) => s.id(),
         }
     }
 
@@ -131,6 +142,7 @@ impl Strategy for LoadedStrategy {
             Self::OpeningReversalV1(s) => s.name(),
             Self::BalanceAreaBreakoutV1(s) => s.name(),
             Self::RangeExtremeFadeV1(s) => s.name(),
+            Self::Low2M2sShortV1(s) => s.name(),
         }
     }
 
@@ -142,6 +154,7 @@ impl Strategy for LoadedStrategy {
             Self::OpeningReversalV1(s) => s.source(),
             Self::BalanceAreaBreakoutV1(s) => s.source(),
             Self::RangeExtremeFadeV1(s) => s.source(),
+            Self::Low2M2sShortV1(s) => s.source(),
         }
     }
 
@@ -153,6 +166,7 @@ impl Strategy for LoadedStrategy {
             Self::OpeningReversalV1(s) => s.version(),
             Self::BalanceAreaBreakoutV1(s) => s.version(),
             Self::RangeExtremeFadeV1(s) => s.version(),
+            Self::Low2M2sShortV1(s) => s.version(),
         }
     }
 
@@ -169,6 +183,7 @@ impl Strategy for LoadedStrategy {
             Self::OpeningReversalV1(s) => s.analyze(ctx, state, candles),
             Self::BalanceAreaBreakoutV1(s) => s.analyze(ctx, state, candles),
             Self::RangeExtremeFadeV1(s) => s.analyze(ctx, state, candles),
+            Self::Low2M2sShortV1(s) => s.analyze(ctx, state, candles),
         }
     }
 }

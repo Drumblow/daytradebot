@@ -217,6 +217,26 @@ crates/trader-core/src/strategies/low2_m2s_short_v1/
 [ ] Paper live (novas instâncias) — só após aprovação
 ```
 
-## 16. Veredito da validação
+## 16. Veredito da validação (2026-08-17) — REPROVADA / ARQUIVADA
 
-*(a preencher após o pipeline)*
+Pipeline: implementação espelhada (15 testes sintéticos, 179 totais, clippy limpo) → backtest 17,5 meses (2025-02-24 → 2026-08-14) × 14 ativos (runs 230–243 no banco de comparação).
+
+### Backtest (in-sample, limiares herdados da irmã)
+
+| Resultado | Ativos | Números |
+|---|---|---|
+| "Melhores" | IWV (50t, WR 36%, PF 1,29), QQQ (57t, PF 1,14) | nem estes passam da barra inicial |
+| Resto | 12 ativos | PF 0,58–0,94, WR 23–32%, **net agregado -$55k** em 962 trades |
+
+**Zero ativos passam da barra inicial** (WR ≥ 40%, PF ≥ 1,3, avgR > 0,15). Walk-forward nem rodou — o funil mata aqui, sem gastar computação OOS.
+
+### Por que falhou (análise honesta)
+
+1. **Regime:** o histórico 2025-02 → 2026-08 é majoritariamente bull. Short estrutural de continuação precisa de bear trends sustentadas — o livro mesmo restringe o M2S a "strong bear trend days" (Cap. 15), e a nossa janela teve poucos. A estratégia não é "errada"; é de regime, e o regime não apareceu na amostra.
+2. **Simplificações do espelho:** a detecção herdada da irmã (pullback por extremo simples, sem a contagem literal Low 1/Low 2 e sem o filtro de força do bear trend day) pode ter capturado correções fracas demais. São hipóteses de v1.1, não desculpa — com os critérios objetivos atuais, reprovada.
+
+### Decisão
+
+**ARQUIVADA** — mesmo destino da failure-test-long-v1 e da breakout-first-pullback-v1: código fica no repositório (testado, inerte, sem instância live), doc permanece como registro. Revisitar só como `low2-m2s-short-v1.1` com decisão explícita, idealmente quando houver um trecho de bear market na base (a estratégia é o hedge natural do portfólio long-heavy — o dia que o regime virar, ela merece re-teste com o filtro de "strong bear trend day" do Cap. 15 implementado de verdade).
+
+**Custo total da candidata:** ~2h de engenharia e um backtest — o funil funcionando como foi desenhado.
