@@ -214,6 +214,33 @@ Registrar em `trader-cli/src/dispatch.rs` e no registry; config TOML própria.
 [ ] Paper live (novas instâncias na VM) — só após aprovação
 ```
 
-## 16. Veredito da validação
+## 16. Veredito da validação (2026-08-17) — APROVADA PARA ACUMULAR AMOSTRA (small-cap value)
 
-*(a preencher após o pipeline)*
+Pipeline: backtest 17,5 meses (2025-02-24 → 2026-08-14) × 14 ativos (runs 210–223 no banco de comparação) → walk-forward OOS 6 janelas nos 6 que passaram da barra inicial (runs 224–229).
+
+### Backtest (in-sample, config default calibrada — §12.1)
+
+| Grupo | Ativos | Leitura |
+|---|---|---|
+| **Fortes** | SLYV (27t, WR 63%, PF 2,20, avgR 0,56), AVUV (27t, PF 2,20), IWV (25t, PF 1,94), MDY (28t, PF 1,46), IJR (39t, PF 1,39) | **small/mid-cap VALUE** — o fade de extremos funciona onde há mean reversion |
+| Marginais | IWN, SCHA, VBR, IJS, VB | PF 1,0–1,35 |
+| **Reprovados** | IWM (WR 17%, PF 0,28), SPY (WR 20%), QQQ, IWO | índices growth/momentum: rompimentos tendem a seguir, não falhar |
+
+O padrão é estrutural e faz sentido: **ETFs de value/small revertem; índices momentumosos não**. Nota de cautela do processo: 42+ combinações já foram testadas neste projeto — risco de seleção; o walk-forward abaixo é a evidência OOS.
+
+### Walk-forward OOS (6 janelas, 2025-05 → 2026-08)
+
+| Ativo | OOS trades | Janelas positivas | P&L OOS | Veredito |
+|---|---|---|---|---|
+| **AVUV** | 24 | **5/6** | +$3.701 | ✅ consistente (só janela 1 negativa) |
+| **SLYV** | 25 | 4/6 | +$3.278 | ✅ bom (janelas 1 e 5 negativas) |
+| **IWV** | 24 | **5/6** | +$1.404 | ✅ consistente, valores menores |
+| MDY | 26 | 4/6 | +$500 | ⚠️ borderline (janela 5 muito ruim) |
+| IJR | 35 | 4/6 | +$1.749 | ⚠️ borderline (janelas 5–6 recentes negativas) |
+| IWN | 25 | 4/6 | +$1.901 | ⚠️ borderline (janelas 4–5 zeradas) |
+
+### Veredito
+
+**APROVADA PARA ACUMULAR AMOSTRA** (mesma categoria das 3 irmãs em live) nos ativos **AVUV, SLYV e IWV** — os três com 5/6 ou 4/6 janelas positivas e sem deterioração recente. Gate A formal segue aberto: OOS por ativo ~24–25 trades (< 50) — a amostra forward no paper live fecha isso. MDY/IJR/IWN ficam de fora da primeira leva live (deterioração nas janelas recentes); reavaliar quando a amostra crescer. IWM/SPY/QQQ/IWO **não operam esta estratégia** (reprovados).
+
+**Candidatos de v2 registrados (medir antes de intuir):** alvo estrutural no lado oposto do range (vs 1,5R fixo); segunda entrada (o livro a prefere); pivô-2 como nível alternativo ao extremo do dia; regra da EMA ligada só em contexto Barb Wire.
