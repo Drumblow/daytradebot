@@ -564,10 +564,15 @@ fn build_placed_order(
 const LIVE_POLL_SECS: u64 = 30;
 
 /// Número máximo de candles mantidos na janela de análise do modo live.
-/// 200 candles ≈ 8 dias de 15min — aproxima o contexto do live do histórico
-/// completo do backtest (com 80, EMA20/sequência de tendência divergiam nas
-/// bordas e setups marginais sumiam; divergência observada em 2026-08-05).
-const LIVE_MAX_CANDLES: usize = 200;
+/// 600 candles ≈ 23 pregões de 15min. A janela precisa cobrir o warmup das
+/// estratégias com contexto multi-dia: a range-extreme-fade-v1 calcula
+/// ATR DIÁRIO de 14 dias completos anteriores (~15 pregões × 26 barras ≈
+/// 390 barras) — com 200 (≈8 dias) ela rejeitava TUDO com IncompleteSetup
+/// ("série sem dias anteriores suficientes para o ATR diário"), ficando
+/// inerte no live embora aprovada no backtest (que roda com a série cheia).
+/// Para as demais (SMA200 de 15min), 600 mantém o contexto completo e
+/// melhora a paridade live × backtest.
+const LIVE_MAX_CANDLES: usize = 600;
 
 /// Barras degeneradas consecutivas (1 print, high==low) que disparam alerta
 /// crítico + evento em `system_events`. Abaixo disso, apenas log: barras
@@ -758,13 +763,15 @@ async fn run_live(
         // boot + sync a cada trade fechado) — não há mais aproximação por
         // equity, que mascarava o estado de risco após restart.
 
-        // Janela de candles reais: últimos 10 dias (enche os 200 candles de
-        // contexto mesmo com fins de semana/feriados no meio).
+        // Janela de candles reais: últimos 30 dias (~20 pregões) para cobrir
+        // o warmup de estratégias com contexto multi-dia (ATR diário de 14
+        // dias da range-extreme-fade-v1) mesmo com fins de semana/feriados.
+        // O corte final é pelo LIVE_MAX_CANDLES (600 barras ≈ 23 pregões).
         let now = chrono::Utc::now();
         let request = CandleRequest {
             symbol: args.symbol.clone(),
             timeframe: args.timeframe,
-            from: now - chrono::Duration::days(10),
+            from: now - chrono::Duration::days(30),
             to: now,
         };
         let mut candles = match market_data.get_historical_candles(request).await {
