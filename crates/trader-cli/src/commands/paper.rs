@@ -664,7 +664,21 @@ async fn run_live(
 
     let connection = ibkr_config.connection_string();
     let market_data = IbkrMarketDataProvider::new(ibkr_config.clone());
-    let broker = IbkrBrokerAdapter::new(ibkr_config);
+    // A conexão do broker (ordens, execuções, account info) usa um client id
+    // SEPARADO do market data. Compartilhar o mesmo id fazia o gateway
+    // recusar a segunda conexão simultânea com erro 326 ("client id already
+    // in use") — a corrida entre as duas conexões da mesma instância gerou a
+    // tempestade de early eof → circuit breaker → restart de 2026-08-19
+    // (66 CBs no dia). +100 fica fora do range 1-11 das instâncias e do 99
+    // reservado a diagnósticos manuais.
+    let mut broker_config = ibkr_config.clone();
+    broker_config.client_id += 100;
+    info!(
+        market_data_client_id = ibkr_config.client_id,
+        broker_client_id = broker_config.client_id,
+        "client ids IBKR separados (market data × broker)"
+    );
+    let broker = IbkrBrokerAdapter::new(broker_config);
 
     warn!(
         gateway = %connection,
