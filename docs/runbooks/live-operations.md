@@ -24,7 +24,7 @@ Onde ficam as coisas na VM:
 |------|---------|
 | Binário do bot | `/opt/trader/bin/trader-cli` |
 | IBC / credenciais do Gateway | `/opt/trader/ibc/` (`ibc.ini`, permissão 600) |
-| Env das 11 instâncias | `/etc/trader/instances/*.env` (client_ids 1–11 para market data; o broker usa automaticamente **id+100** — conexões separadas desde 2026-08-19, erradica o erro 326; id **99** reservado a diagnósticos manuais) |
+| Env das 11 instâncias | `/etc/trader/instances/*.env` (client_ids 1–11 para market data; o broker usa automaticamente **id+100** desde 2026-08-19; o poll de execuções usa **id+200** desde 2026-08-20 — três faixas separadas erradicam o erro 326: 101–111 e 201–211; id **99** reservado a diagnósticos manuais) |
 | Env compartilhado | `/etc/trader/trader.env` |
 | Backups do banco | `/opt/trader/backups` (timer systemd `trader-backup.timer`, diário 21:30 UTC — instalado e habilitado pelo deploy) |
 | Compose do Postgres | `docker-compose.yml` do repo (deploy na VM) |

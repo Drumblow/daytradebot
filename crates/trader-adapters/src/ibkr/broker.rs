@@ -211,7 +211,22 @@ impl Broker for IbkrBrokerAdapter {
         // `execution_id` e emite `OrderEvent::Fill`. O consumidor deve
         // deduplicar também de forma durável (banco), pois o replay do dia
         // recomeça a cada restart do processo.
-        let config = self.config.clone();
+        //
+        // O poll abre uma conexão nova a cada tick e roda CONCORRENTE ao loop
+        // principal (account summary, posições, ordens) — se compartilhasse o
+        // mesmo client id do broker, duas conexões simultâneas seriam recusadas
+        // pelo gateway com erro 326 (observado em 2026-08-20: 598 ocorrências
+        // no dia, 1 CB em IWO). Por isso o poll usa um client id PRÓPRIO:
+        // broker usa id da instância + 100 (101–111); o poll usa + 100 sobre
+        // isso → instância + 200 (201–211), fora do range de market data
+        // (1–11), do broker e do 99 de diagnóstico. Execuções do dia respondem
+        // a qualquer client id conectado à conta (imutável por conexão).
+        let mut config = self.config.clone();
+        config.client_id = poll_client_id(config.client_id);
+        info!(
+            poll_client_id = config.client_id,
+            "subscribe_order_events: polling de execuções IBKR com client id próprio"
+        );
         tokio::spawn(async move {
             poll_executions_loop(config, tx).await;
         });
@@ -220,6 +235,22 @@ impl Broker for IbkrBrokerAdapter {
             id: "ibkr-executions-poll".to_string(),
         })
     }
+}
+
+/// Offset do client id do poll de execuções sobre o id do broker.
+///
+/// Broker = id da instância + 100; poll = broker + `EXECUTIONS_POLL_CLIENT_ID_OFFSET`
+/// (= instância + 200). Range resultante no live: 201–211, único por instância.
+const EXECUTIONS_POLL_CLIENT_ID_OFFSET: i32 = 100;
+
+/// Deriva o client id do poll de execuções a partir do id do broker.
+///
+/// O poll roda em background, em paralelo ao loop principal que usa o id do
+/// broker; dois client ids iguais em conexões simultâneas são recusados pelo
+/// gateway (erro 326). O id do poll é deslocado para fora de todos os ranges:
+/// market data 1–11, broker 101–111, diagnóstico 99.
+fn poll_client_id(broker_client_id: i32) -> i32 {
+    broker_client_id + EXECUTIONS_POLL_CLIENT_ID_OFFSET
 }
 
 fn f64_from_decimal(value: Decimal) -> Result<f64, BrokerError> {
@@ -980,5 +1011,33 @@ fn map_time_in_force(tif: &IbTimeInForce) -> TimeInForce {
         IbTimeInForce::ImmediateOrCancel => TimeInForce::Ioc,
         IbTimeInForce::FillOrKill => TimeInForce::Fok,
         _ => TimeInForce::Day,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_client_id_fica_fora_de_todos_os_ranges_reservados() {
+        // Broker usa id da instância + 100 (101–111); o poll usa + 100 sobre
+        // isso (201–211). Nenhum range deve se sobrepor: market data 1–11,
+        // broker 101–111, diagnóstico 99.
+        for instancia in 1..=11 {
+            let broker = instancia + 100;
+            let poll = poll_client_id(broker);
+            assert!(!(1..=11).contains(&poll), "poll colidiu com market data");
+            assert!(!(101..=111).contains(&poll), "poll colidiu com broker");
+            assert_ne!(poll, 99, "poll colidiu com id de diagnóstico");
+        }
+    }
+
+    #[test]
+    fn poll_client_id_preserva_unicidade_entre_instancias() {
+        let ids: Vec<i32> = (1..=11).map(|i| poll_client_id(i + 100)).collect();
+        let dedup: std::collections::HashSet<i32> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), dedup.len(), "ids do poll devem ser únicos");
+        assert_eq!(ids[0], 201);
+        assert_eq!(ids[10], 211);
     }
 }
