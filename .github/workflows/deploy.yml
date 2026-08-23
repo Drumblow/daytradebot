@@ -1,12 +1,15 @@
 name: Deploy VM
 
 # Deploy do servidor de producao paper (host umbrelOS da casa, ADR-012).
-# Roda os mesmos checks do CI, compila o binario release para Linux e publica
-# via SSH. O bot roda em containers Docker (compose em /data/trader):
+# O host esta em rede privada (192.168.50.68) — a nuvem nao alcanca via SSH.
+# Por isso o deploy roda num GitHub Actions runner SELF-HOSTED instalado na casa
+# (casa-umbrel): o binario e compilado na nuvem, enviado como artefato, e o step
+# de deploy executa LOCALMENTE no host com docker/systemd.
+#
+# O bot roda em containers Docker (compose em /data/trader):
 #   - o binario e as configs sao montados por volume (/data/trader/bin e /config)
 #   - o restart e condicional: so reinicia containers RUNNING (fora do pregao
 #     as instancias estao stopped — o compose restart nao as liga)
-#   - as units systemd/timers (home) sao reinstaladas (idempotente)
 
 on:
   push:
@@ -73,10 +76,9 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets
 
-  build-and-deploy:
+  build:
     needs: test
     runs-on: ubuntu-latest
-    environment: vm-production
 
     services:
       # sqlx valida queries em tempo de compilação — o build precisa do banco.
@@ -123,32 +125,32 @@ jobs:
           cp -r deploy/scripts deploy/home /tmp/pkg/
           tar czf trader-deploy.tar.gz -C /tmp/pkg .
 
-      - name: Setup SSH
-        env:
-          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
-          VM_HOST: ${{ secrets.VM_HOST }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trader-deploy
+          path: trader-deploy.tar.gz
+          retention-days: 1
 
-      - name: Upload package
-        env:
-          VM_HOST: ${{ secrets.VM_HOST }}
-          VM_USER: ${{ secrets.VM_USER }}
-        run: scp -i ~/.ssh/deploy_key trader-deploy.tar.gz "$VM_USER@$VM_HOST:/tmp/trader-deploy.tar.gz"
+  deploy:
+    needs: build
+    runs-on: [self-hosted, linux, x64, home]
 
-      - name: Deploy and conditional restart
-        env:
-          VM_HOST: ${{ secrets.VM_HOST }}
-          VM_USER: ${{ secrets.VM_USER }}
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: trader-deploy
+          path: /tmp/trader-deploy-in
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy and conditional restart (local, no host umbrelOS)
         run: |
-          ssh -i ~/.ssh/deploy_key "$VM_USER@$VM_HOST" 'sudo bash -se' <<'EOF'
+          sudo bash -se <<'EOF'
           set -e
           cd /tmp
           rm -rf trader-deploy && mkdir trader-deploy
-          tar xzf trader-deploy.tar.gz -C trader-deploy
+          tar xzf /tmp/trader-deploy-in/trader-deploy.tar.gz -C trader-deploy
           # binario atomico: escreve .new e move por cima (containers ativos seguem no inode antigo)
           install -o trader -g trader -m 755 trader-deploy/bin/trader-cli /data/trader/bin/trader-cli.new
           mv /data/trader/bin/trader-cli.new /data/trader/bin/trader-cli
