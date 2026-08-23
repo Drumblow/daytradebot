@@ -26,7 +26,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  DATABASE_URL: postgres://trader:***@localhost:5432/trader_db
+  DATABASE_URL: postgres://trader:trader_secret@localhost:5432/trader_db
 
 jobs:
   test:
