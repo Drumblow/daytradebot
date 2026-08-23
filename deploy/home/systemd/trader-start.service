@@ -1,0 +1,6 @@
+[Unit]
+Description=Start all trader containers (market open)
+
+[Service]
+Type=oneshot
+ExecStart=/data/trader/bin/trader-containers.sh start

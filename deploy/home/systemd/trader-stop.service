@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop all trader containers (market close)
+
+[Service]
+Type=oneshot
+ExecStart=/data/trader/bin/trader-containers.sh stop

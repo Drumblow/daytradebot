@@ -1,0 +1,6 @@
+[Unit]
+Description=Daily backup of the trader database (21:30 UTC)
+
+[Service]
+Type=oneshot
+ExecStart=/data/trader/bin/backup.sh

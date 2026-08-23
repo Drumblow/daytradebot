@@ -1,0 +1,192 @@
+# Compose do daytrade bot no host umbrelOS da casa (ADR-012)
+# Tudo com network_mode: host — espelha a VM Oracle (serviços em 127.0.0.1 do host:
+# gateway 4002, postgres 5433). Dados persistentes em /data/trader.
+#
+# Instâncias: start/stop controlados por timers systemd do host
+# (trader-start.timer 09h25 ET / trader-stop.timer 16h10 ET) via docker start/stop.
+# restart: unless-stopped — um container parado manualmente NÃO reinicia sozinho
+# (semântica igual ao systemd com PartOf/stop).
+
+name: trader
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: trader-postgres
+    env_file: /data/trader/docker/.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trader}
+      POSTGRES_DB: ${POSTGRES_DB:-trader_db}
+    command: >-
+      postgres
+      -p 5433
+      -c listen_addresses=127.0.0.1
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=100
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - trader-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trader} -d ${POSTGRES_DB:-trader_db} -p 5433"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ibgateway:
+    build: /data/trader/gateway
+    image: trader-gateway:10.45
+    container_name: trader-gateway
+    restart: always
+    network_mode: host
+    volumes:
+      - /data/trader/gateway-settings:/opt/trader/gateway-settings
+      - /data/trader/logs/ibc:/opt/trader/logs/ibc
+    environment:
+      IBC_INI: /opt/trader/ibc/ibc.ini
+      TRADING_MODE: paper
+      TWOFA_TIMEOUT_ACTION: exit
+    # API do Gateway: 127.0.0.1:4002 (network host)
+    mem_limit: 1g
+    # Chromium do JxBrowser precisa de /dev/shm maior que o default de 64MB
+    shm_size: 256m
+
+  # ── 11 instâncias do bot (client_ids 1–11 market data; broker id+100; poll id+200) ──
+  trader-iwm-pullback:
+    build: /data/trader/bot
+    image: trader-bot:latest
+    container_name: trader-iwm-pullback
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/iwm-pullback.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-iwv-pullback:
+    image: trader-bot:latest
+    container_name: trader-iwv-pullback
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/iwv-pullback.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-iwo-pullback:
+    image: trader-bot:latest
+    container_name: trader-iwo-pullback
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/iwo-pullback.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-ijs-balance:
+    image: trader-bot:latest
+    container_name: trader-ijs-balance
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/ijs-balance.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-vbr-balance:
+    image: trader-bot:latest
+    container_name: trader-vbr-balance
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/vbr-balance.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-avuv-balance:
+    image: trader-bot:latest
+    container_name: trader-avuv-balance
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/avuv-balance.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-iwm-openrev:
+    image: trader-bot:latest
+    container_name: trader-iwm-openrev
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/iwm-openrev.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-iwn-openrev:
+    image: trader-bot:latest
+    container_name: trader-iwn-openrev
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/iwn-openrev.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-avuv-rangefade:
+    image: trader-bot:latest
+    container_name: trader-avuv-rangefade
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/avuv-rangefade.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-slyv-rangefade:
+    image: trader-bot:latest
+    container_name: trader-slyv-rangefade
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/slyv-rangefade.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+  trader-iwv-rangefade:
+    image: trader-bot:latest
+    container_name: trader-iwv-rangefade
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /data/trader/env/trader.env
+      - /data/trader/env/instances/iwv-rangefade.env
+    volumes:
+      - /data/trader/bin:/opt/trader/bin:ro
+      - /data/trader/config:/opt/trader/config:ro
+
+volumes:
+  trader-postgres-data:

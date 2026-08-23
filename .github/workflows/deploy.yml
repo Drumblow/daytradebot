@@ -1,10 +1,12 @@
 name: Deploy VM
 
-# Deploy da VM de producao paper (Oracle). Roda os mesmos checks do CI,
-# compila o binario release para Linux e publica na VM via SSH.
-# Fora do pregao as instancias estao paradas: o restart e condicional
-# (so reinicia o que estiver ativo); no pregao o restart e seguro
-# (estado reconstruido do banco no boot).
+# Deploy do servidor de producao paper (host umbrelOS da casa, ADR-012).
+# Roda os mesmos checks do CI, compila o binario release para Linux e publica
+# via SSH. O bot roda em containers Docker (compose em /data/trader):
+#   - o binario e as configs sao montados por volume (/data/trader/bin e /config)
+#   - o restart e condicional: so reinicia containers RUNNING (fora do pregao
+#     as instancias estao stopped — o compose restart nao as liga)
+#   - as units systemd/timers (home) sao reinstaladas (idempotente)
 
 on:
   push:
@@ -24,7 +26,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  DATABASE_URL: postgres://trader:trader_secret@localhost:5432/trader_db
+  DATABASE_URL: postgres://trader:***@localhost:5432/trader_db
 
 jobs:
   test:
@@ -118,7 +120,7 @@ jobs:
           mkdir -p /tmp/pkg/bin
           cp target/release/trader-cli /tmp/pkg/bin/
           cp -r config /tmp/pkg/
-          cp -r deploy/systemd deploy/scripts /tmp/pkg/
+          cp -r deploy/scripts deploy/home /tmp/pkg/
           tar czf trader-deploy.tar.gz -C /tmp/pkg .
 
       - name: Setup SSH
@@ -147,28 +149,25 @@ jobs:
           cd /tmp
           rm -rf trader-deploy && mkdir trader-deploy
           tar xzf trader-deploy.tar.gz -C trader-deploy
-          # binario atomico: escreve .new e move por cima (processos ativos seguem no inode antigo)
-          install -o trader -g trader -m 755 trader-deploy/bin/trader-cli /opt/trader/bin/trader-cli.new
-          mv /opt/trader/bin/trader-cli.new /opt/trader/bin/trader-cli
-          # configs (sem sobrescrever ajustes locais de porta do default.toml da VM)
-          rsync -a --delete trader-deploy/config/strategies/ /opt/trader/config/strategies/ 2>/dev/null || cp -r trader-deploy/config/strategies/. /opt/trader/config/strategies/
-          chown -R trader:trader /opt/trader/bin /opt/trader/config
-          # infra versionada (deploy/): units systemd, timers, backup e retencao de journal
-          install -o root -g root -m 644 trader-deploy/systemd/trader@.service trader-deploy/systemd/trader-instances.target trader-deploy/systemd/trader-start.timer trader-deploy/systemd/trader-start.service trader-deploy/systemd/trader-stop.timer trader-deploy/systemd/trader-stop.service trader-deploy/systemd/trader-backup.timer trader-deploy/systemd/trader-backup.service -t /etc/systemd/system/
-          mkdir -p /etc/systemd/journald.conf.d
-          install -o root -g root -m 644 trader-deploy/systemd/journald-retention.conf /etc/systemd/journald.conf.d/retention.conf
-          install -o trader -g trader -m 755 trader-deploy/scripts/backup.sh /opt/trader/bin/backup.sh
-          rm -f /etc/cron.d/trader-backup
-          mkdir -p /opt/trader/backups && chown trader:trader /opt/trader/backups
+          # binario atomico: escreve .new e move por cima (containers ativos seguem no inode antigo)
+          install -o trader -g trader -m 755 trader-deploy/bin/trader-cli /data/trader/bin/trader-cli.new
+          mv /data/trader/bin/trader-cli.new /data/trader/bin/trader-cli
+          # configs (sem sobrescrever ajustes locais de porta do default.toml do host)
+          rsync -a --delete trader-deploy/config/strategies/ /data/trader/config/strategies/ 2>/dev/null || cp -r trader-deploy/config/strategies/. /data/trader/config/strategies/
+          install -o trader -g trader -m 644 trader-deploy/config/default.toml /data/trader/config/default.toml 2>/dev/null || true
+          chown -R trader:trader /data/trader/bin /data/trader/config
+          # scripts
+          install -o trader -g trader -m 755 trader-deploy/home/backup.sh /data/trader/bin/backup.sh
+          install -o trader -g trader -m 755 trader-deploy/home/trader-containers.sh /data/trader/bin/trader-containers.sh
+          # units systemd/timers do host (start/stop/backup via docker)
+          install -o root -g root -m 644 trader-deploy/home/systemd/trader-start.timer trader-deploy/home/systemd/trader-start.service trader-deploy/home/systemd/trader-stop.timer trader-deploy/home/systemd/trader-stop.service trader-deploy/home/systemd/trader-backup.timer trader-deploy/home/systemd/trader-backup.service -t /etc/systemd/system/
           systemctl daemon-reload
-          systemctl restart systemd-journald
-          systemctl enable trader-start.timer trader-stop.timer
-          systemctl enable --now trader-backup.timer
-          # restart condicional: so o que estiver ativo (fora do pregao, nada sobe)
+          systemctl enable --now trader-start.timer trader-stop.timer trader-backup.timer >/dev/null 2>&1 || true
+          # restart condicional: so containers RUNNING (fora do pregao, stopped nao liga)
           restarted=""
-          for unit in $(systemctl list-units --type=service --state=active 'trader@*' --no-legend | awk '{print $1}'); do
-            systemctl restart "$unit"
-            restarted="$restarted $unit"
+          for c in $(cd /data/trader && docker compose ps --status running --format '{{.Name}}' | grep '^trader-' | grep -vE 'gateway|postgres' || true); do
+            docker restart "$c" >/dev/null 2>&1
+            restarted="$restarted $c"
           done
-          echo "instancias reiniciadas:${restarted:- nenhuma (fora do pregao)}"
+          echo "containers reiniciados:${restarted:- nenhum (fora do pregao)}"
           EOF
