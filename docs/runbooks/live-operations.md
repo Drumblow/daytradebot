@@ -1,7 +1,7 @@
 # Runbook — Operação do live paper (IBKR) no servidor da casa (umbrelOS)
 
 Desde 2026-08-23 (ADR-012) o live roda **no servidor da casa**: umbrelOS em
-`192.168.50.68`, containers Docker, dados em `/data/trader`. A VM Oracle ficou
+`<SERVIDOR_CASA>`, containers Docker, dados em `/data/trader`. A VM Oracle ficou
 como fallback desligado (serviços parados, timers desabilitados).
 
 > ### ⚠️ Leia isto primeiro: a hospedagem NÃO sobrevive a um reboot
@@ -34,8 +34,15 @@ Gateway (`trader-gateway` container, `restart: always`) e Postgres
 
 ## Acesso
 
+> **Endereços são marcadores.** Este repositório é **público**, então IPs reais
+> não ficam versionados. `<SERVIDOR_CASA>` e `<VM_ORACLE>` estão na memória do
+> agente e no `~/.ssh/config` do PC de dev. Segredos (credenciais IBKR do IBC,
+> senha do Postgres, envs das instâncias) vivem **apenas** em `/data/trader` no
+> servidor e nunca no git — ver `docs/SECURITY.md`.
+
+
 ```bash
-ssh -i ~/.ssh/trader_home_deploy trader@192.168.50.68
+ssh -i ~/.ssh/trader_home_deploy trader@<SERVIDOR_CASA>
 # sudo sem senha (precisa p/ docker e systemctl)
 sudo docker ps
 ```
@@ -130,7 +137,7 @@ outro usuário ou o portal web da IBKR.
 
 ## Fallback Oracle (desligado)
 
-A VM Oracle `137.131.186.91` (chave `~/.ssh/humanbot.key`) está com serviços
+A VM Oracle `<VM_ORACLE>` (chave `~/.ssh/humanbot.key`) está com serviços
 parados e timers desabilitados desde 2026-08-22 (cutover). Para reativar como
 fallback (só se a casa ficar inoperante por dias): subir `ibgateway.service` +
 `trader-instances.target` + enable dos timers — mas **nunca** com o Gateway da
@@ -195,7 +202,7 @@ para o servidor por `scp`:
 
 ```bash
 # no PC de dev, dentro do repo
-scp -i ~/.ssh/trader_home_deploy deploy/home/systemd/trader-*.{service,timer}     trader@192.168.50.68:/tmp/
+scp -i ~/.ssh/trader_home_deploy deploy/home/systemd/trader-*.{service,timer}     trader@<SERVIDOR_CASA>:/tmp/
 
 # no servidor
 sudo install -m 644 /tmp/trader-*.{service,timer} /etc/systemd/system/

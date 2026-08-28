@@ -1,7 +1,7 @@
 name: Deploy VM
 
 # Deploy do servidor de producao paper (host umbrelOS da casa, ADR-012).
-# O host esta em rede privada (192.168.50.68) — a nuvem nao alcanca via SSH.
+# O host esta em rede privada (<SERVIDOR_CASA>) — a nuvem nao alcanca via SSH.
 # Por isso o deploy roda num GitHub Actions runner SELF-HOSTED instalado na casa
 # (casa-umbrel): o binario e compilado na nuvem, enviado como artefato, e o step
 # de deploy executa LOCALMENTE no host com docker/systemd.

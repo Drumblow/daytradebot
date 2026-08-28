@@ -10,7 +10,7 @@
 
 O live rodava na VM Oracle Cloud Always Free (`instance-20260807-1139`, ADR-011) com
 **954 MB RAM** (~310 MB livres) — o limite prático para o portfólio de 11 instâncias.
-O dono decidiu migrar para o **servidor da casa** (umbrelOS em `192.168.50.68`,
+O dono decidiu migrar para o **servidor da casa** (umbrelOS em `<SERVIDOR_CASA>`,
 Debian 13, 4 cores x86_64, 11 GB RAM, 211 GB livres), que oferece folga para
 desenvolver e validar novas estratégias. A migração foi executada em 2026-08-22/23
 (fim de semana — janela sem pregão).
@@ -61,7 +61,7 @@ imutável via rugix).
   timers systemd do host são reinstalados pelo deploy (idempotente) se um update
   do OS os remover.
 - **Acesso de administração**: dono autorizou a chave `trader_home_deploy` (ed25519)
-  para `trader@192.168.50.68` com sudo NOPASSWD (necessário p/ docker + systemd do CI).
+  para `trader@<SERVIDOR_CASA>` com sudo NOPASSWD (necessário p/ docker + systemd do CI).
 - **Sessão única IBKR segue valendo**: nunca abrir TWS/Gateway local com o usuário
   do bot; o Gateway agora vive no container da casa.
 - **Oracle fica como fallback desligado**: serviços parados e timers desabilitados;

@@ -1,7 +1,7 @@
 # deploy/ — infraestrutura do servidor de produção (versionada)
 
 Desde 2026-08-23 (ADR-012) o live roda no **servidor da casa** (umbrelOS,
-`192.168.50.68`) em containers Docker com dados em `/data/trader`. Estes arquivos
+`<SERVIDOR_CASA>`) em containers Docker com dados em `/data/trader`. Estes arquivos
 são a **fonte da verdade** da infraestrutura — o deploy do GitHub Actions instala
 tudo daqui (idempotente, a cada push que toque `deploy/**`).
 

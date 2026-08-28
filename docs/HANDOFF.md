@@ -7,7 +7,7 @@
 
 ## 1. Onde o projeto está
 
-Bot de day trade em Rust (workspace multi-crates), **hospedado no servidor da casa desde 2026-08-23** (ADR-012 — umbrelOS em `192.168.50.68`, containers Docker, dados em `/data/trader`; a VM Oracle da ADR-011 virou fallback desligado), em **paper trading live na IBKR** (conta paper DUR507388). O PC Windows está fora da operação — serve só para dev e acesso via SSH.
+Bot de day trade em Rust (workspace multi-crates), **hospedado no servidor da casa desde 2026-08-23** (ADR-012 — umbrelOS em `<SERVIDOR_CASA>`, containers Docker, dados em `/data/trader`; a VM Oracle da ADR-011 virou fallback desligado), em **paper trading live na IBKR** (conta paper DUR507388). O PC Windows está fora da operação — serve só para dev e acesso via SSH.
 
 > ### ⚠️ Estado em 2026-08-28: operação RESTAURADA, amostra do gate B com lacuna
 >
@@ -102,7 +102,7 @@ Comandos úteis (a partir do PC Windows):
 
 ```bash
 # acesso ao servidor
-ssh -i ~/.ssh/trader_home_deploy trader@192.168.50.68
+ssh -i ~/.ssh/trader_home_deploy trader@<SERVIDOR_CASA>
 
 # estado dos containers
 sudo docker ps --filter name=trader-

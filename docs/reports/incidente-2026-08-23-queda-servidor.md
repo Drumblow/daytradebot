@@ -9,7 +9,7 @@
 
 ## 1. Resumo executivo
 
-O servidor da casa (umbrelOS, `192.168.50.68`) **morreu de forma abrupta em
+O servidor da casa (umbrelOS, `<SERVIDOR_CASA>`) **morreu de forma abrupta em
 2026-08-23 18:06:29 UTC** (14:06 ET, domingo) e **só voltou em 2026-08-27
 21:59 UTC** — quando foi religado manualmente, já depois do fechamento do
 pregão. Os pregões de **24, 25, 26 e 27/08 foram integralmente perdidos**.
