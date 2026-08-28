@@ -8,7 +8,9 @@
 # as instancias irmas atraves do socket montado.
 FROM docker:28-cli
 
-RUN apk add --no-cache tzdata bash postgresql16-client
+# Sem cliente do postgres de proposito: o backup roda `docker exec` no container
+# do banco, entao o pg_dump usado e o da propria versao do servidor.
+RUN apk add --no-cache tzdata bash
 
 COPY scheduler.sh /usr/local/bin/scheduler.sh
 RUN chmod +x /usr/local/bin/scheduler.sh

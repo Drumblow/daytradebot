@@ -114,9 +114,13 @@ dentro do app. Duas peças:
    quebra reinicia, mas um bot que sai limpo (fora do horário) fica parado.
    Isso resolve o caso "servidor religou às 3h da manhã": o `up` do umbreld cria
    os 11 containers, eles saem em segundos e ninguém conecta na IBKR fora de hora.
-2. **Container `scheduler`.** Cron (supercronic) com `docker.sock` montado:
-   `docker start` nas 11 instâncias às 9h25 ET, `docker stop` às 16h10 ET,
-   `pg_dump` às 21h30 UTC. Substitui os três timers de uma vez.
+2. **Container `scheduler`.** `crond` com `docker.sock` montado: `docker start`
+   nas 11 instâncias às 9h25 ET, `docker stop` às 16h10 ET, `pg_dump` às 16h30 ET.
+   Substitui os três timers de uma vez. Toda a agenda em horário de Nova York —
+   o backup saiu de 21h30 UTC para 16h30 ET justamente para que uma única
+   timezone governe tudo e o horário de verão seja resolvido pelo tzdata.
+   Se o app subir *dentro* da janela (servidor religou às 10h de uma terça), o
+   scheduler liga as instâncias na hora, sem esperar o próximo 9h25.
 
 ### 4.3 Entrega do binário
 
@@ -143,7 +147,7 @@ da migração.
 
 | Segredo | Hoje | No app |
 |---|---|---|
-| Login IBKR (`ibc.ini`) | `COPY` na imagem | `ibc.ini.template` renderizado no start a partir de `${APP_DATA_DIR}/secrets/ibkr.env` |
+| Login IBKR | `COPY` na imagem | `TWSUSERID`/`TWSPASSWORD` lidos em runtime de `${APP_DATA_DIR}/secrets/ibkr.env`; o `ibc.ini` da imagem vai com os campos vazios e **nunca** é escrito com credencial |
 | Senha do Postgres | `.env` no host | derivada de `${APP_SEED}` — nunca versionada, nunca digitada |
 | `DATABASE_URL` das 11 instâncias | `.env` por instância | montado do env do compose, derivado do `APP_SEED` |
 | IP interno do servidor | — | não aparece; a store não cita endereço |
@@ -216,27 +220,58 @@ de observação — e é a premissa que justifica o ADR inteiro.
 > Se (a) tivesse falhado, o plano inteiro mudava — por isso foi a primeira fase.
 > O probe fica instalado até o teste de reboot; depois é desinstalado.
 
-### Fase 1 — repositório da store
-3. Criar `Drumblow/umbrel-daytradebot-store` (**privado por enquanto**) com
-   `umbrel-app-store.yml` (`id: daytradebot`) e `daytradebot/`.
-4. `umbrel-app.yml`, `docker-compose.yml`, `hooks/`, `ibc.ini.template`, ícone.
-5. Adicionar a store no host e conferir que o app aparece na dashboard.
+### Fase 1 — repositório da store ✅ (2026-08-28)
 
-### Fase 2 — imagens sem segredo
-6. `Dockerfile` do gateway sem `COPY ibc/` e sem `COPY ibgateway/` — instalador
-   baixado no build, credenciais só em runtime via template.
-7. `Dockerfile` do bot com binário + `config/` assados; workflow que publica em
-   `ghcr.io/drumblow/trader-bot` e `ghcr.io/drumblow/trader-gateway`.
-8. Guard de janela de pregão no `entrypoint.sh`.
+`Drumblow/umbrel-daytradebot-store`, **público** — corrigindo o que este ADR
+dizia antes: o umbreld clona a store por git anônimo, então um repositório
+privado ele não consegue ler. A consequência é que o checklist da §5 deixa de
+ser um portão único antes de publicar e passa a valer **commit a commit**; o
+`README` e o `.gitignore` da store registram a regra.
 
-### Fase 3 — scheduler e runner
-9. Container `scheduler` (supercronic): start 9h25 ET, stop 16h10 ET, backup 21h30 UTC.
+Conteúdo: `umbrel-app-store.yml` (`id: daytradebot`), `daytradebot/` com
+manifesto, compose de 14 serviços e o hook `pre-install`.
+
+Validado no host com `docker compose config`: compose resolve, 14 serviços,
+`app_proxy` ausente (o umbreld então não injeta o proxy), client_ids 1–11 sem
+colisão com o 99 de diagnóstico, manifesto sem campo obrigatório faltando.
+
+### Fase 2 — imagens sem segredo ✅ (2026-08-28)
+
+Três imagens em `deploy/images/`, publicadas por `.github/workflows/images.yml`
+em `ghcr.io/drumblow/{trader-bot,trader-gateway,trader-scheduler}`.
+
+O que mudou de verdade no gateway, e é o motivo desta fase existir: o
+`ibc.ini` da imagem agora vai com `IbLoginId=` e `IbPassword=` **vazios**.
+Descobrimos lendo o `gatewaystart-vm.sh` que o IBC aceita `TWSUSERID`/
+`TWSPASSWORD` por variável de ambiente quando esses campos estão em branco —
+então a credencial nunca é escrita em disco dentro do container, nem passa pelo
+`envsubst` do umbreld. O instalador do Gateway também saiu da imagem e vem por
+volume.
+
+O CI tem duas guardas que **falham o build**: uma recusa `ibc.ini` com
+credencial preenchida, outra procura credencial no contexto de build.
+
+O `entrypoint.sh` do bot ganhou a guarda de janela de pregão descrita em §4.2, e
+o `deploy/images/**` ficou fora do gatilho do `deploy.yml` para não reiniciar
+produção.
+
+### Fase 3 — runner (pendente)
+
+9. ~~Container `scheduler`~~ — feito junto da fase 2 (`deploy/images/scheduler/`).
+   Cron em horário de Nova York, então o horário de verão americano é resolvido
+   pelo tzdata. Confere container por container em vez de confiar no código de
+   saída — a lição que o `trader-containers.sh` custou.
 10. Container `runner` com o runner do GitHub Actions em `${APP_DATA_DIR}/runner`.
-11. Adaptar `.github/workflows/deploy.yml` para o novo alvo.
+11. Adaptar `.github/workflows/deploy.yml` para o novo alvo (pull de imagem em
+    vez de troca de binário).
 
 ### Fase 4 — cutover (fora do pregão, sábado)
 12. `pg_dump` do banco atual + parar os containers antigos.
-13. Instalar o app, restaurar o dump, preencher `secrets/ibkr.env`.
+13. Instalar o app; copiar para `${APP_DATA_DIR}`: instalação do Gateway
+    (`/data/trader/gateway/ibgateway`), `gateway-settings/` e as credenciais
+    IBKR extraídas do `ibc.ini` atual para `secrets/ibkr.env` — tudo no próprio
+    servidor, sem a credencial passar por nenhum outro lugar. Restaurar o dump.
+    Tornar públicos os pacotes no GHCR (nascem privados).
 14. Subir e validar: Gateway conectado, 11 instâncias de pé, `status` do CLI ok.
 15. **`reboot` de verdade** e confirmar que tudo volta sozinho. Esta é a
     validação que dá sentido ao ADR inteiro — sem ela, não houve migração.
