@@ -1,0 +1,57 @@
+name: Host check
+
+# Diagnostico do servidor, rodando no runner que vive DENTRO do app (ADR-013).
+#
+# Existe por um motivo concreto: depois de um reboot o usuario `trader` e o
+# `sudoers.d` dele sao apagados pelo rugix, e o acesso administrativo por SSH
+# some junto. O runner do app sobrevive, entao este workflow e o jeito de
+# inspecionar o host sem depender de senha — inclusive para provar que a app
+# voltou sozinha depois de reiniciar.
+#
+# So le estado. Nao muda nada.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: [self-hosted, linux, x64, home]
+    steps:
+      - name: Estado dos containers
+        run: |
+          echo "=== uptime do host ==="
+          docker run --rm --pid=host --privileged alpine:3.20 \
+            sh -c 'cat /proc/uptime | cut -d. -f1 | xargs -I{} sh -c "echo {} segundos desde o boot"' \
+            2>/dev/null || echo "(nao consegui ler o uptime)"
+
+          echo
+          echo "=== containers da app ==="
+          docker ps -a --filter name=daytradebot_ --format '{{.Names}}\t{{.Status}}' | sort
+
+          echo
+          echo "=== resumo ==="
+          up=$(docker ps --filter name=daytradebot_ -q | wc -l)
+          echo "containers rodando: $up"
+          for c in postgres gateway scheduler runner; do
+            st=$(docker inspect -f '{{.State.Running}}' "daytradebot_${c}_1" 2>/dev/null || echo ausente)
+            printf '  %-10s running=%s\n' "$c" "$st"
+          done
+
+      - name: Gateway e banco
+        run: |
+          echo "=== API do Gateway (4002) ==="
+          docker run --rm --network host alpine:3.20 \
+            sh -c 'nc -z 127.0.0.1 4002 && echo "4002 aberta" || echo "4002 FECHADA"'
+
+          echo
+          echo "=== contagens do banco ==="
+          docker exec daytradebot_postgres_1 psql -U trader -p 5433 -d trader_db -tAc \
+            "select 'signals', count(*) from signals
+             union all select 'orders', count(*) from orders
+             union all select 'fills', count(*) from fills
+             union all select 'trades', count(*) from trades
+             union all select 'candles', count(*) from candles" \
+            || echo "banco inacessivel"
+
+      - name: Agenda do scheduler
+        run: docker logs daytradebot_scheduler_1 2>&1 | head -8
