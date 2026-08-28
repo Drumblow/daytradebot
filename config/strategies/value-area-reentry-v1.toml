@@ -1,0 +1,65 @@
+[strategy]
+id = "value-area-reentry-v1"
+version = "1.0.0"
+source = "James Dalton - Mind over Markets, Cap. 4 (The Value-Area Rule) + Apêndice 1 (TPO Value-Area Calculation)"
+
+[strategy.parameters]
+# Timeframe operacional
+operational_timeframe = "15m"
+
+# Área de valor por proxy TPO (seção 4 do doc; Apêndice 1 do livro).
+# O range do dia anterior é dividido em `va_buckets` faixas; cada candle de
+# 15m imprime 1 TPO em toda faixa que toca; a VA expande a partir do POC em
+# pares até cobrir `va_percent` dos TPOs.
+va_buckets = 50
+va_percent = 70
+
+# Filtros OBRIGATÓRIOS do autor (seção 5.3 do doc; Cap. 4).
+# Sem eles o próprio Dalton diz que a regra é "little better than a flip of a
+# coin" — por isso não são opcionais.
+max_open_distance_atr = 1.0
+max_va_width_atr = 0.8
+trend_lookback = 12
+trend_slope_threshold = 0.0005
+
+# Aceitação dentro do valor: "double TPO prints" = 2 fechamentos consecutivos
+# de 15m dentro da VA (seção 5.2 do doc).
+acceptance_bars = 2
+
+# Contexto
+daily_atr_period = 14
+atr_period = 14
+
+# Entrada / stop / alvo (seção 6 do doc).
+# O alvo é ESTRUTURAL (borda oposta da VA), não múltiplo de R — por isso não
+# existe `target_r_multiple` aqui, e `min_risk_reward` é a guarda principal.
+# "stop" = default do projeto (ADR-009). A variante "limit" (entrada na
+# própria aceitação, leitura literal do Cap. 4) foi testada em 2026-08-28 e
+# está documentada no §16 do doc — não melhorou o resultado.
+entry_order_type = "stop"
+entry_offset_ticks = 1
+entry_validity_candles = 2
+min_risk_reward = 1.2
+max_stop_atr = 2.0
+# Folga do stop além da borda da VA e risco mínimo, ambos em ATR14(15min).
+# O livro não especifica o stop; a borda exata ficou dentro do ruído na
+# calibração de 2026-08-28 (§16 do doc).
+stop_buffer_atr = 0.25
+min_stop_atr = 0.15
+
+# Risco: usa o [risk].risk_per_trade_pct global (1,0) — sem override
+max_spread_pct = 0.05
+max_atr_pct = 1.5
+
+# Precisão do ativo
+tick_size = 0.01
+
+# Horário (UTC) — janela 10:00–15:00 ET.
+# Começa às 10h ET porque a aceitação exige 2 candles fechados após a abertura;
+# termina às 15h ET porque atravessar a VA inteira precisa de tempo e o mandato
+# é ficar flat no fechamento.
+#   - Horário de verão americano (mar–nov): 14:00–19:00 UTC  <- ATUAL
+#   - Horário de inverno americano (nov–mar): 15:00–20:00 UTC
+# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
+trading_start_time = "14:00:00"
+trading_end_time = "19:00:00"

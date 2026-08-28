@@ -114,6 +114,17 @@ pub enum RejectionReason {
     MiddayMidrange,
     /// Equilíbrio total detectado (3+ barras sobrepostas com doji, Cap. 5).
     BarbWire,
+    // --- Value Area Reentry (docs/strategies/value-area-reentry-v1.md, seção 10) ---
+    /// Abertura de hoje dentro da área de valor de ontem — sem setup.
+    OpenInsideValueArea,
+    /// Sem fechamentos consecutivos suficientes de volta dentro da VA.
+    NoValueAreaReentry,
+    /// Área de valor larga demais para ser atravessada (filtro do autor).
+    ValueAreaTooWide,
+    /// Abertura distante demais da área de valor (filtro do autor).
+    OpenTooFarFromValue,
+    /// Travessia contra a direção estabelecida do mercado (filtro do autor).
+    TrendAgainstTraversal,
     StopMissing,
     InvalidQuantity,
     InsufficientBuyingPower,
