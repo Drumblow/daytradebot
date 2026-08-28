@@ -1,0 +1,118 @@
+#!/bin/bash
+# Scheduler do app do umbrelOS (ADR-013): liga e desliga as instancias na janela
+# de pregao e faz o backup diario do banco.
+#
+# Herda a licao do trader-containers.sh: NUNCA confiar no codigo de saida de um
+# comando de start para concluir que os containers subiram. Em 2026-08-28
+# descobrimos que `docker compose start` retorna 0 mesmo quando o container nao
+# existe — o timer teria falhado em silencio e custado um quinto pregao.
+set -uo pipefail
+
+INSTANCES="${INSTANCES:?INSTANCES obrigatorio}"
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-daytradebot_postgres_1}"
+BACKUP_DIR="${BACKUP_DIR:-/backups}"
+PGUSER_NAME="${PGUSER_NAME:-trader}"
+PGDATABASE_NAME="${PGDATABASE_NAME:-trader_db}"
+PGPORT_NUM="${PGPORT_NUM:-5433}"
+
+log() { echo "[scheduler $(date '+%F %T %Z')] $*"; }
+
+expected_count() { echo "$INSTANCES" | wc -w | tr -d ' '; }
+
+start_instances() {
+  local expected running=0 svc
+  expected=$(expected_count)
+  log "abrindo pregao: ligando $expected instancias"
+
+  for svc in $INSTANCES; do
+    docker start "$svc" >/dev/null 2>&1 || log "AVISO: falha ao ligar $svc"
+  done
+
+  # A instancia sai com 0 se estiver fora da janela (guarda do entrypoint), entao
+  # damos um instante antes de conferir para nao contar um container que ja saiu.
+  sleep 10
+
+  for svc in $INSTANCES; do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$svc" 2>/dev/null)" = "true" ]; then
+      running=$((running + 1))
+    else
+      log "AVISO: $svc NAO esta rodando"
+    fi
+  done
+
+  log "instancias rodando: $running/$expected"
+  [ "$running" -eq "$expected" ] || log "ERRO: esperava $expected instancias, subiram $running"
+}
+
+stop_instances() {
+  log "fechando pregao: parando instancias"
+  for svc in $INSTANCES; do
+    docker stop "$svc" >/dev/null 2>&1 || log "AVISO: falha ao parar $svc"
+  done
+  log "instancias paradas"
+}
+
+backup_db() {
+  local ts file
+  ts=$(date +%Y%m%d-%H%M%S)
+  file="$BACKUP_DIR/trader_db-$ts.sql.gz"
+  mkdir -p "$BACKUP_DIR"
+
+  if docker exec "$POSTGRES_CONTAINER" \
+       pg_dump -U "$PGUSER_NAME" -p "$PGPORT_NUM" -d "$PGDATABASE_NAME" 2>/dev/null \
+       | gzip > "$file"; then
+    # Um pg_dump que falha no meio deixa um .gz pequeno e valido. Conferir o
+    # tamanho evita "backup diario" que na verdade e um arquivo vazio.
+    local size
+    size=$(stat -c %s "$file" 2>/dev/null || echo 0)
+    if [ "$size" -lt 10000 ]; then
+      log "ERRO: backup suspeito ($size bytes) — mantido para inspecao: $file"
+    else
+      log "backup ok: $file ($size bytes)"
+    fi
+  else
+    log "ERRO: pg_dump falhou"
+    rm -f "$file"
+  fi
+
+  find "$BACKUP_DIR" -name 'trader_db-*.sql.gz' -mtime "+$BACKUP_RETENTION_DAYS" -delete 2>/dev/null
+}
+
+# ── agenda ───────────────────────────────────────────────────────────────────
+# crond do busybox le o TZ do container, entao tudo fica em horario de NY e o
+# horario de verao americano e resolvido pelo tzdata.
+read -r START_MIN START_HOUR <<<"$TRADING_START"
+read -r END_MIN END_HOUR <<<"$TRADING_END"
+read -r BACKUP_MIN BACKUP_HOUR <<<"$BACKUP_AT"
+
+mkdir -p /etc/crontabs
+cat > /etc/crontabs/root <<CRON
+$START_MIN $START_HOUR * * 1-5 /usr/local/bin/scheduler.sh start-instances
+$END_MIN $END_HOUR * * 1-5 /usr/local/bin/scheduler.sh stop-instances
+$BACKUP_MIN $BACKUP_HOUR * * * /usr/local/bin/scheduler.sh backup
+CRON
+
+case "${1:-run}" in
+  start-instances) start_instances; exit 0 ;;
+  stop-instances)  stop_instances;  exit 0 ;;
+  backup)          backup_db;       exit 0 ;;
+esac
+
+log "agenda (TZ=$TZ):"
+sed 's/^/[scheduler]   /' /etc/crontabs/root
+log "instancias sob controle: $(expected_count)"
+
+# Se o app subiu dentro da janela de pregao — por exemplo o servidor religou as
+# 10h da manha de uma terca — as instancias precisam subir agora, sem esperar o
+# proximo 9h25. A guarda do entrypoint delas decide se e hora ou nao.
+if [ "$(date +%u)" -le 5 ]; then
+  now=$(date +%H%M)
+  window_start=$(printf '%02d%02d' "$START_HOUR" "$START_MIN")
+  window_end=$(printf '%02d%02d' "$END_HOUR" "$END_MIN")
+  if [ "$now" -ge "$window_start" ] && [ "$now" -lt "$window_end" ]; then
+    log "app subiu DENTRO da janela de pregao — ligando as instancias agora"
+    start_instances
+  fi
+fi
+
+exec crond -f -l 8

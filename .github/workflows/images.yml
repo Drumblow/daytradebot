@@ -1,0 +1,158 @@
+name: Build images
+
+# Publica as imagens do app do umbrelOS (ADR-013) em ghcr.io.
+#
+# Diferente do deploy.yml (que copia um binario para /data/trader no host via
+# runner self-hosted), aqui o artefato e a IMAGEM. O host so precisa dar pull.
+#
+# NENHUMA imagem publicada aqui pode conter segredo:
+#   - trader-gateway: sem ibc.ini preenchido, sem instalador da IBKR
+#   - trader-bot: so binario + config de estrategia (que ja sao publicos no repo)
+# Ver docs/decisions/ADR-013-app-umbrelos.md, secao 5.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'config/**'
+      - 'deploy/images/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/images.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    services:
+      # O sqlx valida query em tempo de compilacao — o build precisa do banco.
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: trader
+          POSTGRES_PASSWORD: trader_secret
+          POSTGRES_DB: trader_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://trader:trader_secret@localhost:5432/trader_db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+
+      - name: Run migrations
+        run: sqlx migrate run --source crates/trader-infra/src/db/migrations
+
+      - name: Build release binary
+        run: cargo build --release -p trader-cli
+
+      - name: Assemble build context
+        run: |
+          strip target/release/trader-cli
+          cp target/release/trader-cli deploy/images/bot/
+          cp -r config deploy/images/bot/config
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard — nenhum segredo no contexto de build
+        run: |
+          # Rede de seguranca: falha o build se algo com cara de credencial
+          # entrar no contexto da imagem publica.
+          if grep -rIlE '(IbPassword|TWSPASSWORD)=[^[:space:]]+' deploy/images/ 2>/dev/null | grep -q .; then
+            echo "ERRO: credencial encontrada no contexto de build" >&2
+            exit 1
+          fi
+          echo "contexto limpo"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy/images/bot
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/drumblow/trader-bot:latest
+            ${{ env.REGISTRY }}/drumblow/trader-bot:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  gateway:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard — ibc.ini sem credencial
+        run: |
+          # A imagem e publica e o ibc.ini vai dentro dela. Estes dois campos
+          # PRECISAM estar vazios: o IBC le TWSUSERID/TWSPASSWORD do ambiente.
+          if grep -qE '^(IbLoginId|IbPassword)=.+' deploy/images/gateway/ibc.ini; then
+            echo "ERRO: ibc.ini tem credencial preenchida — nao publicar" >&2
+            exit 1
+          fi
+          echo "ibc.ini limpo"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy/images/gateway
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/drumblow/trader-gateway:latest
+            ${{ env.REGISTRY }}/drumblow/trader-gateway:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  scheduler:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy/images/scheduler
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/drumblow/trader-scheduler:latest
+            ${{ env.REGISTRY }}/drumblow/trader-scheduler:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -18,6 +18,10 @@ on:
       - 'crates/**'
       - 'config/**'
       - 'deploy/**'
+      # deploy/images/ e do app do umbrelOS (ADR-013), publicado por images.yml.
+      # Nao tem a ver com o host antigo — nao deve disparar deploy nem reiniciar
+      # containers em producao.
+      - '!deploy/images/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/deploy.yml'

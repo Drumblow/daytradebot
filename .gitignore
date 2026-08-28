@@ -34,3 +34,8 @@ docker-volumes/
 
 # Books and large files
 docs/books/
+
+# Artefatos montados pelo CI dentro do contexto de build das imagens (ADR-013).
+# O binario e as configs sao COPIADOS para ca no workflow; nao versionar.
+/deploy/images/bot/trader-cli
+/deploy/images/bot/config/
