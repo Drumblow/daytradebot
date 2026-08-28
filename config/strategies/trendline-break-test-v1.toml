@@ -1,0 +1,66 @@
+[strategy]
+id = "trendline-break-test-v1"
+version = "1.0.0"
+source = "Al Brooks - Reading Price Charts Bar by Bar, Cap. 15 (Major Reversals) + Cap. 8 (Trendline Break)"
+
+[strategy.parameters]
+# Timeframe operacional. O livro usa 5m; 12 barras de 15m cobrem as mesmas
+# ~3 horas de tendência com um terço das barras (§9 do doc).
+operational_timeframe = "15m"
+
+# Contexto: tendência estabelecida (§4 do doc).
+# Baixa = 2+ lower highs E 2+ lower lows na janela; alta = o espelho.
+trend_lookback = 12
+pivot_bars = 2
+
+# Rompimento da trendline (§5 do doc; Cap. 8). Pré-condição inegociável:
+# "don't trade Countertrend until after there has been a trendline break".
+break_min_bars = 3
+break_min_closes_beyond_ema = 2
+break_max_age = 20
+
+# Teste do extremo antigo (§6 do doc). Undershoot (Higher Low) e overshoot
+# (Lower Low) valem os dois — Brooks diz que ocorrem com frequência parecida.
+# Furar além de max_overshoot_atr anula a reversão (Cap. 8).
+test_tolerance_pct = 0.3
+max_overshoot_atr = 0.5
+
+# Barra de sinal (§7 do doc; Cap. 1) — mesma família das irmãs, espelhada.
+signal_body_min_pct = 0.30
+signal_wick_min_pct = 0.334
+
+# Contexto numérico
+atr_period = 14
+
+# Entrada / stop / alvo (§8 do doc).
+# Alvo 2R: acima do 1,5R de scalp da range-extreme-fade porque aqui a
+# expectativa do livro é de DUAS pernas. min_stop_atr é lição direta da
+# value-area-reentry-v1, que permitiu stops de 2 ticks e RR irreal.
+entry_order_type = "stop"
+entry_offset_ticks = 1
+entry_validity_candles = 2
+target_r_multiple = 2.0
+min_risk_reward = 1.5
+max_stop_atr = 2.0
+min_stop_atr = 0.15
+
+# Risco: usa o [risk].risk_per_trade_pct global (1,0) — sem override
+max_spread_pct = 0.05
+max_atr_pct = 1.5
+
+# Precisão do ativo
+tick_size = 0.01
+
+# Horário (UTC) — janela 10:00–15:15 ET.
+#   - Horário de verão americano (mar–nov): 14:00–19:15 UTC  <- ATUAL
+#   - Horário de inverno americano (nov–mar): 15:00–20:15 UTC
+# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
+trading_start_time = "14:00:00"
+trading_end_time = "19:15:00"
+
+# Saída por tempo: o trade precisa se validar (0,5R flutuante) em 12 barras.
+# Compensa parcialmente a ausência de saída parcial do livro (§9 do doc).
+[strategy.time_exit]
+enabled = true
+min_r = 0.5
+candles = 12

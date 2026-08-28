@@ -125,6 +125,19 @@ pub enum RejectionReason {
     OpenTooFarFromValue,
     /// Travessia contra a direção estabelecida do mercado (filtro do autor).
     TrendAgainstTraversal,
+    // --- Trendline Break Test (docs/strategies/trendline-break-test-v1.md, seção 10) ---
+    /// Sem estrutura de tendência na janela — não há o que reverter.
+    NoTrendToReverse,
+    /// A trendline não foi rompida em fechamento (pré-condição do Cap. 8).
+    NoTrendlineBreak,
+    /// Rompeu, mas sem os sinais de força do Cap. 8.
+    BreakWithoutMomentum,
+    /// Rompimento antigo demais para o teste pertencer a esta reversão.
+    BreakTooOld,
+    /// Preço não voltou para testar o extremo antigo.
+    NoExtremeTest,
+    /// Overshoot além do limite — a tendência antiga retomou (Cap. 8).
+    ReversalNullified,
     StopMissing,
     InvalidQuantity,
     InsufficientBuyingPower,

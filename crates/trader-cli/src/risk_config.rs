@@ -14,6 +14,7 @@ use trader_core::strategies::low2_m2s_short_v1::config::StrategyParameters as Lo
 use trader_core::strategies::opening_reversal_v1::config::StrategyParameters as OpeningReversalParams;
 use trader_core::strategies::pullback_trend_v1::config::StrategyParameters as PullbackParams;
 use trader_core::strategies::range_extreme_fade_v1::config::StrategyParameters as RangeFadeParams;
+use trader_core::strategies::trendline_break_test_v1::config::StrategyParameters as TrendlineBreakParams;
 use trader_core::strategies::value_area_reentry_v1::config::StrategyParameters as ValueAreaReentryParams;
 use trader_domain::TradingMode;
 use trader_infra::config::RiskSettings;
@@ -101,6 +102,19 @@ impl From<&Low2ShortParams> for StrategyRiskParams {
 
 impl From<&RangeFadeParams> for StrategyRiskParams {
     fn from(p: &RangeFadeParams) -> Self {
+        Self {
+            min_risk_reward: p.min_risk_reward,
+            max_spread_pct: p.max_spread_pct,
+            max_atr_pct: p.max_atr_pct,
+            trading_start_time: p.trading_start_time.clone(),
+            trading_end_time: p.trading_end_time.clone(),
+            risk_per_trade_pct: p.risk_per_trade_pct,
+        }
+    }
+}
+
+impl From<&TrendlineBreakParams> for StrategyRiskParams {
+    fn from(p: &TrendlineBreakParams) -> Self {
         Self {
             min_risk_reward: p.min_risk_reward,
             max_spread_pct: p.max_spread_pct,

@@ -14,6 +14,7 @@ use trader_core::strategies::low2_m2s_short_v1::Low2M2sShortV1;
 use trader_core::strategies::opening_reversal_v1::OpeningReversalV1;
 use trader_core::strategies::pullback_trend_v1::PullbackTrendV1;
 use trader_core::strategies::range_extreme_fade_v1::RangeExtremeFadeV1;
+use trader_core::strategies::trendline_break_test_v1::TrendlineBreakTestV1;
 use trader_core::strategies::value_area_reentry_v1::ValueAreaReentryV1;
 use trader_domain::{Candle, MarketContext, SignalResult, Strategy, StrategyId, StrategyState};
 
@@ -29,6 +30,7 @@ pub enum LoadedStrategy {
     RangeExtremeFadeV1(RangeExtremeFadeV1),
     Low2M2sShortV1(Low2M2sShortV1),
     ValueAreaReentryV1(ValueAreaReentryV1),
+    TrendlineBreakTestV1(TrendlineBreakTestV1),
 }
 
 /// Carrega a estratégia pelo id (nome do arquivo em `config/strategies/`).
@@ -66,8 +68,12 @@ pub fn load_strategy(strategy_id: &str, toml_str: &str) -> Result<LoadedStrategy
             ValueAreaReentryV1::from_toml(toml_str)
                 .with_context(|| "falha ao fazer parse da configuração TOML da estratégia")?,
         )),
+        "trendline-break-test-v1" => Ok(LoadedStrategy::TrendlineBreakTestV1(
+            TrendlineBreakTestV1::from_toml(toml_str)
+                .with_context(|| "falha ao fazer parse da configuração TOML da estratégia")?,
+        )),
         other => anyhow::bail!(
-            "estratégia desconhecida: {other} (suportadas: pullback-trend-v1, failure-test-long-v1, breakout-first-pullback-v1, opening-reversal-v1, balance-area-breakout-v1, range-extreme-fade-v1, low2-m2s-short-v1, value-area-reentry-v1)"
+            "estratégia desconhecida: {other} (suportadas: pullback-trend-v1, failure-test-long-v1, breakout-first-pullback-v1, opening-reversal-v1, balance-area-breakout-v1, range-extreme-fade-v1, low2-m2s-short-v1, value-area-reentry-v1, trendline-break-test-v1)"
         ),
     }
 }
@@ -84,6 +90,7 @@ impl LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => s.parameters().entry_validity_candles,
             Self::Low2M2sShortV1(s) => s.parameters().entry_validity_candles,
             Self::ValueAreaReentryV1(s) => s.parameters().entry_validity_candles,
+            Self::TrendlineBreakTestV1(s) => s.parameters().entry_validity_candles,
         }
     }
 
@@ -98,6 +105,7 @@ impl LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => s.config_hash(),
             Self::Low2M2sShortV1(s) => s.config_hash(),
             Self::ValueAreaReentryV1(s) => s.config_hash(),
+            Self::TrendlineBreakTestV1(s) => s.config_hash(),
         }
     }
 
@@ -112,6 +120,7 @@ impl LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => StrategyRiskParams::from(s.parameters()),
             Self::Low2M2sShortV1(s) => StrategyRiskParams::from(s.parameters()),
             Self::ValueAreaReentryV1(s) => StrategyRiskParams::from(s.parameters()),
+            Self::TrendlineBreakTestV1(s) => StrategyRiskParams::from(s.parameters()),
         }
     }
 
@@ -127,6 +136,7 @@ impl LoadedStrategy {
             Self::RangeExtremeFadeV1(_) => None,      // sem saída por tempo na v1 (doc §6)
             Self::Low2M2sShortV1(_) => None,          // sem saída por tempo na v1 (doc §6)
             Self::ValueAreaReentryV1(_) => None,      // sem saída por tempo na v1 (doc §6)
+            Self::TrendlineBreakTestV1(s) => s.time_exit(),
         }
     }
 }
@@ -142,6 +152,7 @@ impl Strategy for LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => s.id(),
             Self::Low2M2sShortV1(s) => s.id(),
             Self::ValueAreaReentryV1(s) => s.id(),
+            Self::TrendlineBreakTestV1(s) => s.id(),
         }
     }
 
@@ -155,6 +166,7 @@ impl Strategy for LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => s.name(),
             Self::Low2M2sShortV1(s) => s.name(),
             Self::ValueAreaReentryV1(s) => s.name(),
+            Self::TrendlineBreakTestV1(s) => s.name(),
         }
     }
 
@@ -168,6 +180,7 @@ impl Strategy for LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => s.source(),
             Self::Low2M2sShortV1(s) => s.source(),
             Self::ValueAreaReentryV1(s) => s.source(),
+            Self::TrendlineBreakTestV1(s) => s.source(),
         }
     }
 
@@ -181,6 +194,7 @@ impl Strategy for LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => s.version(),
             Self::Low2M2sShortV1(s) => s.version(),
             Self::ValueAreaReentryV1(s) => s.version(),
+            Self::TrendlineBreakTestV1(s) => s.version(),
         }
     }
 
@@ -199,6 +213,7 @@ impl Strategy for LoadedStrategy {
             Self::RangeExtremeFadeV1(s) => s.analyze(ctx, state, candles),
             Self::Low2M2sShortV1(s) => s.analyze(ctx, state, candles),
             Self::ValueAreaReentryV1(s) => s.analyze(ctx, state, candles),
+            Self::TrendlineBreakTestV1(s) => s.analyze(ctx, state, candles),
         }
     }
 }
