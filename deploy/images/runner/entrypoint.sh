@@ -5,32 +5,36 @@
 #   configure  — registra o runner uma vez, com token de curta duracao
 #   (padrao)   — executa o runner ja registrado
 #
-# A configuracao (.runner, .credentials) fica em $RUNNER_DIR, que e um volume
-# persistente. A imagem so carrega os binarios. Isso evita guardar um PAT de
-# longa duracao no dispositivo: o token de registro vale ~1 hora e e usado uma vez.
+# O runner roda A PARTIR do volume persistente ($RUNNER_DIR), nao de /opt.
+# A imagem so carrega os binarios "de fabrica" e os semeia no volume quando a
+# versao muda. A primeira tentativa foi manter os binarios em /opt e ligar a
+# configuracao por symlink — nao funciona: o runner .NET le .credentials logo
+# na inicializacao e aborta num symlink pendente (core dump, verificado
+# em 2026-08-28).
 set -euo pipefail
 
 RUNNER_DIR="${RUNNER_DIR:-/home/runner/config}"
-RUNNER_HOME=/opt/actions-runner
-CONFIG_FILES=(.runner .credentials .credentials_rsakey)
+PRISTINE=/opt/actions-runner
 
-mkdir -p "$RUNNER_DIR/_work"
+mkdir -p "$RUNNER_DIR"
 
-# O runner le e escreve a configuracao no proprio diretorio. Como os binarios
-# estao na imagem (read-only na pratica) e a configuracao precisa persistir,
-# ligamos um no outro por symlink. Escrever num symlink pendente cria o alvo,
-# entao isso funciona tanto para ler quanto para registrar.
-for f in "${CONFIG_FILES[@]}"; do
-  ln -sfn "$RUNNER_DIR/$f" "$RUNNER_HOME/$f"
-done
-ln -sfn "$RUNNER_DIR/_work" "$RUNNER_HOME/_work"
+# Semeia (ou atualiza) os binarios. `cp -a origem/. destino/` sobrescreve os
+# arquivos da imagem e preserva o que so existe no volume — .runner,
+# .credentials e _work sobrevivem a uma troca de versao do runner.
+img_ver=$(cat "$PRISTINE/.image-version" 2>/dev/null || echo desconhecida)
+cur_ver=$(cat "$RUNNER_DIR/.image-version" 2>/dev/null || echo nenhuma)
+if [[ "$img_ver" != "$cur_ver" ]]; then
+  echo "[runner] semeando binarios: $cur_ver -> $img_ver"
+  cp -a "$PRISTINE/." "$RUNNER_DIR/"
+fi
+
+cd "$RUNNER_DIR"
 
 if [[ "${1:-run}" == "configure" ]]; then
   : "${GITHUB_URL:?GITHUB_URL obrigatorio (ex.: https://github.com/dono/repo)}"
   : "${REGISTRATION_TOKEN:?REGISTRATION_TOKEN obrigatorio}"
 
   echo "[runner] registrando ${RUNNER_NAME:-daytradebot-app} em $GITHUB_URL"
-  cd "$RUNNER_HOME"
   ./config.sh \
     --unattended --replace \
     --url "$GITHUB_URL" \
@@ -56,19 +60,17 @@ Registre uma vez, com um token de curta duracao (validade ~1h):
     -e REGISTRATION_TOKEN="\$TOKEN" \\
     ghcr.io/drumblow/trader-runner:latest configure
 
-Depois reinicie a app. Nenhum token de longa duracao e guardado no dispositivo.
+Depois reinicie a app. Nenhum token de longa duracao fica no dispositivo.
 MSG
   exit 78  # EX_CONFIG
 fi
 
-# Acesso ao socket do Docker: se o gid do grupo docker do host nao for o que a
-# imagem assumiu, falha aqui com uma mensagem util em vez de "permission denied"
-# no meio de um deploy.
+# Acesso ao socket do Docker: falha aqui com mensagem util em vez de
+# "permission denied" no meio de um deploy.
 if ! docker info >/dev/null 2>&1; then
   echo "AVISO: sem acesso ao socket do Docker — o deploy vai falhar." >&2
   echo "       Confira se o gid do grupo docker do host bate com o DOCKER_GID da imagem." >&2
 fi
 
-cd "$RUNNER_HOME"
 echo "[runner] iniciando"
 exec ./run.sh
