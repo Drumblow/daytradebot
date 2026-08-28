@@ -130,7 +130,7 @@ Recuperação executada em 2026-08-28 (madrugada, mercado fechado):
 | 6 | Criar os 11 containers das instâncias (ficam parados até o timer) | ✅ feito |
 | 7 | Corrigir `trader-containers.sh` (bug encontrado na recuperação, §6.2) | ✅ feito |
 | 8 | Reinstalar runner `casa-umbrel` | ✅ feito — v2.337.0 em `/data/trader/actions-runner` (persistente), online |
-| 9 | Backfill dos candles de 08-22 a 08-27 | ⬜ pendente — ver §6.3 |
+| 9 | Backfill dos candles de 08-22 a 08-27 | ✅ feito em 08-28 — e fechou também a lacuna de 08-06 a 08-20 de SPY/QQQ/VB/SCHA/MDY/IJR |
 | 10 | **BIOS: *Restore on AC Power Loss = Power On*** | ⬜ pendente (dono) |
 | 11 | **Nobreak para o servidor** | ⬜ pendente (dono) |
 | 12 | Blindagem contra o reset do rugix (`reprovision.sh` em `/data`) | ⬜ pendente |

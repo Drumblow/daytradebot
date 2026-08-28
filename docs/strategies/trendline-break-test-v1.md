@@ -2,7 +2,7 @@
 
 **Id:** `trendline-break-test-v1`
 **Versão:** 1.0.0
-**Status:** implementada; PF 1,38 no backtest mas amostra insuficiente — candidata retida, não aprovada (ver §16)
+**Status:** implementada e REPROVADA (universo ampliado para 24 ativos, PF 1,04) — arquivada, ver §16
 **Data:** 2026-08-28
 
 ---
@@ -303,5 +303,34 @@ Caminhos possíveis, todos com custo, para decisão do dono:
    com uma ressalva importante: aquelas tinham walk-forward OOS; esta não tem.
 4. **Arquivar** e voltar quando houver mais dados.
 
-Nota de método: 2 configurações sobre 14 ativos = **28 combinações** somadas à
-superfície de testes do projeto.
+### Teste de universo ampliado (2026-08-28, decisão do dono)
+
+Caminho 1 do parágrafo acima, executado. Foram ingeridos 10 ETFs novos da mesma
+família (IJH, IWR, IWS, IWP, VOE, VBK, VTV, VUG, SCHM, VTI), dobrando o universo
+para 24, e a varredura rodou na **janela comum a todos** (2025-03-18 →
+2026-08-20). Critério declarado ANTES de rodar: PF agregado dos 24 ≥ 1,3 com
+WR ≥ 40%, sem escolher ativos depois de ver a tabela.
+
+| Recorte | trades | WR | PF | net |
+|---|---|---|---|---|
+| 14 originais, janela longa (2025-02-21 →) | 67 | 37,3% | **1,38** | +$2.640 |
+| 14 originais, janela comum (2025-03-18 →) | 65 | 32,3% | **0,94** | −$460 |
+| **10 ativos novos** (nunca usados em decisão de desenho) | 52 | 38,5% | 1,20 | +$966 |
+| **24 juntos** | 117 | 35,0% | **1,04** | +$506 |
+
+**REPROVA pelo critério declarado.** E o achado que importa mais que o veredito:
+os **mesmos 14 ativos**, com praticamente a mesma contagem de trades (67 → 65),
+caem de PF 1,38 para 0,94 apenas movendo o início da janela em ~1 mês. O
+resultado que parecia promissor dependia de um punhado de trades de fevereiro e
+março. É fragilidade, não edge.
+
+O número menos contaminado da tabela é o dos 10 ativos novos (PF 1,20): eles não
+participaram de nenhuma calibração nem de nenhuma das três correções de
+implementação. Levemente positivo, longe do gate.
+
+**Situação final: ARQUIVADA.** Não vai para acumulação forward. O código
+permanece no repositório com os 14 testes passando; o componente de trendline
+(`context.rs::trendline_value_at`) fica disponível para reuso.
+
+Nota de método: 3 configurações × 14 ativos + 1 × 24 ativos = **66 combinações**
+somadas à superfície de testes do projeto.
