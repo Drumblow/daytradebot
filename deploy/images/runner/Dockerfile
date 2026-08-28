@@ -51,7 +51,9 @@ ARG DOCKER_GID=987
 RUN groupadd -g "${DOCKER_GID}" hostdocker \
     && useradd -m -u 1002 -s /bin/bash -G hostdocker runner
 
-# Binarios do runner na imagem; a CONFIGURACAO fica no volume de app-data.
+# Binarios "de fabrica". O runner NAO roda daqui: o entrypoint semeia estes
+# arquivos no volume persistente e executa de la, porque o runner .NET exige
+# configuracao e binarios no MESMO diretorio.
 RUN set -eux; \
     arch=$(dpkg --print-architecture); \
     case "$arch" in amd64) ra=x64 ;; arm64) ra=arm64 ;; esac; \
@@ -60,6 +62,7 @@ RUN set -eux; \
       -o /tmp/runner.tar.gz; \
     tar xzf /tmp/runner.tar.gz -C /opt/actions-runner; \
     rm /tmp/runner.tar.gz; \
+    echo "${RUNNER_VERSION}" > /opt/actions-runner/.image-version; \
     chown -R runner:runner /opt/actions-runner
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
