@@ -16,15 +16,15 @@ para o app `daytradebot` do umbrelOS. Contexto e justificativa em
 
 | Pré-requisito | Como conferir |
 |---|---|
-| Pacotes do GHCR públicos | `docker pull ghcr.io/drumblow/trader-bot:latest` **de fora do host** |
+| Imagens acessíveis | `sudo docker pull ghcr.io/drumblow/trader-bot:latest` no host |
 | Pregão fechado e instâncias paradas | `sudo docker ps --filter name=trader- \| wc -l` → só gateway e postgres |
 | Store adicionada no umbrelOS | app "Day Trade Bot" aparece na dashboard |
 | Senha do usuário `umbrel` à mão | necessária **depois do reboot** — ver passo 9 |
 
-> Os pacotes do GHCR nascem **privados** e o GitHub não expõe API para mudar
-> isso. É na interface: github.com/users/Drumblow/packages → cada pacote →
-> *Package settings* → *Change visibility* → Public. Sem isso o passo 4 falha
-> com `denied`.
+> As três imagens já são **públicas**: pacotes publicados pelo Actions herdam a
+> visibilidade do repositório de origem, e `Drumblow/daytradebot` é público.
+> Verificado com pull anônimo em 2026-08-28 — não há passo manual de
+> visibilidade a fazer.
 
 ---
 

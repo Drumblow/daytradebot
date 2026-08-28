@@ -255,6 +255,29 @@ O `entrypoint.sh` do bot ganhou a guarda de janela de pregão descrita em §4.2,
 o `deploy/images/**` ficou fora do gatilho do `deploy.yml` para não reiniciar
 produção.
 
+**Imagens testadas no host, com as imagens publicadas de verdade** (não com um
+build local):
+
+| Teste | Resultado |
+|---|---|
+| Guarda de janela fora do pregão | sai com **0** e diz que o scheduler liga às 9h25 |
+| Guarda de janela dentro do pregão | passa e o `trader-cli` inicia normalmente |
+| Configs de estratégia na imagem | 9 TOMLs presentes |
+| Gateway sem credencial | **recusa subir**, exit 78, mensagem dizendo o que falta |
+| `ibc.ini` da imagem pública | `IbLoginId=` e `IbPassword=` vazios |
+| Instalador da IBKR na imagem | ausente (`/opt/trader/ibgateway` vazio) |
+
+As três imagens saíram **públicas** no GHCR sem passo manual: pacotes publicados
+pelo Actions herdam a visibilidade do repositório de origem. Confirmado com pull
+anônimo.
+
+Uma correção ao que este ADR planejava: o guard de segredo do CI, na primeira
+versão, derrubou o build ao encontrar `TWSPASSWORD=sua_senha_ibkr` — que era a
+*mensagem de ajuda* do próprio entrypoint. O guard reescrito verifica duas
+coisas mais úteis: arquivo de segredo entrando no contexto de build (o jeito
+mais provável de vazar, basta um `cp` errado) e atribuição inline cujo valor não
+seja placeholder. Testado nos dois sentidos antes de subir.
+
 ### Fase 3 — runner (pendente)
 
 9. ~~Container `scheduler`~~ — feito junto da fase 2 (`deploy/images/scheduler/`).
