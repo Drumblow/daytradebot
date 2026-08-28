@@ -11,20 +11,14 @@ name: Deploy VM
 #   - o restart e condicional: so reinicia containers RUNNING (fora do pregao
 #     as instancias estao stopped — o compose restart nao as liga)
 
+# APOSENTADO no cutover de 2026-08-28 (ADR-013). O alvo deste workflow era o
+# stack antigo em /data/trader com timers systemd, que nao existe mais: o deploy
+# agora e o job `deploy` de images.yml, rodando no runner dentro do app.
+#
+# Mantido apenas como disparo MANUAL, para o caso de rollback descrito em
+# docs/runbooks/cutover-app-umbrelos.md. Nao dispara mais em push — se
+# disparasse, falharia em todo commit tentando escrever num host que mudou.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'crates/**'
-      - 'config/**'
-      - 'deploy/**'
-      # deploy/images/ e do app do umbrelOS (ADR-013), publicado por images.yml.
-      # Nao tem a ver com o host antigo — nao deve disparar deploy nem reiniciar
-      # containers em producao.
-      - '!deploy/images/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 concurrency:
