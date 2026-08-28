@@ -24,8 +24,8 @@ Preencha no servidor, com a app instalada:
 
   \${APP_DATA_DIR}/secrets/ibkr.env
 
-    TWSUSERID=seu_usuario_ibkr
-    TWSPASSWORD=sua_senha_ibkr
+    TWSUSERID=<seu usuario IBKR>
+    TWSPASSWORD=<sua senha IBKR>
 
 e reinicie a app. O arquivo fica so no seu dispositivo — nao vai para o
 repositorio nem para a imagem.

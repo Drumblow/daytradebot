@@ -85,10 +85,24 @@ jobs:
 
       - name: Guard — nenhum segredo no contexto de build
         run: |
-          # Rede de seguranca: falha o build se algo com cara de credencial
-          # entrar no contexto da imagem publica.
-          if grep -rIlE '(IbPassword|TWSPASSWORD)=[^[:space:]]+' deploy/images/ 2>/dev/null | grep -q .; then
-            echo "ERRO: credencial encontrada no contexto de build" >&2
+          # A imagem e publica. Duas checagens, das mais para as menos obvias.
+          #
+          # (1) Arquivo de segredo entrando no contexto por descuido — e o jeito
+          #     mais provavel de vazar, porque basta um `cp` errado.
+          achados=$(find deploy/images/bot -type f \(                       -name '*.env' -o -name 'ibc.ini' -o -name '*.pem'                       -o -name '*.key' -o -name '*.jks' \) 2>/dev/null)
+          if [ -n "$achados" ]; then
+            echo "ERRO: arquivo de segredo no contexto de build:" >&2
+            echo "$achados" >&2
+            exit 1
+          fi
+
+          # (2) Credencial escrita inline. Placeholders de documentacao (<...>,
+          #     ${VAR}) nao contam — foi exatamente esse falso positivo que
+          #     derrubou o build em 2026-08-28: a mensagem de ajuda do
+          #     entrypoint ensina a preencher TWSPASSWORD e o grep ingenuo
+          #     achou que era a senha.
+          if grep -rInE '(IbPassword|IbLoginId|TWSPASSWORD|TWSUSERID)=[^[:space:]]+'                deploy/images/ 2>/dev/null              | grep -vE '=[<$"]' ; then
+            echo "ERRO: credencial escrita inline no contexto de build" >&2
             exit 1
           fi
           echo "contexto limpo"
