@@ -67,3 +67,26 @@ imutável via rugix).
 - **Oracle fica como fallback desligado**: serviços parados e timers desabilitados;
   VM mantida por ora (pode ser encerrada a qualquer momento — nada do live roda lá).
 - `docs/runbooks/live-operations.md` e `docs/HANDOFF.md` atualizados para a nova topologia.
+---
+
+## Atualização 2026-08-27 — consequência subestimada
+
+A consequência registrada como "*Atualização do umbrelOS: containers e volumes
+sobrevivem (dados em `/data`); timers systemd do host são reinstalados pelo
+deploy (idempotente) se um update do OS os remover*" **se mostrou insuficiente
+na prática**.
+
+Não é preciso um update do umbrelOS: a raiz é um overlay rugix
+(`upperdir=/run/rugix/mounts/data/state/default/overlay/b`) e **qualquer reboot
+pode resetá-la**. No incidente de 2026-08-23 sumiram de uma vez o usuário
+`trader`, as units `trader-*` e o runner self-hosted — e os containers do trader
+foram removidos (volume e imagens sobreviveram). O deploy que reinstalaria os
+timers **depende do runner que também some**, então a recuperação automática
+prevista aqui não acontece.
+
+A decisão de rodar na casa continua válida (RAM, custo, folga para
+desenvolvimento), mas ela **exige um mecanismo de reprovisionamento no boot que
+viva em `/data`** — ver `docs/runbooks/live-operations.md` → "Blindagem contra o
+reset do rugix" — além de nobreak e retorno automático na BIOS.
+
+Incidente completo: `docs/reports/incidente-2026-08-23-queda-servidor.md`.

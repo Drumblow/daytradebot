@@ -1,13 +1,25 @@
 # HANDOFF — Estado do projeto e do que já foi testado
 
-**Atualizado:** 2026-08-17 (revisão de fim de semana + relatórios dos dias 4–9 + correções de infra: timer de parada, backup, journal, exit_reason) — migração para VM Oracle + portfólio expandido para 8 instâncias/3 estratégias
+**Atualizado:** 2026-08-27 (migração para o servidor da casa, ADR-012 + incidente de queda de energia em 08-23: 4 pregões perdidos e configuração de host apagada) — 11 instâncias/4 estratégias
 **Público:** próximo agente (ou humano) que assumir o projeto. Leia isto antes de qualquer outra coisa.
 
 ---
 
 ## 1. Onde o projeto está
 
-Bot de day trade em Rust (workspace multi-crates), **operando na VM Oracle Cloud desde 2026-08-07 13h30 ET** (ADR-011), em **paper trading live na IBKR** (conta paper DUR507388). O PC Windows está fora da operação — serve só para dev e acesso via SSH. O objetivo atual é cumprir o **gate composto de go-live (ADR-010)** para operar dinheiro real:
+Bot de day trade em Rust (workspace multi-crates), **hospedado no servidor da casa desde 2026-08-23** (ADR-012 — umbrelOS em `192.168.50.68`, containers Docker, dados em `/data/trader`; a VM Oracle da ADR-011 virou fallback desligado), em **paper trading live na IBKR** (conta paper DUR507388). O PC Windows está fora da operação — serve só para dev e acesso via SSH.
+
+> ### ⚠️ Estado em 2026-08-28: operação RESTAURADA, amostra do gate B com lacuna
+>
+> Uma queda de energia derrubou o servidor em **2026-08-23 18:06 UTC**; ele só voltou em **2026-08-27 21:59 UTC**. Os pregões de **24, 25, 26 e 27/08 foram perdidos** e o setup da casa **ainda não completou um pregão sequer** — o último dia real de operação foi **2026-08-21, ainda na Oracle**.
+>
+> O reboot também apagou o usuário de serviço `trader`, os timers `trader-*` e o runner self-hosted do CI, e removeu todos os containers do trader (o volume do Postgres e as imagens sobreviveram). **Isso se repete a cada reboot** — a raiz do umbrelOS é um overlay rugix que é resetado no boot.
+>
+> **Recuperado em 2026-08-28 de madrugada:** usuário `trader` recriado, Postgres e Gateway no ar (login OK na conta DUR507388), 11 containers criados e parados, timers rearmados (start 13:25 UTC / stop 20:10 UTC / backup 21:30 UTC), backup manual feito. **Banco íntegro, sem perda de dados.**
+>
+> Ainda pendente: runner do CI (deploy por push não entrega nada até lá), backfill dos candles de 08-22 a 08-27, e a blindagem contra o reset do rugix.
+>
+> Leia `docs/reports/incidente-2026-08-23-queda-servidor.md` e a seção "Recuperação pós-reboot" de `docs/runbooks/live-operations.md` **antes** de mexer em qualquer coisa. O objetivo atual é cumprir o **gate composto de go-live (ADR-010)** para operar dinheiro real:
 
 - **A. Estratégia (estatística):** backtest ≥ 6 meses com ≥ 50 trades, win rate ≥ 40%, PF ≥ 1.3, DD ≤ 10%, avg R > 0.15 + walk-forward OOS. **✅ FECHADA para pullback-trend-v1 em IWM, IWV e IWO** (walk-forward 6 janelas sobre 17,5 meses, 2026-08-06). Duas novas estratégias aprovadas em qualidade OOS (amostra < 50): `opening-reversal-v1` (IWM/IWN/IJR/VB/SLYV) e `balance-area-breakout-v1` (9 ativos) — ver §10/§11.
 - **B. Operação:** 4 semanas de paper live contínuo (uptime ≥ 99%) + ≥ 20 trades reais dentro de ±30% do backtest + zero violações de risco + reconciliação semanal. **Em andamento desde 2026-08-04 (9/20 pregões, 3/20 trades — 1 stop, 2 alvos, P&L -$535.01 — portfólio de 8 instâncias/3 estratégias desde 2026-08-07; ver relatórios dias 4–9 em `docs/reports/`).**
@@ -80,29 +92,32 @@ Cuidados:
 
 ## 4. Como operar (rotina diária — usuário no Canadá, fuso ET)
 
-**A rotina manual acabou.** Desde 2026-08-07 tudo roda na VM Oracle, automático:
+**A rotina manual acabou.** Desde 2026-08-23 tudo roda no servidor da casa (ADR-012), automático:
 
-- Os timers systemd sobem as 8 instâncias seg–sex às **9h25 ET** (`trader-start.timer`) e param às **16h10 ET** (`trader-stop.timer`).
-- IB Gateway (headless, IBC) e Postgres ficam no ar 24/7 na VM, com `Restart=always`.
-- Sexta: `analyze` + reconciliação bot vs IBKR podem rodar na própria VM.
+- Timers systemd **do host** sobem as 11 instâncias seg–sex às **9h25 ET** (`trader-start.timer`) e param às **16h10 ET** (`trader-stop.timer`); backup do banco diário às **21:30 UTC** (`trader-backup.timer`, retenção 7d).
+- IB Gateway (container `trader-gateway`, IBC headless) e Postgres (`trader-postgres`) ficam no ar 24/7 — `restart: always` e `unless-stopped`.
+- Sexta: `analyze` + reconciliação bot vs IBKR podem rodar no próprio servidor.
 
 Comandos úteis (a partir do PC Windows):
 
 ```bash
-# acesso à VM
-ssh -i ~/.ssh/humanbot.key ubuntu@137.131.186.91
+# acesso ao servidor
+ssh -i ~/.ssh/trader_home_deploy trader@192.168.50.68
 
-# seguir o log de uma instância
-sudo journalctl -u trader@iwm-pullback -f
+# estado dos containers
+sudo docker ps --filter name=trader-
 
-# ver o estado das 8 instâncias
-systemctl list-units 'trader@*'
+# log de uma instância
+sudo docker logs trader-iwm-pullback --tail 50
 
-# reiniciar tudo (seguro em pregão — estado vem do banco)
-sudo systemctl restart trader-instances.target
+# parar / subir as 11 instâncias
+sudo /data/trader/bin/trader-containers.sh stop
+sudo /data/trader/bin/trader-containers.sh start
 ```
 
-⚠️ **NUNCA abrir TWS/Gateway local com o mesmo usuário do bot** — a IBKR permite uma única sessão por usuário e o login local derruba a sessão da VM (derrubou as 8 instâncias em 2026-08-07 13h04 ET). Ver ADR-011.
+⚠️ **NUNCA abrir TWS/Gateway local com o mesmo usuário do bot** — a IBKR permite uma única sessão por usuário e o login local derruba a sessão do servidor (derrubou as 8 instâncias em 2026-08-07 13h04 ET). Ver ADR-011 e ADR-012.
+
+⚠️ **Depois de QUALQUER reboot, a operação NÃO volta sozinha.** A raiz do umbrelOS é um overlay rugix (`upperdir=/run/rugix/mounts/data/state/default/overlay/b`) que é resetado no boot: somem o usuário `trader`, os units `trader-*` em `/etc/systemd/system/` e o runner do CI; os containers do trader não são recriados. Sobrevivem apenas `/data/trader`, o volume `trader_trader-postgres-data` e as imagens Docker. Procedimento completo em `docs/runbooks/live-operations.md` → "Recuperação pós-reboot".
 
 ## 5. Pendências priorizadas
 
