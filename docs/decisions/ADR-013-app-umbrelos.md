@@ -218,7 +218,18 @@ não roda, (b) é a única premissa do ADR ainda apoiada em leitura de código e
 de observação — e é a premissa que justifica o ADR inteiro.
 
 > Se (a) tivesse falhado, o plano inteiro mudava — por isso foi a primeira fase.
-> O probe fica instalado até o teste de reboot; depois é desinstalado.
+> O probe foi **desinstalado em 2026-08-28**, depois do teste de reboot, e
+> removido do repositório da store.
+
+Duas coisas que a fase 0 não previu e apareceram depois:
+
+- **Ícone.** Sem o campo `icon` no manifesto, o umbreld cai num caminho da
+  galeria oficial (`getumbrel.github.io/umbrel-apps-gallery/<id>/icon.svg`) que
+  não existe para store comunitária — a dashboard mostra o ícone quebrado.
+  Resolvido apontando `icon` para o SVG no próprio repositório da store.
+- **Store precisa ser pública.** O umbreld clona por git anônimo; um repositório
+  privado ele não lê. Isso derruba o plano original de "privado até auditar" e
+  torna a auditoria de segredo uma regra por commit, não um portão único.
 
 ### Fase 1 — repositório da store ✅ (2026-08-28)
 
