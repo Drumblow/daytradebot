@@ -214,9 +214,9 @@ impl RiskManager {
         }
 
         // Tamanho da posição.
-        let risk_amount = capital * self.config.risk_per_trade_pct / Decimal::from(100);
+        let risk_budget = capital * self.config.risk_per_trade_pct / Decimal::from(100);
         // Arredonda para baixo para quantidade inteira de ações.
-        let qty_by_risk = (risk_amount / risk_distance).trunc();
+        let qty_by_risk = (risk_budget / risk_distance).trunc();
 
         if qty_by_risk <= Decimal::ZERO {
             return RiskCheck::Rejected(
@@ -248,12 +248,21 @@ impl RiskManager {
             );
         }
 
+        // Risco REAL assumido: distância do stop × quantidade final. Difere do
+        // orçamento sempre que o cap de notional (ou o trunc) corta a posição.
+        // Gravar o orçamento aqui comprimia o result_in_r do live em direção a
+        // zero (um stop cheio lia −0,21R em vez de −1R) e quebrava a paridade
+        // com o backtest, cujo broker simulado sempre calculou o R sobre
+        // |entrada − stop| × quantidade — e avgR é métrica do gate (ADR-010).
+        let risk_amount = risk_distance * position_size;
+
         debug!(
             entry = %entry,
             stop = %stop,
             target = %target,
             risk_reward = %risk_reward,
             position_size = %position_size,
+            risk_amount = %risk_amount,
             "sinal aprovado pelo risk manager"
         );
 
@@ -363,6 +372,41 @@ mod tests {
         match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
             RiskCheck::Approved { position_size, .. } => {
                 assert!(position_size > Decimal::ZERO);
+            }
+            RiskCheck::Rejected(reason, _) => {
+                panic!("esperado aprovado, rejeitado por {:?}", reason)
+            }
+        }
+    }
+
+    /// `risk_amount` é o risco REAL (distância do stop × quantidade final),
+    /// não o orçamento de 1% — quando o cap de notional corta a posição, o
+    /// orçamento inflaria o denominador do result_in_r e comprimiria o avgR
+    /// do gate (ADR-010), além de quebrar a paridade com o backtest. Cenário
+    /// do trade 9 do live: stop apertado → qty por risco enorme → cap trava
+    /// no notional e o risco efetivo fica bem abaixo do orçamento.
+    #[test]
+    fn risk_amount_reflects_actual_position_risk_under_notional_cap() {
+        let config = RiskConfig::default(); // 1% de risco por trade
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        // Distância do stop 0.50: orçamento (1% de 100k = 1000) pediria 2000
+        // ações, mas o notional (100k / 500) só permite 200.
+        let signal = make_signal(
+            Decimal::from(500),
+            Decimal::new(4995, 1), // 499.5
+            Decimal::from(510),
+        );
+        let state = RiskState::default();
+
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+            RiskCheck::Approved {
+                position_size,
+                risk_amount,
+            } => {
+                assert_eq!(position_size, Decimal::from(200)); // cap de notional
+                                                               // Risco real: 0.50 × 200 = 100 — e não o orçamento de 1000.
+                assert_eq!(risk_amount, Decimal::from(100));
             }
             RiskCheck::Rejected(reason, _) => {
                 panic!("esperado aprovado, rejeitado por {:?}", reason)

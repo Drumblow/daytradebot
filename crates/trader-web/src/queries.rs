@@ -196,8 +196,9 @@ pub struct TradeRow {
     pub exit_price: Decimal,
     pub quantity: Decimal,
     pub net_pnl: Decimal,
-    /// R contra o ORÇAMENTO de risco (`risk_amount` = 1% da conta) — é o que
-    /// o bot grava. Diluído quando o sizing trava no notional.
+    /// R gravado pelo bot no fechamento. Trades anteriores a 2026-08-29
+    /// usavam o ORÇAMENTO de risco como denominador (diluído pelo cap de
+    /// notional); a partir do fix do risk_amount, coincide com o R real.
     pub result_in_r: Decimal,
     /// R contra o risco REAL da posição (distância do stop × quantidade):
     /// um stop cheio ≈ −1R aqui, um alvo 2R ≈ +2R. É a métrica que confere

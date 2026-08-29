@@ -424,7 +424,7 @@ function renderInstances(instances, overview, sparks) {
 function renderTrades(rows) {
   if (!rows.length) return setPanel("panel-trades", null, "Nenhum trade registrado ainda.");
   setPanel("panel-trades", buildTable(
-    [[""], ["Saída (ET)"], ["Símbolo"], ["Estratégia"], ["Dir."], ["Entrada", "num"], ["Saída", "num"], ["Qtd", "num"], ["P&L", "num"], ["R real", "num"], ["R orçado", "num"], ["Motivo"]],
+    [[""], ["Saída (ET)"], ["Símbolo"], ["Estratégia"], ["Dir."], ["Entrada", "num"], ["Saída", "num"], ["Qtd", "num"], ["P&L", "num"], ["R real", "num"], ["R gravado", "num"], ["Motivo"]],
     rows,
     (t) => {
       // Badge para trades fora da amostra oficial de validação (gate B):

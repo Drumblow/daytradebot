@@ -539,9 +539,12 @@ fn case11_position_size_uses_half_percent_risk() {
             position_size,
             risk_amount,
         } => {
-            // 0,5% de 100k = $500 de risco; stop a 1,10 → 454 ações (truncado).
-            assert_eq!(risk_amount, Decimal::from(500));
+            // Orçamento: 0,5% de 100k = $500; stop a 1,10 → 454 ações
+            // (truncado). O risk_amount gravado é o risco REAL da posição
+            // (1,10 × 454 = $499,40), não o orçamento — ver fix de 2026-08-29
+            // (o orçamento como denominador comprimia o R do gate ADR-010).
             assert_eq!(position_size, Decimal::from(454));
+            assert_eq!(risk_amount, Decimal::new(49940, 2)); // 499.40
         }
         other => panic!("esperado aprovado, obtido {:?}", other),
     }

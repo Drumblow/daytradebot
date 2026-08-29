@@ -1,6 +1,6 @@
 # HANDOFF — Estado do projeto e do que já foi testado
 
-**Atualizado:** 2026-08-29 (guarda de overshoot na entrada stop, ADR-015; painel web, ADR-014) — 11 instâncias/4 estratégias
+**Atualizado:** 2026-08-29 (guarda de overshoot ADR-015; painel web ADR-014; **fix do `risk_amount`**: passa a gravar o risco real — distância do stop × quantidade — e não o orçamento de 1%; o cap de notional cortava a posição mas o denominador do `result_in_r` continuava o orçamento, comprimindo o avgR do gate ADR-010 e quebrando a paridade com o backtest, que sempre calculou R sobre o risco real. Trades ≤ id 12 carregam o R antigo; o painel mostra os dois) — 11 instâncias/4 estratégias
 **Público:** próximo agente (ou humano) que assumir o projeto. Leia isto antes de qualquer outra coisa.
 
 ---
