@@ -1,0 +1,55 @@
+name: Ops
+
+# Operações no servidor, executadas pelo runner que vive DENTRO do app (ADR-013).
+#
+# Existe porque o acesso administrativo por SSH NAO sobrevive a um reboot: o
+# usuario `trader` e o `sudoers.d` sao apagados pelo rugix, e o `umbrel` fica sem
+# docker e sem sudo. O runner do app sobrevive — entao este workflow e a
+# interface de operacao que continua funcionando depois de uma queda de energia.
+#
+# Diferente do host-check.yml, que so le, aqui as acoes MUDAM estado. Por isso
+# cada uma e explicita e nenhuma roda automaticamente.
+
+on:
+  workflow_dispatch:
+    inputs:
+      acao:
+        description: 'O que fazer no servidor'
+        required: true
+        type: choice
+        options:
+          - start-instances
+          - stop-instances
+          - backup
+          - restart-app
+          - logs-gateway
+
+jobs:
+  ops:
+    runs-on: [self-hosted, linux, x64, home]
+    steps:
+      - name: ${{ inputs.acao }}
+        run: |
+          set -uo pipefail
+          case "${{ inputs.acao }}" in
+
+            start-instances|stop-instances|backup)
+              # O scheduler e o dono da janela de pregao; chamamos a MESMA funcao
+              # que o cron chama, para nao existir um segundo caminho de codigo.
+              docker exec daytradebot_scheduler_1 \
+                /usr/local/bin/scheduler.sh "${{ inputs.acao }}"
+              ;;
+
+            restart-app)
+              # Recria os containers; util depois de mudar o compose no app-data.
+              docker restart daytradebot_gateway_1 daytradebot_postgres_1
+              ;;
+
+            logs-gateway)
+              docker logs daytradebot_gateway_1 --tail 60
+              ;;
+          esac
+
+          echo
+          echo "=== estado depois ==="
+          docker ps -a --filter name=daytradebot_ --format '{{.Names}}\t{{.Status}}' | sort
