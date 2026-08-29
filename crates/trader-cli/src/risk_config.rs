@@ -171,6 +171,8 @@ pub fn build_risk_config(risk: &RiskSettings, params: &StrategyRiskParams) -> Ri
         max_atr_pct: params.max_atr_pct,
         trading_start_time_utc: parse_time(&params.trading_start_time).unwrap_or((14, 30, 0)),
         trading_end_time_utc: parse_time(&params.trading_end_time).unwrap_or((21, 0, 0)),
+        entry_overshoot_tolerance: Decimal::from_f64_retain(risk.entry_overshoot_tolerance)
+            .unwrap_or_else(|| Decimal::from(25) / Decimal::from(100)),
     }
 }
 
@@ -200,6 +202,7 @@ mod tests {
             max_daily_loss_pct: 2.0,
             max_trades_per_day: 3,
             max_consecutive_losses: 3,
+            entry_overshoot_tolerance: 0.25,
         }
     }
 

@@ -87,6 +87,12 @@ pub struct SimulatedBrokerConfig {
     pub slippage_pct: Decimal,
     /// Candles de validade de uma entrada stop aguardando o rompimento.
     pub entry_validity_candles: u32,
+    /// Tolerância de overshoot na entrada stop (ADR-015), como fração da
+    /// distância do stop: se o candle ABRE além do gatilho mais do que isto,
+    /// a entrada é cancelada (invalidada) em vez de preenchida — espelha a
+    /// guarda pré-envio do live. Dentro da tolerância, o fill acontece no
+    /// preço de abertura (gap realista), não no gatilho.
+    pub entry_overshoot_tolerance: Decimal,
 }
 
 impl Default for SimulatedBrokerConfig {
@@ -97,6 +103,7 @@ impl Default for SimulatedBrokerConfig {
             commission_per_trade: Decimal::from(35) / Decimal::from(100), // $0.35
             slippage_pct: Decimal::from(1) / Decimal::from(1000),         // 0.1%
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100), // 25%
         }
     }
 }
@@ -222,16 +229,50 @@ impl SimulatedBroker {
                 .remove(symbol)
                 .expect("entrada pendente presente");
 
+            // Overshoot na abertura (ADR-015): se o candle que aciona o
+            // gatilho ABRE além dele, o fill real seria no preço de abertura,
+            // não no gatilho. Além da tolerância (fração da distância do
+            // stop), a entrada é invalidada — espelha a guarda pré-envio do
+            // live. Dentro dela, o fill parte da abertura (gap realista; o
+            // modelo antigo enchia sempre no gatilho e escondia esse custo).
+            let stop_distance = (entry.trigger_price - entry.stop_price).abs();
+            let (fill_base, overshoot) = match entry.direction {
+                Direction::Long => (
+                    candle.open.max(entry.trigger_price),
+                    (candle.open - entry.trigger_price).max(Decimal::ZERO),
+                ),
+                Direction::Short => (
+                    candle.open.min(entry.trigger_price),
+                    (entry.trigger_price - candle.open).max(Decimal::ZERO),
+                ),
+            };
+            let overshoot_invalidated = entry_triggered
+                && stop_distance > Decimal::ZERO
+                && overshoot > self.config.entry_overshoot_tolerance * stop_distance;
+
             if entry_expired {
                 if let Some(order) = state.orders.get_mut(&entry.order_id) {
                     order.status = OrderStatus::Expired;
                 }
                 info!(order_id = %entry.order_id, "entrada stop expirada sem rompimento");
+            } else if overshoot_invalidated {
+                let now = state.now;
+                if let Some(order) = state.orders.get_mut(&entry.order_id) {
+                    order.status = OrderStatus::Cancelled;
+                    order.cancelled_at = Some(now);
+                }
+                info!(
+                    order_id = %entry.order_id,
+                    open = %candle.open,
+                    trigger = %entry.trigger_price,
+                    %overshoot,
+                    "entrada stop invalidada: abertura além do gatilho excede a tolerância de overshoot"
+                );
             } else {
                 let slippage_factor = Decimal::ONE + self.config.slippage_pct / Decimal::from(100);
                 let fill_price = match entry.direction {
-                    Direction::Long => entry.trigger_price * slippage_factor,
-                    Direction::Short => entry.trigger_price / slippage_factor,
+                    Direction::Long => fill_base * slippage_factor,
+                    Direction::Short => fill_base / slippage_factor,
                 };
                 let commission = self.config.commission_per_trade;
 
@@ -779,6 +820,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
         let summary = broker.get_account_summary().await.unwrap();
 
@@ -807,6 +849,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
 
         let order = bracket_order(
@@ -835,6 +878,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
 
         let order = bracket_order(
@@ -861,6 +905,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
 
         let order = bracket_order(
@@ -902,6 +947,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
 
         let order = bracket_order(
@@ -960,6 +1006,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 2,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
 
         let order = stop_entry_bracket(
@@ -993,6 +1040,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
 
         let order = stop_entry_bracket(
@@ -1016,6 +1064,121 @@ mod tests {
         // Rompimento tardio não enche mais.
         broker.set_market_candle("SPY", &candle_at(110, 101, 108));
         assert!(broker.get_position("SPY").await.unwrap().is_none());
+    }
+
+    /// Candle com OHLC arbitrário para os testes de gap na entrada stop.
+    fn candle_ohlc(open: i64, high: i64, low: i64, close: i64) -> Candle {
+        Candle::new(
+            "SPY",
+            trader_domain::TimeFrame::M15,
+            Utc::now(),
+            Decimal::from(open),
+            Decimal::from(high),
+            Decimal::from(low),
+            Decimal::from(close),
+            Decimal::from(1000),
+        )
+        .unwrap()
+    }
+
+    /// ADR-015: gap de abertura DENTRO da tolerância enche na abertura (custo
+    /// real do gap), não no gatilho como o modelo antigo.
+    #[tokio::test]
+    async fn stop_entry_gap_within_tolerance_fills_at_open() {
+        let broker = SimulatedBroker::new(SimulatedBrokerConfig {
+            account_id: Some("DU_SIM".to_string()),
+            initial_cash: Decimal::from(100_000),
+            commission_per_trade: Decimal::ZERO,
+            slippage_pct: Decimal::ZERO,
+            entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
+        });
+
+        // Gatilho 105, stop 95: distância 10 → overshoot tolerado até 2.5.
+        let order = stop_entry_bracket(
+            "SPY",
+            Decimal::from(105),
+            Decimal::from(95),
+            Decimal::from(115),
+        );
+        broker.place_order(order).await.unwrap();
+
+        // Abre em 107 (overshoot 2 ≤ 2.5): enche em 107, não em 105.
+        broker.set_market_candle("SPY", &candle_ohlc(107, 108, 106, 107));
+        let position = broker.get_position("SPY").await.unwrap();
+        assert_eq!(position.unwrap().avg_entry_price, Decimal::from(107));
+    }
+
+    /// ADR-015: gap de abertura ALÉM da tolerância invalida a entrada —
+    /// cenário do trade 12 do live (overshoot maior que a distância do stop).
+    #[tokio::test]
+    async fn stop_entry_gap_beyond_tolerance_cancels() {
+        let broker = SimulatedBroker::new(SimulatedBrokerConfig {
+            account_id: Some("DU_SIM".to_string()),
+            initial_cash: Decimal::from(100_000),
+            commission_per_trade: Decimal::ZERO,
+            slippage_pct: Decimal::ZERO,
+            entry_validity_candles: 2,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
+        });
+
+        // Gatilho 105, stop 95: overshoot tolerado até 2.5; abre em 109 (4).
+        let order = stop_entry_bracket(
+            "SPY",
+            Decimal::from(105),
+            Decimal::from(95),
+            Decimal::from(115),
+        );
+        let id = broker.place_order(order).await.unwrap();
+
+        broker.set_market_candle("SPY", &candle_ohlc(109, 110, 108, 109));
+
+        assert!(broker.get_position("SPY").await.unwrap().is_none());
+        assert_eq!(
+            broker.get_order_status(&id).await.unwrap(),
+            OrderStatus::Cancelled
+        );
+
+        // A entrada foi removida: candle seguinte não enche mais.
+        broker.set_market_candle("SPY", &candle_ohlc(105, 106, 104, 105));
+        assert!(broker.get_position("SPY").await.unwrap().is_none());
+    }
+
+    /// Direção short: overshoot é a abertura ABAIXO do gatilho de venda.
+    #[tokio::test]
+    async fn short_stop_entry_gap_beyond_tolerance_cancels() {
+        let broker = SimulatedBroker::new(SimulatedBrokerConfig {
+            account_id: Some("DU_SIM".to_string()),
+            initial_cash: Decimal::from(100_000),
+            commission_per_trade: Decimal::ZERO,
+            slippage_pct: Decimal::ZERO,
+            entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
+        });
+
+        // Sell stop 100, stop de proteção 105: distância 5 → tolerado 1.25.
+        let mut order = Order::new(
+            "SPY",
+            OrderSide::Sell,
+            OrderType::Bracket,
+            Decimal::from(10),
+            "simulated",
+        )
+        .unwrap();
+        order.price = Some(Decimal::from(100));
+        order.stop_price = Some(Decimal::from(105));
+        order.target_price = Some(Decimal::from(90));
+        order.entry_order_type = EntryOrderType::Stop;
+        let id = broker.place_order(order).await.unwrap();
+
+        // Abre em 97 (overshoot 3 > 1.25): invalidada.
+        broker.set_market_candle("SPY", &candle_ohlc(97, 98, 96, 97));
+
+        assert!(broker.get_position("SPY").await.unwrap().is_none());
+        assert_eq!(
+            broker.get_order_status(&id).await.unwrap(),
+            OrderStatus::Cancelled
+        );
     }
 
     #[tokio::test]
@@ -1062,6 +1225,7 @@ mod tests {
             commission_per_trade: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
         });
 
         let order = bracket_order(

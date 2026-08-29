@@ -50,6 +50,11 @@ impl ExecutionEngine {
     }
 
     /// Processa um sinal validado: aplica regras de risco e envia ordem ao broker.
+    ///
+    /// `reference_price` é o preço mais fresco que o chamador conhece no
+    /// momento do envio (live: close da barra em formação do último fetch;
+    /// backtest/replay: close da barra do sinal). Alimenta a guarda de
+    /// overshoot (ADR-015).
     #[allow(clippy::too_many_arguments)]
     pub async fn process_signal<B: Broker>(
         &self,
@@ -57,6 +62,7 @@ impl ExecutionEngine {
         signal: &Signal,
         ctx: &MarketContext,
         quote: Option<&Quote>,
+        reference_price: Option<Decimal>,
         risk_state: &RiskState,
         capital: Decimal,
     ) -> ExecutionResult {
@@ -75,6 +81,38 @@ impl ExecutionEngine {
                 return ExecutionResult::RejectedByBroker {
                     error: format!("falha ao consultar posições: {e}"),
                 };
+            }
+        }
+
+        // Guarda de overshoot (ADR-015): se o preço já correu além do gatilho
+        // de uma entrada stop mais do que a tolerância (fração da distância do
+        // stop), a ordem não é enviada — o fill viria a mercado, o risco real
+        // não seria o desenhado (trade 12 do live: overshoot 0.38 num stop de
+        // 0.35 dobrou o risco). Só vale para entrada stop; um limit nunca
+        // enche pior que o próprio preço.
+        if signal.entry_order_type == trader_domain::EntryOrderType::Stop {
+            if let (Some(reference), Some(entry), Some(stop)) =
+                (reference_price, signal.entry_price, signal.stop_price)
+            {
+                let stop_distance = (entry - stop).abs();
+                let overshoot = match signal.direction {
+                    trader_domain::Direction::Long => reference - entry,
+                    trader_domain::Direction::Short => entry - reference,
+                };
+                let tolerance = self.risk_manager.config().entry_overshoot_tolerance;
+                if stop_distance > Decimal::ZERO && overshoot > tolerance * stop_distance {
+                    warn!(
+                        %reference, %entry, %stop, %overshoot, %tolerance,
+                        "entrada stop invalidada: preço já passou do gatilho além da tolerância"
+                    );
+                    return ExecutionResult::RejectedByRisk {
+                        reason: RejectionReason::SetupInvalidated,
+                        detail: format!(
+                            "overshoot {overshoot} além do gatilho {entry} (referência {reference}) \
+                             excede {tolerance} × distância do stop {stop_distance}"
+                        ),
+                    };
+                }
             }
         }
 
@@ -300,6 +338,7 @@ mod tests {
                 &signal,
                 &ctx,
                 None,
+                None,
                 &risk_state,
                 Decimal::from(100_000),
             )
@@ -332,6 +371,7 @@ mod tests {
                 &signal,
                 &ctx,
                 None,
+                None,
                 &risk_state,
                 Decimal::from(100_000),
             )
@@ -343,6 +383,118 @@ mod tests {
                 ..
             } => {}
             other => panic!("esperado rejeição por risco/retorno, obtido {:?}", other),
+        }
+    }
+
+    /// Cenário do trade 12 do live (ADR-015): sinal com entry 500 / stop 495
+    /// (distância 5). Tolerância default 0.25 ⇒ overshoot máximo 1.25.
+    #[tokio::test]
+    async fn rejects_stop_entry_when_price_ran_beyond_tolerance() {
+        let broker = MockBroker::default();
+        let engine = ExecutionEngine::new(RiskManager::new(RiskConfig::default()));
+        let ctx = make_context(
+            Utc::now()
+                .date_naive()
+                .and_hms_opt(15, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
+        let signal = make_signal();
+        let risk_state = RiskState::default();
+
+        let result = engine
+            .process_signal(
+                &broker,
+                &signal,
+                &ctx,
+                None,
+                Some(Decimal::from(502)), // 2.0 além do gatilho > 1.25 tolerado
+                &risk_state,
+                Decimal::from(100_000),
+            )
+            .await;
+
+        match result {
+            ExecutionResult::RejectedByRisk {
+                reason: RejectionReason::SetupInvalidated,
+                ..
+            } => {}
+            other => panic!(
+                "esperado SetupInvalidated por overshoot, obtido {:?}",
+                other
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn allows_stop_entry_within_overshoot_tolerance() {
+        let broker = MockBroker::default();
+        let engine = ExecutionEngine::new(RiskManager::new(RiskConfig::default()));
+        let ctx = make_context(
+            Utc::now()
+                .date_naive()
+                .and_hms_opt(15, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
+        let signal = make_signal();
+        let risk_state = RiskState::default();
+
+        let result = engine
+            .process_signal(
+                &broker,
+                &signal,
+                &ctx,
+                None,
+                Some(Decimal::from(501)), // 1.0 além do gatilho ≤ 1.25 tolerado
+                &risk_state,
+                Decimal::from(100_000),
+            )
+            .await;
+
+        match result {
+            ExecutionResult::Executed { .. } => {}
+            other => panic!("esperado execução dentro da tolerância, obtido {:?}", other),
+        }
+    }
+
+    /// Direção short: overshoot é o preço ABAIXO do gatilho de venda.
+    #[tokio::test]
+    async fn rejects_short_stop_entry_on_overshoot_below_trigger() {
+        let broker = MockBroker::default();
+        let engine = ExecutionEngine::new(RiskManager::new(RiskConfig::default()));
+        let ctx = make_context(
+            Utc::now()
+                .date_naive()
+                .and_hms_opt(15, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
+        let mut signal = make_signal();
+        signal.direction = Direction::Short;
+        signal.entry_price = Some(Decimal::from(500));
+        signal.stop_price = Some(Decimal::from(505));
+        signal.target_price = Some(Decimal::from(490));
+        let risk_state = RiskState::default();
+
+        let result = engine
+            .process_signal(
+                &broker,
+                &signal,
+                &ctx,
+                None,
+                Some(Decimal::from(498)), // 2.0 abaixo do gatilho > 1.25 tolerado
+                &risk_state,
+                Decimal::from(100_000),
+            )
+            .await;
+
+        match result {
+            ExecutionResult::RejectedByRisk {
+                reason: RejectionReason::SetupInvalidated,
+                ..
+            } => {}
+            other => panic!("esperado SetupInvalidated no short, obtido {:?}", other),
         }
     }
 }

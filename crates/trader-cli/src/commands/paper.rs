@@ -132,20 +132,22 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
 
     let alerter = crate::alerts::Alerter::new(&config.app_config.alerts.webhook_url);
 
-    let broker = SimulatedBroker::new(SimulatedBrokerConfig {
-        account_id: Some("DU_SIM".to_string()),
-        initial_cash: Decimal::from(100_000),
-        commission_per_trade: Decimal::from(35) / Decimal::from(100),
-        slippage_pct: Decimal::from(1) / Decimal::from(1000),
-        entry_validity_candles: strategy.entry_validity_candles() as u32,
-    });
-
     // Limites de risco vêm de config/default.toml ([risk]); os filtros de
     // estratégia (RR, spread, ATR, horário) vêm da config da estratégia, que
     // também pode sobrescrever o risco por trade (ex.: 0,5% do failure test).
     // Compartilhado com o backtest para garantir paridade de validação.
     let risk_config =
         crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params());
+
+    let broker = SimulatedBroker::new(SimulatedBrokerConfig {
+        account_id: Some("DU_SIM".to_string()),
+        initial_cash: Decimal::from(100_000),
+        commission_per_trade: Decimal::from(35) / Decimal::from(100),
+        slippage_pct: Decimal::from(1) / Decimal::from(1000),
+        entry_validity_candles: strategy.entry_validity_candles() as u32,
+        // Paridade com live/backtest: mesma tolerância de overshoot (ADR-015).
+        entry_overshoot_tolerance: risk_config.entry_overshoot_tolerance,
+    });
 
     let risk_manager = RiskManager::new(risk_config);
     let engine = ExecutionEngine::new(risk_manager.clone());
@@ -349,6 +351,7 @@ async fn process_candle(
         risk_state,
         repos,
         "simulated",
+        candles.last().map(|c| c.close),
     )
     .await?
     .is_some()
@@ -396,6 +399,10 @@ async fn analyze_and_execute<B: Broker>(
     risk_state: &mut RiskState,
     repos: Option<&Repositories>,
     broker_name: &str,
+    // Preço mais fresco conhecido no momento do envio, para a guarda de
+    // overshoot (ADR-015). No live é o close da barra em formação do último
+    // fetch; em simulated/replay, o close da barra do sinal.
+    reference_price: Option<Decimal>,
 ) -> Result<Option<PlacedOrderInfo>> {
     let summary = broker.get_account_summary().await?;
     let positions = broker.get_positions().await?;
@@ -430,7 +437,15 @@ async fn analyze_and_execute<B: Broker>(
             let capital = summary.equity;
 
             match engine
-                .process_signal(broker, &signal, &ctx, None, risk_state, capital)
+                .process_signal(
+                    broker,
+                    &signal,
+                    &ctx,
+                    None,
+                    reference_price,
+                    risk_state,
+                    capital,
+                )
                 .await
             {
                 trader_core::execution::ExecutionResult::Executed {
@@ -1056,6 +1071,11 @@ async fn run_live(
                 &mut risk_state,
                 repos,
                 "ibkr",
+                // O fetch inclui a barra em formação (além de `closed`): o
+                // close dela é o preço mais fresco que o live conhece — é o
+                // que pega o cenário do trade 12 (preço já correu além do
+                // gatilho entre o fechamento da barra do sinal e o envio).
+                candles.last().map(|c| c.close),
             )
             .await
             {

@@ -82,6 +82,9 @@ impl BacktestEngine {
             commission_per_trade: config.commission_per_trade,
             slippage_pct: config.slippage_pct,
             entry_validity_candles: config.entry_validity_candles,
+            // Paridade com o live: a mesma tolerância de overshoot (ADR-015)
+            // governa o cancelamento de entradas por gap além do gatilho.
+            entry_overshoot_tolerance: risk_config.entry_overshoot_tolerance,
         });
 
         let risk_manager = RiskManager::new(risk_config);
@@ -187,6 +190,9 @@ impl BacktestEngine {
                             &signal,
                             &ctx,
                             None,
+                            // Preço mais fresco que o backtest conhece no
+                            // momento do envio: o close da barra do sinal.
+                            Some(candle.close),
                             &self.risk_state,
                             capital,
                         )
@@ -315,6 +321,7 @@ pub fn default_backtest_risk_config() -> RiskConfig {
         max_atr_pct: Decimal::from(15) / Decimal::from(10),
         trading_start_time_utc: (0, 0, 0),
         trading_end_time_utc: (23, 59, 59),
+        entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
     }
 }
 

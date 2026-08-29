@@ -30,6 +30,10 @@ risk_per_trade_pct = 1.0
 max_daily_loss_pct = 2.0
 max_trades_per_day = 3
 max_consecutive_losses = 3
+# Tolerância de overshoot numa entrada stop, como fração da distância do stop
+# (0.25 = aceita até 25% de risco extra; além disso a entrada é invalidada em
+# vez de perseguida). Vale para live, replay e backtest — ADR-015.
+entry_overshoot_tolerance = 0.25
 
 [alerts]
 # Webhook para alertas críticos (Slack/Discord/Teams: POST {"text": "..."}).

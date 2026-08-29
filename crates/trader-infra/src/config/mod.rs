@@ -85,10 +85,18 @@ pub struct RiskSettings {
     /// Para de operar após N perdas consecutivas.
     #[serde(default = "default_max_consecutive_losses")]
     pub max_consecutive_losses: usize,
+    /// Tolerância de overshoot numa entrada stop, como fração da distância do
+    /// stop (0.25 = aceita até 25% de risco extra; além disso a entrada é
+    /// invalidada em vez de perseguida — ADR-015).
+    #[serde(default = "default_entry_overshoot_tolerance")]
+    pub entry_overshoot_tolerance: f64,
 }
 
 fn default_risk_per_trade_pct() -> f64 {
     1.0
+}
+fn default_entry_overshoot_tolerance() -> f64 {
+    0.25
 }
 fn default_max_daily_loss_pct() -> f64 {
     2.0

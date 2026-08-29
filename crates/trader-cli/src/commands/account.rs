@@ -27,6 +27,8 @@ pub async fn run(config: &CliConfig) -> Result<()> {
                     / rust_decimal::Decimal::from(100),
                 slippage_pct: rust_decimal::Decimal::from(1) / rust_decimal::Decimal::from(1000),
                 entry_validity_candles: 1,
+                entry_overshoot_tolerance: rust_decimal::Decimal::from(25)
+                    / rust_decimal::Decimal::from(100),
             })
             .get_account_summary()
             .await?

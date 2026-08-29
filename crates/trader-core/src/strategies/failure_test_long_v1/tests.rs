@@ -514,6 +514,7 @@ fn risk_config() -> RiskConfig {
         max_atr_pct: dec("1.5"),
         trading_start_time_utc: (13, 45, 0),
         trading_end_time_utc: (19, 30, 0),
+        entry_overshoot_tolerance: dec("0.25"),
     }
 }
 

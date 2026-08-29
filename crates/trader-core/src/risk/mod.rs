@@ -22,6 +22,12 @@ pub struct RiskConfig {
     pub max_atr_pct: Decimal,
     pub trading_start_time_utc: (u32, u32, u32),
     pub trading_end_time_utc: (u32, u32, u32),
+    /// Tolerância de overshoot numa entrada stop, como fração da distância do
+    /// stop. Se o preço de referência já passou do gatilho além disso, a
+    /// entrada é invalidada em vez de perseguida — o risco real do trade já
+    /// não seria o desenhado (trade 12 do live: overshoot de 0.38 num stop de
+    /// 0.35 dobrou o risco). Ver ADR-015.
+    pub entry_overshoot_tolerance: Decimal,
 }
 
 impl Default for RiskConfig {
@@ -37,6 +43,7 @@ impl Default for RiskConfig {
             max_atr_pct: Decimal::from(15) / Decimal::from(10),    // 1.5%
             trading_start_time_utc: (14, 30, 0),
             trading_end_time_utc: (21, 0, 0),
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100), // 25% da distância do stop
         }
     }
 }
@@ -68,6 +75,12 @@ pub struct RiskManager {
 impl RiskManager {
     pub fn new(config: RiskConfig) -> Self {
         Self { config }
+    }
+
+    /// Configuração ativa (leitura) — usada pela `ExecutionEngine` para regras
+    /// que dependem de dados que o `validate` não recebe (ex.: overshoot).
+    pub fn config(&self) -> &RiskConfig {
+        &self.config
     }
 
     /// Valida um sinal contra todas as regras de risco.
