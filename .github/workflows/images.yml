@@ -231,8 +231,12 @@ jobs:
                       avuv-rangefade slyv-rangefade iwv-rangefade"
 
           docker pull ghcr.io/drumblow/trader-bot:latest
+          docker pull ghcr.io/drumblow/trader-scheduler:latest
 
-          docker compose -p daytradebot -f /appdata/docker-compose.yml             up -d --no-deps $INSTANCIAS
+          # O scheduler entra junto: e sem estado e recria-lo no meio do pregao
+          # nao toca nas instancias. O GATEWAY fica de fora de proposito —
+          # recria-lo derruba a sessao da IBKR, que e unica por usuario.
+          docker compose -p daytradebot -f /appdata/docker-compose.yml             up -d --no-deps $INSTANCIAS scheduler
 
           echo "--- estado apos o deploy ---"
           docker ps -a --filter name=daytradebot_ --format '{{.Names}}	{{.Status}}'
