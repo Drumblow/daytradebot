@@ -36,4 +36,20 @@ if [[ "${SKIP_WINDOW_GUARD:-false}" != "true" ]]; then
   echo "[$SYMBOL/$STRATEGY] dentro da janela ${TRADING_START}-${TRADING_END} ET (agora ${now})."
 fi
 
+# ── webhook de alertas (opcional) ────────────────────────────────────────────
+# Segredo do dispositivo, montado por volume (nunca na imagem publica). Se o
+# arquivo existir e definir TRADER__ALERTS__WEBHOOK_URL, o bot passa a enviar
+# alertas criticos (circuit breaker, live_stopped) para o webhook — sem ele, a
+# unica forma de saber que o bot caiu e olhar o painel/logs (HANDOFF §5).
+ALERTS_ENV="${ALERTS_ENV_FILE:-/run/trader-secrets/alerts.env}"
+if [[ -f "$ALERTS_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ALERTS_ENV"
+  set +a
+  if [[ -n "${TRADER__ALERTS__WEBHOOK_URL:-}" ]]; then
+    echo "[$SYMBOL/$STRATEGY] webhook de alertas configurado."
+  fi
+fi
+
 exec /opt/trader/bin/trader-cli paper --mode live --symbol "$SYMBOL" --strategy "$STRATEGY"
