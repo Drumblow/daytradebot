@@ -196,8 +196,20 @@ pub struct TradeRow {
     pub exit_price: Decimal,
     pub quantity: Decimal,
     pub net_pnl: Decimal,
+    /// R contra o ORÇAMENTO de risco (`risk_amount` = 1% da conta) — é o que
+    /// o bot grava. Diluído quando o sizing trava no notional.
     pub result_in_r: Decimal,
+    /// R contra o risco REAL da posição (distância do stop × quantidade):
+    /// um stop cheio ≈ −1R aqui, um alvo 2R ≈ +2R. É a métrica que confere
+    /// com o desenho da estratégia.
+    pub real_r: Option<Decimal>,
     pub exit_reason: String,
+    /// Marcado no journal: trade-artefato do dia 1 (latência) — fora da
+    /// amostra de validação do gate B.
+    pub latency_artifact: bool,
+    /// Marcado no journal: sinal calculado sobre dados degradados (semana
+    /// 07–14/08) — fora da amostra de validação do gate B.
+    pub data_quality_suspect: bool,
 }
 
 pub async fn trades(pool: &PgPool, limit: i64) -> sqlx::Result<Vec<TradeRow>> {
@@ -205,7 +217,11 @@ pub async fn trades(pool: &PgPool, limit: i64) -> sqlx::Result<Vec<TradeRow>> {
         r#"
         SELECT t.id, a.symbol, t.strategy_id, t.direction::text AS direction,
                t.entry_time, t.exit_time, t.entry_price, t.exit_price,
-               t.quantity, t.net_pnl, t.result_in_r, t.exit_reason
+               t.quantity, t.net_pnl, t.result_in_r,
+               t.net_pnl / nullif(abs(t.entry_price - t.stop_price) * t.quantity, 0) AS real_r,
+               t.exit_reason,
+               coalesce((t.journal->>'latency_artifact')::boolean, false) AS latency_artifact,
+               coalesce((t.journal->>'data_quality_suspect')::boolean, false) AS data_quality_suspect
         FROM trades t
         JOIN assets a ON a.id = t.asset_id
         ORDER BY t.exit_time DESC

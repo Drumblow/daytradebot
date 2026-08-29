@@ -424,20 +424,37 @@ function renderInstances(instances, overview, sparks) {
 function renderTrades(rows) {
   if (!rows.length) return setPanel("panel-trades", null, "Nenhum trade registrado ainda.");
   setPanel("panel-trades", buildTable(
-    [["Saída (ET)"], ["Símbolo"], ["Estratégia"], ["Dir."], ["Entrada", "num"], ["Saída", "num"], ["Qtd", "num"], ["P&L", "num"], ["R", "num"], ["Motivo"]],
+    [[""], ["Saída (ET)"], ["Símbolo"], ["Estratégia"], ["Dir."], ["Entrada", "num"], ["Saída", "num"], ["Qtd", "num"], ["P&L", "num"], ["R real", "num"], ["R orçado", "num"], ["Motivo"]],
     rows,
-    (t) => el("tr", {}, [
-      td(fmtET(t.exit_time)),
-      td(t.symbol, "sym"),
-      td(t.strategy_id),
-      tdChip(t.direction, t.direction),
-      td(fmtNum(t.entry_price), "num"),
-      td(fmtNum(t.exit_price), "num"),
-      td(fmtNum(t.quantity, 0), "num"),
-      pnlTd(t.net_pnl),
-      td(fmtR(t.result_in_r), "num " + (Number(t.result_in_r) > 0 ? "pos" : "neg")),
-      tdChip(t.exit_reason, t.exit_reason),
-    ])
+    (t) => {
+      // Badge para trades fora da amostra oficial de validação (gate B):
+      // artefatos de latência do dia 1 e sinais sobre dados degradados.
+      const flagCell = el("td");
+      if (t.latency_artifact || t.data_quality_suspect) {
+        flagCell.appendChild(el("span", {
+          class: "chip chip-warning",
+          text: "⚑",
+          title: t.latency_artifact
+            ? "Artefato de latência (dia 1) — fora da amostra de validação"
+            : "Dados degradados (semana 07–14/08) — fora da amostra de validação",
+        }));
+      }
+      const realR = t.real_r === null ? null : Number(t.real_r);
+      return el("tr", {}, [
+        flagCell,
+        td(fmtET(t.exit_time)),
+        td(t.symbol, "sym"),
+        td(t.strategy_id),
+        tdChip(t.direction, t.direction),
+        td(fmtNum(t.entry_price), "num"),
+        td(fmtNum(t.exit_price), "num"),
+        td(fmtNum(t.quantity, 0), "num"),
+        pnlTd(t.net_pnl),
+        td(realR === null ? "—" : fmtR(realR), "num " + (realR > 0 ? "pos" : realR < 0 ? "neg" : "")),
+        td(fmtR(t.result_in_r), "num muted"),
+        tdChip(t.exit_reason, t.exit_reason),
+      ]);
+    }
   ));
 }
 
