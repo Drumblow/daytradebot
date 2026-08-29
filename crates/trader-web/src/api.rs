@@ -397,21 +397,20 @@ fn default_candles_limit() -> i64 {
     54 // ~2 pregões de candles de 15m
 }
 
-pub async fn candles(
-    State(state): Shared,
-    Query(p): Query<CandlesParams>,
-) -> Result<Json<Vec<queries::CandlePoint>>, Response> {
+// Devolve `Response` pronto (e não um Result): o clippy do CI recusa um
+// `Err`-variant do tamanho de um `Response` (result_large_err).
+pub async fn candles(State(state): Shared, Query(p): Query<CandlesParams>) -> Response {
     let symbol_ok = !p.symbol.is_empty()
         && p.symbol.len() <= 8
         && p.symbol.chars().all(|c| c.is_ascii_alphanumeric());
     let timeframe_ok = matches!(p.timeframe.as_str(), "5m" | "15m" | "1h" | "1d");
     if !symbol_ok || !timeframe_ok {
-        return Err((StatusCode::BAD_REQUEST, "symbol/timeframe inválido").into_response());
+        return (StatusCode::BAD_REQUEST, "symbol/timeframe inválido").into_response();
     }
 
     let limit = p.limit.clamp(1, 500);
-    queries::recent_candles(&state.pool, &p.symbol, &p.timeframe, limit)
-        .await
-        .map(Json)
-        .map_err(|e| ApiError::from(e).into_response())
+    match queries::recent_candles(&state.pool, &p.symbol, &p.timeframe, limit).await {
+        Ok(rows) => Json(rows).into_response(),
+        Err(e) => ApiError::from(e).into_response(),
+    }
 }
