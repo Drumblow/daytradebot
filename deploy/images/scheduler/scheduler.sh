@@ -19,6 +19,18 @@ log() { echo "[scheduler $(date '+%F %T %Z')] $*"; }
 
 expected_count() { echo "$INSTANCES" | wc -w | tr -d ' '; }
 
+# Estamos dentro da janela de pregao? Usado para distinguir "as instancias nao
+# subiram porque quebraram" de "as instancias sairam pela guarda porque e fora de
+# hora" — que e o comportamento correto e nao pode virar alarme.
+dentro_da_janela() {
+  [ "$(date +%u)" -le 5 ] || return 1
+  local agora inicio fim
+  agora=$(date +%H%M)
+  inicio=$(printf '%02d%02d' "${START_HOUR}" "${START_MIN}")
+  fim=$(printf '%02d%02d' "${END_HOUR}" "${END_MIN}")
+  [ "$agora" -ge "$inicio" ] && [ "$agora" -lt "$fim" ]
+}
+
 start_instances() {
   local expected running=0 svc
   expected=$(expected_count)
@@ -32,13 +44,22 @@ start_instances() {
   # damos um instante antes de conferir para nao contar um container que ja saiu.
   sleep 10
 
+  local na_janela=0
+  dentro_da_janela && na_janela=1
+
   for svc in $INSTANCES; do
     if [ "$(docker inspect -f '{{.State.Running}}' "$svc" 2>/dev/null)" = "true" ]; then
       running=$((running + 1))
-    else
+    elif [ "$na_janela" -eq 1 ]; then
       log "AVISO: $svc NAO esta rodando"
     fi
   done
+
+  if [ "$na_janela" -eq 0 ]; then
+    log "fora da janela de pregao: as $expected instancias sairam pela guarda do"
+    log "entrypoint ($running rodando). Comportamento esperado, nao e erro."
+    return 0
+  fi
 
   log "instancias rodando: $running/$expected"
   [ "$running" -eq "$expected" ] || log "ERRO: esperava $expected instancias, subiram $running"
@@ -105,14 +126,9 @@ log "instancias sob controle: $(expected_count)"
 # Se o app subiu dentro da janela de pregao — por exemplo o servidor religou as
 # 10h da manha de uma terca — as instancias precisam subir agora, sem esperar o
 # proximo 9h25. A guarda do entrypoint delas decide se e hora ou nao.
-if [ "$(date +%u)" -le 5 ]; then
-  now=$(date +%H%M)
-  window_start=$(printf '%02d%02d' "$START_HOUR" "$START_MIN")
-  window_end=$(printf '%02d%02d' "$END_HOUR" "$END_MIN")
-  if [ "$now" -ge "$window_start" ] && [ "$now" -lt "$window_end" ]; then
-    log "app subiu DENTRO da janela de pregao — ligando as instancias agora"
-    start_instances
-  fi
+if dentro_da_janela; then
+  log "app subiu DENTRO da janela de pregao — ligando as instancias agora"
+  start_instances
 fi
 
 exec crond -f -l 8
