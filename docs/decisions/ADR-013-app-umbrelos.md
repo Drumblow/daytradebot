@@ -285,8 +285,13 @@ seja placeholder. Testado nos dois sentidos antes de subir.
    pelo tzdata. Confere container por container em vez de confiar no código de
    saída — a lição que o `trader-containers.sh` custou.
 10. Container `runner` com o runner do GitHub Actions em `${APP_DATA_DIR}/runner`.
-11. Adaptar `.github/workflows/deploy.yml` para o novo alvo (pull de imagem em
-    vez de troca de binário).
+11. ~~Adaptar `deploy.yml`~~ — feito: o deploy virou o job `deploy` de
+    `images.yml`, rodando no runner do app. O `deploy.yml` antigo ficou como
+    disparo manual, para o rollback.
+12. **`host-check.yml`** (só lê) e **`ops.yml`** (start/stop/backup/logs) — a
+    interface de operação que sobrevive a um reboot, já que o SSH administrativo
+    não sobrevive. Sem isso, o ganho do ADR seria parcial: a app voltaria sozinha
+    mas ninguém conseguiria inspecioná-la sem a senha do dono.
 
 ### Fase 4 — cutover ✅ (2026-08-28, 19h26–20h00 ET, pregão fechado)
 

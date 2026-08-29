@@ -148,8 +148,9 @@ sudo umbreld client apps.restart.mutate --appId daytradebot
 ```
 
 > **Sem sudo depois de um reboot?** É esperado: o `sudoers.d` some no boot.
-> Rode `gh workflow run host-check.yml` — o workflow inspeciona o host pelo
-> runner que vive dentro do app, sem depender de senha.
+> Opere pelo runner que vive dentro do app, sem senha:
+> `gh workflow run host-check.yml` (só lê) e
+> `gh workflow run ops.yml -f acao=start-instances|stop-instances|backup|restart-app|logs-gateway`.
 
 **Deploy:** `push` em `main` → `images.yml` compila e publica as imagens em
 `ghcr.io/drumblow/*` → o job `deploy` roda no runner do app e recria as 11

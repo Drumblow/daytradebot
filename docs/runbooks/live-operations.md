@@ -51,8 +51,14 @@ ssh -i ~/.ssh/trader_home_deploy umbrel@<SERVIDOR_CASA>
 **Depois de um reboot o `sudo` pede senha** — o `sudoers.d` some no boot. Duas
 saídas:
 
-1. **Sem senha:** `gh workflow run host-check.yml` — inspeciona containers,
-   Gateway e banco pelo runner que vive dentro do app.
+1. **Sem senha, pelo runner que vive dentro do app:**
+   - `gh workflow run host-check.yml` — só lê: containers, Gateway, banco, agenda.
+   - `gh workflow run ops.yml -f acao=start-instances` — também
+     `stop-instances`, `backup`, `restart-app`, `logs-gateway`. Estas mudam
+     estado, por isso cada uma é explícita e nenhuma roda sozinha.
+
+   Esta é a interface de operação que **sobrevive a uma queda de energia** —
+   prefira ela a reabrir o sudo.
 2. **Com senha, se precisar de sudo na sessão:**
 
 ```bash
