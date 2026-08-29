@@ -3,7 +3,7 @@
 **Severidade:** alta — 4 pregões perdidos, operação parada por 4 dias
 **Detectado em:** 2026-08-27 (o dono notou que o bot não operou no dia)
 **Diagnóstico:** 2026-08-27/28, por SSH no servidor
-**Status:** causa identificada; recuperação e blindagem pendentes
+**Status:** causa identificada; blindagem de software RESOLVIDA em 2026-08-28 (ADR-013 — migração para app do umbrelOS, reboot validado). Pendências de hardware (BIOS/nobreak) seguem com o dono.
 
 ---
 
@@ -133,7 +133,7 @@ Recuperação executada em 2026-08-28 (madrugada, mercado fechado):
 | 9 | Backfill dos candles de 08-22 a 08-27 | ✅ feito em 08-28 — e fechou também a lacuna de 08-06 a 08-20 de SPY/QQQ/VB/SCHA/MDY/IJR |
 | 10 | **BIOS: *Restore on AC Power Loss = Power On*** | ⬜ pendente (dono) |
 | 11 | **Nobreak para o servidor** | ⬜ pendente (dono) |
-| 12 | Blindagem contra o reset do rugix (`reprovision.sh` em `/data`) | ⬜ pendente |
+| 12 | Blindagem contra o reset do rugix | ✅ **2026-08-28** — resolvida de forma diferente da proposta: em vez de um `reprovision.sh` disparado no boot, o serviço virou um **app do umbrelOS** (ADR-013), cujo estado é persistente e que o umbreld sobe sozinho. Reboot real validado: containers aos 91s, IBKR aos 144s, sem intervenção. |
 | 13 | Desabilitar a placa WiFi na BIOS (ruído de PCIe) | ⬜ pendente (dono) |
 | 14 | Configurar `webhook_url` de alertas | ⬜ pendente |
 

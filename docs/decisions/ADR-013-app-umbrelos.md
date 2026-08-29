@@ -1,6 +1,6 @@
 # ADR-013 — Empacotar o bot como app do umbrelOS
 
-**Status:** proposto (planejamento) — 2026-08-28
+**Status:** ACEITO e implementado — cutover em 2026-08-28, reboot validado
 **Contexto anterior:** ADR-011 (VM Oracle, desativada), ADR-012 (servidor da casa)
 **Incidente que motiva:** `docs/reports/incidente-2026-08-23-queda-servidor.md`
 
@@ -288,16 +288,53 @@ seja placeholder. Testado nos dois sentidos antes de subir.
 11. Adaptar `.github/workflows/deploy.yml` para o novo alvo (pull de imagem em
     vez de troca de binário).
 
-### Fase 4 — cutover (fora do pregão, sábado)
-12. `pg_dump` do banco atual + parar os containers antigos.
-13. Instalar o app; copiar para `${APP_DATA_DIR}`: instalação do Gateway
-    (`/data/trader/gateway/ibgateway`), `gateway-settings/` e as credenciais
-    IBKR extraídas do `ibc.ini` atual para `secrets/ibkr.env` — tudo no próprio
-    servidor, sem a credencial passar por nenhum outro lugar. Restaurar o dump.
-    Tornar públicos os pacotes no GHCR (nascem privados).
-14. Subir e validar: Gateway conectado, 11 instâncias de pé, `status` do CLI ok.
-15. **`reboot` de verdade** e confirmar que tudo volta sozinho. Esta é a
-    validação que dá sentido ao ADR inteiro — sem ela, não houve migração.
+### Fase 4 — cutover ✅ (2026-08-28, 19h26–20h00 ET, pregão fechado)
+
+Executado seguindo `docs/runbooks/cutover-app-umbrelos.md`.
+
+**Integridade dos dados — contagens antes e depois, idênticas:**
+
+| Tabela | Antes | Depois |
+|---|---|---|
+| signals | 303 | 303 |
+| orders | 9 | 9 |
+| fills | 43 | 43 |
+| trades | 6 | 6 |
+| candles | 233.149 | 233.149 |
+| system_events | 552 | 552 |
+
+Dump de 6,4 MB, restauração sem um único erro.
+
+**O reboot — a validação que dá sentido a este ADR:**
+
+| Marco | Tempo após o boot |
+|---|---|
+| Containers da app de pé (postgres, gateway, scheduler, runner) | **91 s** |
+| API do Gateway logada na IBKR (4002) | **144 s** |
+
+**Sem nenhuma intervenção.** No mesmo boot, o rugix apagou — como sempre — o
+usuário `trader`, o `sudoers.d` e os timers `trader-*`. A diferença é que agora
+isso não importa: a infraestrutura antiga se apagou sozinha e o app sobreviveu.
+
+**Dois defeitos encontrados no cutover, ambos corrigidos na origem:**
+
+1. `secrets/` era criado `700 root:root`, mas o container do gateway roda como
+   uid 1001 — ele reclamava de "credenciais ausentes" com o arquivo preenchido do
+   lado. Corrigido no `pre-install`.
+2. O Gateway lê as preferências já respondidas (SSL, proxy) de
+   `/opt/trader/jts.ini`, não de `gateway-settings/`. Sem esse arquivo ele abria o
+   diálogo *"Use SSL encryption"* dentro do Xvfb, onde ninguém pode clicar, e a API
+   nunca subia. O Dockerfile antigo copiava o arquivo para os dois lugares; ao
+   tirar segredo da imagem eu levei só um. Com o mount correto a API subiu em 16 s.
+
+Nenhum dos dois seria pego sem executar o cutover de verdade.
+
+**Conectividade ponta a ponta provada** antes do reboot: instância real conectada
+à IBKR (`Market data farm connection is OK:usfarm`), candles históricos de IWM
+buscados, client ids 99/199/299 separados.
+
+**Deploy validado:** `images.yml` compilou as 4 imagens e o job `deploy` recriou
+as 11 instâncias a partir do runner que vive dentro do app.
 
 ### Fase 5 — limpeza do host (só depois do reboot validado)
 16. Remover units/timers `trader-*`, o compose antigo e o volume antigo.

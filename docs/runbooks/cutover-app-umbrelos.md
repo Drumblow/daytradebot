@@ -12,6 +12,23 @@ para o app `daytradebot` do umbrelOS. Contexto e justificativa em
 
 ---
 
+> ## ✅ Executado em 2026-08-28
+>
+> Este runbook foi executado de ponta a ponta na noite de sexta 2026-08-28
+> (pregão fechado, próximo pregão só na segunda). Resultado:
+>
+> - **Dados:** contagens idênticas antes e depois nas seis tabelas
+>   (signals 303 · orders 9 · fills 43 · trades 6 · candles 233.149 ·
+>   system_events 552), restauração sem um único erro.
+> - **Reboot:** containers de pé aos **91 s**, Gateway logado na IBKR aos
+>   **144 s**, sem intervenção humana.
+> - **Dois defeitos encontrados e corrigidos na origem:** dono do diretório
+>   `secrets/` e o `jts.ini` que faltava na raiz do `TWS_PATH` — nenhum dos dois
+>   apareceria sem executar o cutover de verdade. Ver ADR-013 §7, fase 4.
+>
+> O texto abaixo fica como está: descreve o procedimento e serve tanto para
+> refazer numa máquina nova quanto para entender o que foi feito.
+
 ## Antes de começar
 
 | Pré-requisito | Como conferir |

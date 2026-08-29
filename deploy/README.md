@@ -1,11 +1,35 @@
 # deploy/ — infraestrutura do servidor de produção (versionada)
 
-Desde 2026-08-23 (ADR-012) o live roda no **servidor da casa** (umbrelOS,
-`<SERVIDOR_CASA>`) em containers Docker com dados em `/data/trader`. Estes arquivos
-são a **fonte da verdade** da infraestrutura — o deploy do GitHub Actions instala
-tudo daqui (idempotente, a cada push que toque `deploy/**`).
+> **Desde 2026-08-28 (ADR-013) o live roda como um app do umbrelOS.** A
+> infraestrutura ativa é: as imagens em `deploy/images/` (publicadas em
+> `ghcr.io/drumblow/*` por `.github/workflows/images.yml`) e o manifesto/compose
+> do app, que vivem no repositório da app store
+> [`Drumblow/umbrel-daytradebot-store`](https://github.com/Drumblow/umbrel-daytradebot-store).
+>
+> `deploy/home/` e `deploy/systemd/` são **histórico** — descrevem topologias
+> desativadas e não são mais instalados por nenhum pipeline.
 
-## `deploy/home/` — host umbrelOS da casa
+## `deploy/images/` — imagens do app (ATIVO)
+
+| Imagem | Conteúdo | Não contém |
+|---|---|---|
+| `trader-bot` | binário `trader-cli` + `config/` assados; guarda de janela de pregão no entrypoint | — |
+| `trader-gateway` | Debian + ZuluFX JRE 17 + IBC 3.24.1 + Xvfb | **credencial IBKR** e **instalador do IB Gateway** (vêm por volume do dispositivo) |
+| `trader-scheduler` | `docker:cli` + cron em horário de Nova York | — |
+| `trader-runner` | runner self-hosted do GitHub Actions | configuração/registro (ficam no volume) |
+
+As imagens são **públicas**. O CI tem duas guardas que falham o build se uma
+credencial entrar no contexto ou se o `ibc.ini` vier preenchido — ver
+`docs/decisions/ADR-013-app-umbrelos.md` §5.
+
+O que fica só no dispositivo, nunca no git nem na imagem: `secrets/ibkr.env`,
+`gateway/ibgateway/1045`, `gateway/jts.ini`, e a senha do Postgres (derivada do
+`APP_SEED` do umbrelOS, não existe em arquivo).
+
+---
+
+## Histórico: `deploy/home/` (compose solto + timers systemd, 2026-08-23 a 08-28)
+
 
 | Arquivo | Destino no host | Função |
 |---------|-----------------|--------|

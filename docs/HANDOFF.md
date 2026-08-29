@@ -1,25 +1,45 @@
 # HANDOFF — Estado do projeto e do que já foi testado
 
-**Atualizado:** 2026-08-27 (migração para o servidor da casa, ADR-012 + incidente de queda de energia em 08-23: 4 pregões perdidos e configuração de host apagada) — 11 instâncias/4 estratégias
+**Atualizado:** 2026-08-28 (migração para app do umbrelOS, ADR-013 — o bot passa a sobreviver a reboot) — 11 instâncias/4 estratégias
 **Público:** próximo agente (ou humano) que assumir o projeto. Leia isto antes de qualquer outra coisa.
 
 ---
 
 ## 1. Onde o projeto está
 
-Bot de day trade em Rust (workspace multi-crates), **hospedado no servidor da casa desde 2026-08-23** (ADR-012 — umbrelOS em `<SERVIDOR_CASA>`, containers Docker, dados em `/data/trader`; a VM Oracle da ADR-011 virou fallback desligado), em **paper trading live na IBKR** (conta paper DUR507388). O PC Windows está fora da operação — serve só para dev e acesso via SSH.
+Bot de day trade em Rust (workspace multi-crates), **hospedado no servidor da casa como um app do umbrelOS desde 2026-08-28** (ADR-013; o ADR-012 trouxe para a casa, o ADR-013 empacotou como app — dados em `/home/umbrel/umbrel/app-data/daytradebot`, a VM Oracle da ADR-011 virou fallback desligado), em **paper trading live na IBKR** (conta paper DUR507388). O PC Windows está fora da operação — serve só para dev e acesso via SSH.
 
-> ### ⚠️ Estado em 2026-08-28: operação RESTAURADA, amostra do gate B com lacuna
+> ### ✅ Estado em 2026-08-28: migrado para app do umbrelOS, reboot validado
 >
-> Uma queda de energia derrubou o servidor em **2026-08-23 18:06 UTC**; ele só voltou em **2026-08-27 21:59 UTC**. Os pregões de **24, 25, 26 e 27/08 foram perdidos** e o setup da casa **ainda não completou um pregão sequer** — o último dia real de operação foi **2026-08-21, ainda na Oracle**.
+> **O problema que motivou tudo:** uma queda de energia derrubou o servidor em
+> 2026-08-23 18:06 UTC e ele só voltou em 08-27 21:59 UTC. **4 pregões perdidos.**
+> O reboot apagou o usuário `trader`, os timers `trader-*` e o runner do CI — a
+> raiz do umbrelOS é um overlay rugix resetado a cada boot. A recuperação era um
+> procedimento manual de 6 passos que alguém precisava lembrar de executar.
 >
-> O reboot também apagou o usuário de serviço `trader`, os timers `trader-*` e o runner self-hosted do CI, e removeu todos os containers do trader (o volume do Postgres e as imagens sobreviveram). **Isso se repete a cada reboot** — a raiz do umbrelOS é um overlay rugix que é resetado no boot.
+> **Resolvido (ADR-013).** Todo o serviço virou um app do umbrelOS, cujo estado
+> vive em `/home/umbrel/umbrel` (persistente) e que o umbreld sobe sozinho no
+> boot. Cutover em 2026-08-28, com **reboot real de validação**: containers de pé
+> aos **91s**, Gateway logado na IBKR aos **144s**, banco íntegro
+> (signals 303 · orders 9 · fills 43 · trades 6 · candles 233.149, idêntico ao
+> pré-cutover), **sem intervenção humana**.
 >
-> **Recuperado em 2026-08-28 de madrugada:** usuário `trader` recriado, Postgres e Gateway no ar (login OK na conta DUR507388), 11 containers criados e parados, timers rearmados (start 13:25 UTC / stop 20:10 UTC / backup 21:30 UTC), backup manual feito. **Banco íntegro, sem perda de dados.**
+> Os timers systemd viraram o container `scheduler`; o runner do CI virou
+> container e é hoje o único acesso administrativo que sobrevive a um reboot.
+> As imagens em `ghcr.io/drumblow/*` **não contêm credencial nem binário da
+> IBKR** — verificado em teste.
 >
-> Ainda pendente: runner do CI (deploy por push não entrega nada até lá), backfill dos candles de 08-22 a 08-27, e a blindagem contra o reset do rugix.
+> **Amostra do gate B tem lacuna:** o setup da casa ainda não completou um pregão
+> inteiro; o último dia real de operação foi **2026-08-21, ainda na Oracle**. O
+> primeiro pregão do app é **2026-08-31**.
 >
-> Leia `docs/reports/incidente-2026-08-23-queda-servidor.md` e a seção "Recuperação pós-reboot" de `docs/runbooks/live-operations.md` **antes** de mexer em qualquer coisa. O objetivo atual é cumprir o **gate composto de go-live (ADR-010)** para operar dinheiro real:
+> Ainda em aberto: **BIOS sem religamento automático após queda de energia** (o
+> app se recupera depois que a máquina liga — ele não liga a máquina) e
+> **nenhum alerta** se algo cair.
+>
+> Leia `docs/decisions/ADR-013-app-umbrelos.md` e
+> `docs/runbooks/cutover-app-umbrelos.md`. O objetivo atual é cumprir o **gate
+> composto de go-live (ADR-010)** para operar dinheiro real:
 
 - **A. Estratégia (estatística):** backtest ≥ 6 meses com ≥ 50 trades, win rate ≥ 40%, PF ≥ 1.3, DD ≤ 10%, avg R > 0.15 + walk-forward OOS. **✅ FECHADA para pullback-trend-v1 em IWM, IWV e IWO** (walk-forward 6 janelas sobre 17,5 meses, 2026-08-06). Duas novas estratégias aprovadas em qualidade OOS (amostra < 50): `opening-reversal-v1` (IWM/IWN/IJR/VB/SLYV) e `balance-area-breakout-v1` (9 ativos) — ver §10/§11.
 - **B. Operação:** 4 semanas de paper live contínuo (uptime ≥ 99%) + ≥ 20 trades reais dentro de ±30% do backtest + zero violações de risco + reconciliação semanal. **Em andamento desde 2026-08-04 (9/20 pregões, 3/20 trades — 1 stop, 2 alvos, P&L -$535.01 — portfólio de 8 instâncias/3 estratégias desde 2026-08-07; ver relatórios dias 4–9 em `docs/reports/`).**
@@ -92,32 +112,59 @@ Cuidados:
 
 ## 4. Como operar (rotina diária — usuário no Canadá, fuso ET)
 
-**A rotina manual acabou.** Desde 2026-08-23 tudo roda no servidor da casa (ADR-012), automático:
+**A rotina manual acabou, e desde 2026-08-28 ela também sobrevive a reboot.**
+Tudo roda como um app do umbrelOS (ADR-013), instalado da app store
+`Drumblow/umbrel-daytradebot-store`.
 
-- Timers systemd **do host** sobem as 11 instâncias seg–sex às **9h25 ET** (`trader-start.timer`) e param às **16h10 ET** (`trader-stop.timer`); backup do banco diário às **21:30 UTC** (`trader-backup.timer`, retenção 7d).
-- IB Gateway (container `trader-gateway`, IBC headless) e Postgres (`trader-postgres`) ficam no ar 24/7 — `restart: always` e `unless-stopped`.
-- Sexta: `analyze` + reconciliação bot vs IBKR podem rodar no próprio servidor.
+- O **umbreld sobe o app sozinho no boot**. Validado com reboot real em
+  2026-08-28: containers de pé aos 91s, Gateway logado na IBKR aos 144s, sem
+  ninguém tocar em nada.
+- O container `daytradebot_scheduler_1` substitui os três timers systemd: sobe
+  as instâncias seg–sex **9h25 ET**, para **16h10 ET**, backup **16h30 ET**
+  (retenção 7d). Se o app subir dentro do pregão, ele liga as instâncias na hora.
+- Cada instância tem uma **guarda de janela** no entrypoint: fora do horário ela
+  sai com `exit 0` e fica parada. É o que impede 11 conexões na IBKR quando o
+  servidor religa de madrugada.
+- Postgres e Gateway ficam no ar 24/7.
 
-Comandos úteis (a partir do PC Windows):
+Containers agora se chamam `daytradebot_<serviço>_1` (não mais `trader-*`).
 
 ```bash
 # acesso ao servidor
-ssh -i ~/.ssh/trader_home_deploy trader@<SERVIDOR_CASA>
+ssh -i ~/.ssh/trader_home_deploy umbrel@<SERVIDOR_CASA>
 
 # estado dos containers
-sudo docker ps --filter name=trader-
+sudo docker ps -a --filter name=daytradebot_
 
 # log de uma instância
-sudo docker logs trader-iwm-pullback --tail 50
+sudo docker logs daytradebot_iwm-pullback_1 --tail 50
 
 # parar / subir as 11 instâncias
-sudo /data/trader/bin/trader-containers.sh stop
-sudo /data/trader/bin/trader-containers.sh start
+sudo docker exec daytradebot_scheduler_1 /usr/local/bin/scheduler.sh stop-instances
+sudo docker exec daytradebot_scheduler_1 /usr/local/bin/scheduler.sh start-instances
+
+# app inteiro
+sudo umbreld client apps.restart.mutate --appId daytradebot
 ```
 
-⚠️ **NUNCA abrir TWS/Gateway local com o mesmo usuário do bot** — a IBKR permite uma única sessão por usuário e o login local derruba a sessão do servidor (derrubou as 8 instâncias em 2026-08-07 13h04 ET). Ver ADR-011 e ADR-012.
+> **Sem sudo depois de um reboot?** É esperado: o `sudoers.d` some no boot.
+> Rode `gh workflow run host-check.yml` — o workflow inspeciona o host pelo
+> runner que vive dentro do app, sem depender de senha.
 
-⚠️ **Depois de QUALQUER reboot, a operação NÃO volta sozinha.** A raiz do umbrelOS é um overlay rugix (`upperdir=/run/rugix/mounts/data/state/default/overlay/b`) que é resetado no boot: somem o usuário `trader`, os units `trader-*` em `/etc/systemd/system/` e o runner do CI; os containers do trader não são recriados. Sobrevivem apenas `/data/trader`, o volume `trader_trader-postgres-data` e as imagens Docker. Procedimento completo em `docs/runbooks/live-operations.md` → "Recuperação pós-reboot".
+**Deploy:** `push` em `main` → `images.yml` compila e publica as imagens em
+`ghcr.io/drumblow/*` → o job `deploy` roda no runner do app e recria as 11
+instâncias. Fora do pregão elas sobem com a imagem nova e saem sozinhas pela
+guarda, ficando prontas para as 9h25.
+
+⚠️ **NUNCA abrir TWS/Gateway local com o mesmo usuário do bot** — a IBKR permite
+uma única sessão por usuário e o login local derruba a sessão do servidor
+(derrubou as 8 instâncias em 2026-08-07 13h04 ET). Ver ADR-011 e ADR-012.
+
+⚠️ **O que ainda NÃO se recupera sozinho:** o usuário `trader`, o `sudoers.d` e
+o acesso SSH administrativo continuam sendo apagados a cada boot pelo rugix — o
+app sobrevive, o acesso humano não. E **não existe alerta** se algo cair: o
+`webhook_url` segue sem configuração (§5).
+
 
 ## 5. Pendências priorizadas
 
