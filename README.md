@@ -41,8 +41,8 @@ e evitar os erros emocionais do humano.
 | Banco de dados | PostgreSQL |
 | Async runtime | Tokio |
 | Broker inicial | Interactive Brokers (IBKR) |
-| Frontend (futuro) | Next.js / React / Tailwind |
-| Deploy | VPS / Docker (futuro) |
+| Frontend | `trader-web` (axum + dashboard estático embutido, sem toolchain JS) |
+| Deploy | App do umbrelOS no servidor da casa (ADR-013) |
 
 ---
 
@@ -57,7 +57,8 @@ crates/
 ├── trader-adapters/    # Integrações com broker e data provider
 ├── trader-infra/       # Banco, config, logging, repositories
 ├── trader-backtest/    # Engine de backtest
-└── trader-cli/         # Interface de linha de comando (entrypoint)
+├── trader-cli/         # Interface de linha de comando (entrypoint)
+└── trader-web/         # Painel web de status (read-only, ADR-014)
 ```
 
 Para detalhes, veja [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -177,7 +178,7 @@ trader-cli journal --date 2026-07-01
 - [x] Comandos `status` e `journal`
 - [x] Integração com IBKR via TWS API validada com conta paper (conexão, conta, posições, ordens abertas)
 - [x] Paper trading live contra a conta paper da IBKR (ordens bracket server-side)
-- [ ] Dashboard
+- [x] Dashboard (`trader-web`: painel read-only servido pelo app do umbrelOS — ADR-014)
 - [ ] Operação real (futuro)
 
 > **Nota:** A integração com Interactive Brokers (`IbkrBrokerAdapter`) está validada em conta paper: envio/cancelamento de ordens, resumo de conta, posições e ordens abertas funcionam. A subscrição de eventos de fill (`subscribe_order_events`) ainda é um stub controlado — exige um `Client` persistente no adapter (decisão arquitetural pendente).

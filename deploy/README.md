@@ -17,6 +17,7 @@
 | `trader-gateway` | Debian + ZuluFX JRE 17 + IBC 3.24.1 + Xvfb | **credencial IBKR** e **instalador do IB Gateway** (vêm por volume do dispositivo) |
 | `trader-scheduler` | `docker:cli` + cron em horário de Nova York | — |
 | `trader-runner` | runner self-hosted do GitHub Actions | configuração/registro (ficam no volume) |
+| `trader-web` | binário `trader-web` (painel de status read-only; dashboard embutido no binário) — ADR-014 | — |
 
 As imagens são **públicas**. O CI tem duas guardas que falham o build se uma
 credencial entrar no contexto ou se o `ibc.ini` vier preenchido — ver

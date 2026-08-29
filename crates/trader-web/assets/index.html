@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HumanStyle Trader Bot</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" id="health-dot" title="Estado do banco"></span>
+      <h1>HumanStyle Trader Bot</h1>
+      <span class="badge badge-paper" id="mode-badge">PAPER</span>
+    </div>
+    <div class="topbar-status" id="topbar-status">
+      <span class="pill" id="pill-phase">—</span>
+      <span class="pill" id="pill-gateway">Gateway —</span>
+      <span class="pill" id="pill-clock" title="Horário de Nova York">— ET</span>
+      <button class="refresh-btn" id="refresh-btn" title="Atualizar agora">⟳</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="banner-error hidden" id="banner-error"></div>
+
+    <!-- KPIs -->
+    <section class="kpis" id="kpis">
+      <div class="kpi"><span class="kpi-label">P&amp;L hoje</span><span class="kpi-value" id="kpi-pnl-today">—</span><span class="kpi-sub" id="kpi-trades-today">—</span></div>
+      <div class="kpi"><span class="kpi-label">P&amp;L acumulado</span><span class="kpi-value" id="kpi-pnl-total">—</span><span class="kpi-sub" id="kpi-trades-total">—</span></div>
+      <div class="kpi"><span class="kpi-label">Win rate</span><span class="kpi-value" id="kpi-winrate">—</span><span class="kpi-sub" id="kpi-r-total">—</span></div>
+      <div class="kpi"><span class="kpi-label">Sinais hoje</span><span class="kpi-value" id="kpi-signals-today">—</span><span class="kpi-sub">aceitos / rejeitados</span></div>
+      <div class="kpi"><span class="kpi-label">Ordens em aberto (hoje)</span><span class="kpi-value" id="kpi-open-orders">—</span><span class="kpi-sub" id="kpi-orders-sub">—</span></div>
+    </section>
+
+    <!-- Gráficos -->
+    <section class="charts">
+      <div class="card chart-card">
+        <div class="card-head">
+          <h2>P&amp;L acumulado (trades fechados)</h2>
+          <span class="card-note">paper trading · USD</span>
+        </div>
+        <div class="chart-holder" id="chart-equity"><div class="empty">Sem trades ainda</div></div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-head">
+          <h2>P&amp;L por dia</h2>
+          <span class="card-note" id="pnl-daily-note">últimos 90 dias</span>
+        </div>
+        <div class="chart-holder" id="chart-daily"><div class="empty">Sem trades ainda</div></div>
+      </div>
+    </section>
+
+    <!-- Instâncias -->
+    <section>
+      <div class="section-head">
+        <h2>Instâncias</h2>
+        <span class="section-note" id="instances-note">—</span>
+      </div>
+      <div class="instances" id="instances"></div>
+    </section>
+
+    <!-- Tabelas -->
+    <section class="card">
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-tab="trades">Trades</button>
+        <button class="tab" data-tab="signals">Sinais</button>
+        <button class="tab" data-tab="orders">Ordens &amp; Fills</button>
+        <button class="tab" data-tab="strategies">Estratégias</button>
+        <button class="tab" data-tab="events">Eventos</button>
+        <button class="tab" data-tab="backtests">Backtests</button>
+      </nav>
+      <div class="tab-panel" id="panel-trades"></div>
+      <div class="tab-panel hidden" id="panel-signals"></div>
+      <div class="tab-panel hidden" id="panel-orders"></div>
+      <div class="tab-panel hidden" id="panel-strategies"></div>
+      <div class="tab-panel hidden" id="panel-events"></div>
+      <div class="tab-panel hidden" id="panel-backtests"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>⚠️ Paper trading — nenhum dinheiro real é negociado.</span>
+    <span id="footer-db" title="Banco a que o painel está conectado">—</span>
+    <span id="footer-updated">—</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

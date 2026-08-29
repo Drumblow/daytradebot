@@ -53,5 +53,37 @@ jobs:
              union all select 'candles', count(*) from candles" \
             || echo "banco inacessivel"
 
+      - name: Auditoria do painel (mesmas agregacoes do trader-web)
+        run: |
+          # Espelha as queries do painel (crates/trader-web/src/queries.rs) para
+          # conferir de um clique se o que a UI mostra bate com o banco real.
+          docker exec daytradebot_postgres_1 psql -U trader -p 5433 -d trader_db -c \
+            "SELECT count(*) AS trades,
+                    count(*) FILTER (WHERE net_pnl > 0) AS wins,
+                    round(sum(net_pnl), 2) AS net_pnl,
+                    round(sum(result_in_r), 2) AS sum_r
+             FROM trades" \
+            -c \
+            "SELECT t.id, a.symbol, t.strategy_id, t.direction,
+                    t.exit_time AT TIME ZONE 'America/New_York' AS exit_et,
+                    round(t.net_pnl, 2) AS net_pnl,
+                    round(t.result_in_r, 2) AS r, t.exit_reason
+             FROM trades t JOIN assets a ON a.id = t.asset_id
+             ORDER BY t.exit_time" \
+            -c \
+            "SELECT strategy_id,
+                    count(*) FILTER (WHERE status = 'accepted') AS accepted,
+                    count(*) FILTER (WHERE status = 'rejected') AS rejected
+             FROM signals GROUP BY 1 ORDER BY 1" \
+            -c \
+            "SELECT count(*) FILTER (WHERE (created_at AT TIME ZONE 'America/New_York')::date
+                                           = (now() AT TIME ZONE 'America/New_York')::date) AS open_today,
+                    count(*) FILTER (WHERE (created_at AT TIME ZONE 'America/New_York')::date
+                                           < (now() AT TIME ZONE 'America/New_York')::date) AS open_stale
+             FROM orders
+             WHERE status::text IN ('pending','submitted','accepted','partially_filled')" \
+            -c \
+            "SELECT max(\"timestamp\") AS last_candle_utc FROM candles"
+
       - name: Agenda do scheduler
         run: docker logs daytradebot_scheduler_1 2>&1 | head -8

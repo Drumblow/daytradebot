@@ -6,6 +6,7 @@ members = [
     "crates/trader-adapters",
     "crates/trader-backtest",
     "crates/trader-cli",
+    "crates/trader-web",
 ]
 resolver = "2"
 
@@ -48,6 +49,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Broker adapters
 ibapi = "3.1"
 chrono-tz = "0.10"
+
+# Web (painel de status — crates/trader-web)
+axum = "0.8"
 
 [profile.release]
 opt-level = 3
