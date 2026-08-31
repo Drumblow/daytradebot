@@ -985,13 +985,26 @@ async fn run_live(
             // aberta que não se validou em R dentro da janela é encerrada a
             // mercado no fechamento — mesma lógica do backtest (paridade).
             if live_fills.tracker.is_open() {
+                // O snapshot de posição da IBKR devolve `stop_price = 0` por
+                // construção — o stop real vive na ordem rastreada. Armar o
+                // tracker com o zero fazia o risco por unidade virar o preço
+                // inteiro: o lucro em R ficava ~0, o trade nunca validava e
+                // era SEMPRE encerrado a mercado após N candles, mesmo a
+                // favor (A1 da auditoria de 30/08/2026).
+                let tracked_stop = live_fills.open_order.as_ref().map(|o| o.stop_price);
                 match broker.get_position(&args.symbol).await {
                     Ok(Some(position)) => {
-                        live_fills.time_exit.ensure_tracking(
-                            position.avg_entry_price,
-                            position.stop_price,
-                            position.direction,
-                        );
+                        match tracked_stop {
+                            Some(stop) => live_fills.time_exit.ensure_tracking(
+                                position.avg_entry_price,
+                                stop,
+                                position.direction,
+                            ),
+                            None => warn!(
+                                symbol = %args.symbol,
+                                "posição aberta sem ordem rastreada; saída por tempo não armada"
+                            ),
+                        }
                         if live_fills.time_exit.on_candle_close(candles[i].close) {
                             match close_position_at_market(&broker, &args.symbol, &position).await {
                                 Ok(()) => {
@@ -1162,7 +1175,8 @@ async fn expire_stale_stop_entry<B: Broker>(
         }
         pending.candles_waited += 1;
         (
-            pending.candles_waited >= validity && !pending.broker_order_id.is_empty(),
+            trader_domain::stop_entry_expired(pending.candles_waited, validity)
+                && !pending.broker_order_id.is_empty(),
             pending.broker_order_id.clone(),
         )
     };

@@ -10,6 +10,7 @@
 //! da entrada e o fechamento de cada candle, garantindo paridade.
 
 use rust_decimal::Decimal;
+use tracing::warn;
 use trader_domain::Direction;
 
 /// Configuração da saída por tempo.
@@ -76,6 +77,11 @@ impl TimeExitTracker {
 
     /// Inicia o acompanhamento de uma posição recém-aberta. Não faz nada se
     /// já houver uma posição sendo rastreada (idempotente por posição).
+    ///
+    /// Falha fechado quando o risco por unidade seria zero (`stop == entry`):
+    /// sem R não há como medir validação, e o tracker encerraria o trade à
+    /// força ao fim da janela. Melhor não armar do que mutilar o trade em
+    /// silêncio.
     pub fn ensure_tracking(
         &mut self,
         entry_price: Decimal,
@@ -85,9 +91,18 @@ impl TimeExitTracker {
         if self.tracking {
             return;
         }
+        let risk_per_unit = (entry_price - stop_price).abs();
+        if risk_per_unit.is_zero() {
+            warn!(
+                %entry_price,
+                %stop_price,
+                "risco por unidade zero; saída por tempo não armada"
+            );
+            return;
+        }
         self.tracking = true;
         self.entry_price = entry_price;
-        self.risk_per_unit = (entry_price - stop_price).abs();
+        self.risk_per_unit = risk_per_unit;
         self.direction = direction;
         self.candles_since_fill = 0;
         self.validated = false;
