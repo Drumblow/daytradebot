@@ -103,8 +103,8 @@ impl Default for Low2M2sShortV1Config {
                     min_risk_reward: Decimal::from(2),
                     risk_per_trade_pct: None,
                     tick_size: Decimal::from(1) / Decimal::from(100),
-                    trading_start_time: "13:45:00".to_string(), // 09:45 ET (DST)
-                    trading_end_time: "19:15:00".to_string(),   // 15:15 ET (DST)
+                    trading_start_time: "09:45:00".to_string(), // ET
+                    trading_end_time: "15:15:00".to_string(),   // ET
                 },
             },
         }

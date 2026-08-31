@@ -319,8 +319,8 @@ pub fn default_backtest_risk_config() -> RiskConfig {
         min_risk_reward: Decimal::from(2),
         max_spread_pct: Decimal::from(5) / Decimal::from(10000),
         max_atr_pct: Decimal::from(15) / Decimal::from(10),
-        trading_start_time_utc: (0, 0, 0),
-        trading_end_time_utc: (23, 59, 59),
+        trading_start_time_et: (0, 0, 0),
+        trading_end_time_et: (23, 59, 59),
         entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
     }
 }

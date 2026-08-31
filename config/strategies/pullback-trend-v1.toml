@@ -36,10 +36,9 @@ min_risk_reward = 2.0
 # Precisão do ativo
 tick_size = 0.01
 
-# Horário (UTC)
+# Horário (America/New_York)
+# Declarado em horário de NY e convertido com chrono-tz: NÃO precisa
+# ajustar na virada do DST (A2 da auditoria de 30/08/2026).
 # Pregão regular US: 9h30–16h ET.
-#   - Horário de verão americano (mar–nov): 13:30–20:00 UTC  ← ATUAL
-#   - Horário de inverno americano (nov–mar): 14:30–21:00 UTC
-# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
-trading_start_time = "13:30:00"
-trading_end_time = "20:00:00"
+trading_start_time = "09:30:00"
+trading_end_time = "16:00:00"

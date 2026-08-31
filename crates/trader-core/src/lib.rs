@@ -14,10 +14,12 @@ pub mod data_quality;
 pub mod execution;
 pub mod indicators;
 pub mod risk;
+pub mod session;
 pub mod strategies;
 
 pub use context::*;
 pub use execution::*;
 pub use indicators::*;
 pub use risk::*;
+pub use session::*;
 pub use strategies::*;

@@ -108,8 +108,8 @@ impl Default for OpeningReversalV1Config {
                     max_spread_pct: Decimal::from(5) / Decimal::from(100),
                     max_atr_pct: Decimal::from(15) / Decimal::from(10),
                     tick_size: Decimal::from(1) / Decimal::from(100),
-                    trading_start_time: "13:30:00".to_string(),
-                    trading_end_time: "14:30:00".to_string(),
+                    trading_start_time: "09:30:00".to_string(),
+                    trading_end_time: "10:30:00".to_string(),
                 },
             },
         }

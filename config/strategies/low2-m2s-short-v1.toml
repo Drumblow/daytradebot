@@ -35,8 +35,8 @@ min_risk_reward = 2
 # Precisão do ativo
 tick_size = 0.01
 
-# Horário (UTC) — janela 09:45–15:15 ET (mesma das irmãs).
-#   - Horário de verão americano (mar–nov): 13:45–19:15 UTC  ← ATUAL
-#   - Horário de inverno americano (nov–mar): 14:45–20:15 UTC
-trading_start_time = "13:45:00"
-trading_end_time = "19:15:00"
+# Horário (America/New_York) — janela 09:45–15:15 ET (mesma das irmãs).
+# Declarado em horário de NY e convertido com chrono-tz: NÃO precisa
+# ajustar na virada do DST (A2 da auditoria de 30/08/2026).
+trading_start_time = "09:45:00"
+trading_end_time = "15:15:00"

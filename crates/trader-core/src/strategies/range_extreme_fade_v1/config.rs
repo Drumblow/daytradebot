@@ -135,8 +135,8 @@ impl Default for RangeExtremeFadeV1Config {
                     max_spread_pct: Decimal::from(5) / Decimal::from(100),
                     max_atr_pct: Decimal::from(15) / Decimal::from(10),
                     tick_size: Decimal::from(1) / Decimal::from(100),
-                    trading_start_time: "13:45:00".to_string(), // 09:45 ET (DST)
-                    trading_end_time: "19:15:00".to_string(),   // 15:15 ET (DST)
+                    trading_start_time: "09:45:00".to_string(), // ET
+                    trading_end_time: "15:15:00".to_string(),   // ET
                 },
             },
         }

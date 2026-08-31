@@ -3,7 +3,7 @@
 //! O `RiskManager` valida sinais antes da execução e calcula o tamanho da
 //! posição com base no capital e na distância até o stop.
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use tracing::{debug, warn};
 
@@ -20,8 +20,10 @@ pub struct RiskConfig {
     pub min_risk_reward: Decimal,
     pub max_spread_pct: Decimal,
     pub max_atr_pct: Decimal,
-    pub trading_start_time_utc: (u32, u32, u32),
-    pub trading_end_time_utc: (u32, u32, u32),
+    /// Início da janela de negociação em horário de NOVA YORK.
+    pub trading_start_time_et: (u32, u32, u32),
+    /// Fim da janela de negociação em horário de NOVA YORK.
+    pub trading_end_time_et: (u32, u32, u32),
     /// Tolerância de overshoot numa entrada stop, como fração da distância do
     /// stop. Se o preço de referência já passou do gatilho além disso, a
     /// entrada é invalidada em vez de perseguida — o risco real do trade já
@@ -41,8 +43,8 @@ impl Default for RiskConfig {
             min_risk_reward: Decimal::from(2),
             max_spread_pct: Decimal::from(5) / Decimal::from(100), // 0.05 (unidade percentual)
             max_atr_pct: Decimal::from(15) / Decimal::from(10),    // 1.5%
-            trading_start_time_utc: (14, 30, 0),
-            trading_end_time_utc: (21, 0, 0),
+            trading_start_time_et: (9, 30, 0),
+            trading_end_time_et: (16, 0, 0),
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100), // 25% da distância do stop
         }
     }
@@ -104,8 +106,8 @@ impl RiskManager {
         // Modo de operação e horário.
         if !is_within_trading_hours(
             ctx.timestamp,
-            self.config.trading_start_time_utc,
-            self.config.trading_end_time_utc,
+            self.config.trading_start_time_et,
+            self.config.trading_end_time_et,
         ) {
             return RiskCheck::Rejected(
                 RejectionReason::OutsideTradingHours,
@@ -288,19 +290,16 @@ impl RiskManager {
     }
 }
 
+/// Janela de negociação em horário de NOVA YORK (A2 da auditoria).
+///
+/// A regra mora em [`crate::session`] — este wrapper existe só para manter o
+/// nome usado dentro do `validate`.
 fn is_within_trading_hours(
     timestamp: DateTime<Utc>,
     start: (u32, u32, u32),
     end: (u32, u32, u32),
 ) -> bool {
-    let time = timestamp.time();
-    let seconds = |h: u32, m: u32, s: u32| h * 3600 + m * 60 + s;
-
-    let current = seconds(time.hour(), time.minute(), time.second());
-    let start = seconds(start.0, start.1, start.2);
-    let end = seconds(end.0, end.1, end.2);
-
-    current >= start && current <= end
+    crate::session::within_trading_window(timestamp, start, end)
 }
 
 #[cfg(test)]
@@ -432,7 +431,7 @@ mod tests {
     fn rejects_outside_trading_hours() {
         let config = RiskConfig::default();
         let manager = RiskManager::new(config);
-        // 03:00 UTC está fora do horário configurado (14:30–21:00 UTC).
+        // 03:00 UTC = 22h/23h ET do dia anterior: fora de 09h30–16h00 ET.
         let timestamp = Utc::now()
             .date_naive()
             .and_hms_opt(3, 0, 0)
@@ -465,7 +464,8 @@ mod tests {
         }
     }
 
-    /// Timestamp determinístico dentro do horário de negociação (14:30–21:00 UTC).
+    /// Timestamp determinístico dentro do horário de negociação.
+    /// 15h UTC é 10h ou 11h ET conforme o DST — dentro de 09h30–16h00 nos dois.
     fn within_trading_hours() -> DateTime<Utc> {
         Utc::now()
             .date_naive()

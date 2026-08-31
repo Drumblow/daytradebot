@@ -51,12 +51,11 @@ max_atr_pct = 1.5
 # Precisão do ativo
 tick_size = 0.01
 
-# Horário (UTC) — janela 10:00–15:15 ET.
-#   - Horário de verão americano (mar–nov): 14:00–19:15 UTC  <- ATUAL
-#   - Horário de inverno americano (nov–mar): 15:00–20:15 UTC
-# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
-trading_start_time = "14:00:00"
-trading_end_time = "19:15:00"
+# Horário (America/New_York) — janela 10:00–15:15 ET.
+# Declarado em horário de NY e convertido com chrono-tz: NÃO precisa
+# ajustar na virada do DST (A2 da auditoria de 30/08/2026).
+trading_start_time = "10:00:00"
+trading_end_time = "15:15:00"
 
 # Saída por tempo: o trade precisa se validar (0,5R flutuante) em 12 barras.
 # Compensa parcialmente a ausência de saída parcial do livro (§9 do doc).

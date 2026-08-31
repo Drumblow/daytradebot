@@ -121,8 +121,8 @@ impl Default for BreakoutFirstPullbackV1Config {
                     max_spread_pct: Decimal::from(5) / Decimal::from(100), // 0,05 (percentual)
                     max_atr_pct: Decimal::from(15) / Decimal::from(10),    // 1.5%
                     tick_size: Decimal::from(1) / Decimal::from(100),
-                    trading_start_time: "13:45:00".to_string(),
-                    trading_end_time: "19:30:00".to_string(),
+                    trading_start_time: "09:45:00".to_string(),
+                    trading_end_time: "15:30:00".to_string(),
                 },
             },
         }

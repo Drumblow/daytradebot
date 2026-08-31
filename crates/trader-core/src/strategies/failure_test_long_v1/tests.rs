@@ -512,8 +512,8 @@ fn risk_config() -> RiskConfig {
         min_risk_reward: dec("1.2"),
         max_spread_pct: dec("0.05"),
         max_atr_pct: dec("1.5"),
-        trading_start_time_utc: (13, 45, 0),
-        trading_end_time_utc: (19, 30, 0),
+        trading_start_time_et: (9, 45, 0),
+        trading_end_time_et: (15, 30, 0),
         entry_overshoot_tolerance: dec("0.25"),
     }
 }

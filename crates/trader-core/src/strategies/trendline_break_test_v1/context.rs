@@ -362,7 +362,7 @@ pub fn atr(candles: &[Candle], period: usize) -> Option<Decimal> {
     Some(sum / Decimal::from(period))
 }
 
-/// Janela operacional (mesmo padrão das irmãs), em UTC.
+/// Janela operacional (mesmo padrão das irmãs), em horário de NY.
 pub fn check_trading_hours(
     candles: &[Candle],
     params: &StrategyParameters,
@@ -373,18 +373,11 @@ pub fn check_trading_hours(
             json!({ "reason": "série vazia" }),
         ));
     };
-    let time = last.timestamp.time();
-    let parse = |s: &str| {
-        let p: Vec<&str> = s.split(':').collect();
-        chrono::NaiveTime::from_hms_opt(
-            p.first().and_then(|v| v.parse().ok()).unwrap_or(0),
-            p.get(1).and_then(|v| v.parse().ok()).unwrap_or(0),
-            p.get(2).and_then(|v| v.parse().ok()).unwrap_or(0),
-        )
-        .unwrap_or_default()
-    };
-    let start = parse(&params.trading_start_time);
-    let end = parse(&params.trading_end_time);
+    // Horário de NOVA YORK, não UTC: a janela em UTC fixo deslizava uma hora
+    // na virada do DST (A2 da auditoria de 30/08/2026).
+    let time = crate::session::et_time(last.timestamp);
+    let start = crate::session::parse_et_time(&params.trading_start_time);
+    let end = crate::session::parse_et_time(&params.trading_end_time);
     if time < start || time > end {
         return Err((
             RejectionReason::OutsideTradingHours,

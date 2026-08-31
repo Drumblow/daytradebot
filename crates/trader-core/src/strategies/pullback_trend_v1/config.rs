@@ -89,8 +89,8 @@ impl Default for PullbackTrendV1Config {
                     max_atr_pct: Decimal::from(15) / Decimal::from(10),
                     min_risk_reward: Decimal::from(2),
                     tick_size: Decimal::from(1) / Decimal::from(100),
-                    trading_start_time: "14:30:00".to_string(),
-                    trading_end_time: "21:00:00".to_string(),
+                    trading_start_time: "09:30:00".to_string(),
+                    trading_end_time: "16:00:00".to_string(),
                 },
             },
         }

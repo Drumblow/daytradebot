@@ -169,8 +169,9 @@ pub fn build_risk_config(risk: &RiskSettings, params: &StrategyRiskParams) -> Ri
         min_risk_reward: params.min_risk_reward,
         max_spread_pct: params.max_spread_pct,
         max_atr_pct: params.max_atr_pct,
-        trading_start_time_utc: parse_time(&params.trading_start_time).unwrap_or((14, 30, 0)),
-        trading_end_time_utc: parse_time(&params.trading_end_time).unwrap_or((21, 0, 0)),
+        // Horário de NOVA YORK (A2): os TOMLs declaram a janela em ET.
+        trading_start_time_et: parse_time(&params.trading_start_time).unwrap_or((9, 30, 0)),
+        trading_end_time_et: parse_time(&params.trading_end_time).unwrap_or((16, 0, 0)),
         entry_overshoot_tolerance: Decimal::from_f64_retain(risk.entry_overshoot_tolerance)
             .unwrap_or_else(|| Decimal::from(25) / Decimal::from(100)),
     }
@@ -208,8 +209,8 @@ mod tests {
 
     #[test]
     fn parses_hh_mm_ss() {
-        assert_eq!(parse_time("14:30:00"), Some((14, 30, 0)));
-        assert_eq!(parse_time("21:00:00"), Some((21, 0, 0)));
+        assert_eq!(parse_time("09:30:00"), Some((9, 30, 0)));
+        assert_eq!(parse_time("16:00:00"), Some((16, 0, 0)));
         assert_eq!(parse_time("invalid"), None);
     }
 

@@ -137,7 +137,9 @@ pub fn check_context(
     }))
 }
 
-/// Horário do candle dentro da janela configurada ("HH:MM:SS", UTC).
+/// Horário do candle dentro da janela configurada ("HH:MM:SS", horário de
+/// NOVA YORK — a janela em UTC fixo deslizava na virada do DST, A2 da
+/// auditoria de 30/08/2026).
 fn within_trading_window(candle: &Candle, params: &StrategyParameters) -> bool {
     let Some(start) = parse_hhmmss(&params.trading_start_time) else {
         return false;
@@ -145,7 +147,7 @@ fn within_trading_window(candle: &Candle, params: &StrategyParameters) -> bool {
     let Some(end) = parse_hhmmss(&params.trading_end_time) else {
         return false;
     };
-    let time = candle.timestamp.time();
+    let time = crate::session::et_time(candle.timestamp);
     let current = time.hour() * 3600 + time.minute() * 60 + time.second();
     current >= start && current <= end
 }

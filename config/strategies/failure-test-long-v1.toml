@@ -61,12 +61,11 @@ max_atr_pct = 1.5
 # Precisão do ativo
 tick_size = 0.01
 
-# Horário (UTC) — 09:45–15:30 ET, padrão do projeto.
-#   - Horário de verão americano (mar–nov): 13:45–19:30 UTC  ← ATUAL
-#   - Horário de inverno americano (nov–mar): 14:45–20:30 UTC
-# Ajustar na virada do DST (2º domingo de março / 1º domingo de novembro).
-trading_start_time = "13:45:00"
-trading_end_time = "19:30:00"
+# Horário (America/New_York) — 09:45–15:30 ET, padrão do projeto.
+# Declarado em horário de NY e convertido com chrono-tz: NÃO precisa
+# ajustar na virada do DST (A2 da auditoria de 30/08/2026).
+trading_start_time = "09:45:00"
+trading_end_time = "15:30:00"
 
 [strategy.time_exit]
 # Saída ativa por tempo (validação pós-entrada): se a posição não atingir
