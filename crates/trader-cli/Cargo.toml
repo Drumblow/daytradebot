@@ -17,6 +17,7 @@ trader-adapters = { path = "../trader-adapters" }
 trader-backtest = { path = "../trader-backtest" }
 
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -749,6 +749,8 @@ async fn run_live(
     // alguns minutos depois — o cursor não avança até os valores pararem de
     // mudar entre polls (ou até desistir, ver guarda no loop).
     let mut pending_bar: Option<PendingBar> = None;
+    // Dia (calendário de NY) em que o flatten de fim de sessão já rodou.
+    let mut flattened_on: Option<chrono::NaiveDate> = None;
 
     record_event(
         repos,
@@ -786,6 +788,45 @@ async fn run_live(
                 None => RiskState::default(),
             };
             info!("novo dia UTC: estado de risco diário reconstruído do banco");
+        }
+
+        // Flatten obrigatório de fim de sessão (C1): as pernas do bracket vão
+        // com TIF Day e expiram no sino — nenhuma posição atravessa o
+        // fechamento sem proteção. Roda POR TICK, não por candle novo: depois
+        // das 16h ET não chega mais candle fechado para disparar nada.
+        let now_utc = chrono::Utc::now();
+        if in_flatten_window(now_utc) {
+            let ny_day = now_utc
+                .with_timezone(&chrono_tz::America::New_York)
+                .date_naive();
+            if flattened_on != Some(ny_day) {
+                match flatten_session(&broker, &args.symbol, &mut live_fills, repos, alerter).await
+                {
+                    Ok(had_position) => {
+                        flattened_on = Some(ny_day);
+                        if had_position {
+                            println!("🔔 Flatten de fim de sessão: posição encerrada a mercado");
+                        }
+                    }
+                    // Sem marcar o dia: os ticks seguintes dentro da janela
+                    // tentam de novo (a janela vai até 16h10 ET).
+                    Err(e) => {
+                        warn!(error = %e, "falha no flatten de fim de sessão; retentando no próximo tick")
+                    }
+                }
+            }
+        }
+
+        // Persistência degradada (C3): religa as entradas assim que o banco
+        // voltar a aceitar escrita.
+        if live_fills.persistence_degraded && persistence_recovered(repos).await {
+            live_fills.persistence_degraded = false;
+            let message = format!(
+                "persistência restabelecida em {}; entradas liberadas",
+                args.symbol
+            );
+            info!(%message);
+            alerter.info(&message);
         }
 
         // P&L diário e perdas consecutivas vêm de trades reais (rebuild no
@@ -984,16 +1025,17 @@ async fn run_live(
             // Saída ativa por tempo (quando a estratégia habilita): posição
             // aberta que não se validou em R dentro da janela é encerrada a
             // mercado no fechamento — mesma lógica do backtest (paridade).
-            if live_fills.tracker.is_open() {
-                // O snapshot de posição da IBKR devolve `stop_price = 0` por
-                // construção — o stop real vive na ordem rastreada. Armar o
-                // tracker com o zero fazia o risco por unidade virar o preço
-                // inteiro: o lucro em R ficava ~0, o trade nunca validava e
-                // era SEMPRE encerrado a mercado após N candles, mesmo a
-                // favor (A1 da auditoria de 30/08/2026).
-                let tracked_stop = live_fills.open_order.as_ref().map(|o| o.stop_price);
-                match broker.get_position(&args.symbol).await {
-                    Ok(Some(position)) => {
+            // O snapshot de posição da IBKR devolve `stop_price = 0` por
+            // construção — o stop real vive na ordem rastreada. Armar o
+            // tracker com o zero fazia o risco por unidade virar o preço
+            // inteiro: o lucro em R ficava ~0, o trade nunca validava e era
+            // SEMPRE encerrado a mercado após N candles, mesmo a favor
+            // (A1 da auditoria de 30/08/2026).
+            let tracked_stop = live_fills.open_order.as_ref().map(|o| o.stop_price);
+            match broker.get_position(&args.symbol).await {
+                Ok(Some(position)) => {
+                    let mut closed_by_time = false;
+                    if live_fills.tracker.is_open() {
                         match tracked_stop {
                             Some(stop) => live_fills.time_exit.ensure_tracking(
                                 position.avg_entry_price,
@@ -1014,6 +1056,7 @@ async fn run_live(
                                     );
                                     live_fills.time_exit_triggered = true;
                                     live_fills.time_exit.reset();
+                                    closed_by_time = true;
                                     // O fill da ordem de fechamento chega pelo
                                     // stream de eventos e fecha o trade no
                                     // FillTracker (finalize_live_trade).
@@ -1031,22 +1074,43 @@ async fn run_live(
                                 }
                             }
                         }
+                    } else {
+                        live_fills.time_exit.reset();
                     }
-                    Ok(None) => live_fills.time_exit.reset(),
-                    Err(e) => {
-                        consecutive_failures += 1;
-                        warn!(error = %e, consecutive_failures, "falha ao consultar posição para saída por tempo");
-                        check_circuit_breaker(
-                            consecutive_failures,
-                            "falha ao consultar posição para saída por tempo",
+
+                    // Watchdog do C1: posição aberta ⇒ stop trabalhando. Roda
+                    // mesmo sem ordem rastreada — o caso mais perigoso é
+                    // justamente a posição herdada de outra sessão, que a
+                    // recuperação enxerga (e usa para bloquear entradas) mas
+                    // nunca reprotege.
+                    if !closed_by_time {
+                        ensure_stop_protection(
+                            &broker,
+                            &args.symbol,
+                            &position,
+                            tracked_stop,
+                            &mut live_fills,
                             repos,
                             alerter,
                         )
-                        .await?;
+                        .await;
                     }
                 }
-            } else {
-                live_fills.time_exit.reset();
+                Ok(None) => {
+                    live_fills.time_exit.reset();
+                    live_fills.unprotected_streak = 0;
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    warn!(error = %e, consecutive_failures, "falha ao consultar posição do símbolo");
+                    check_circuit_breaker(
+                        consecutive_failures,
+                        "falha ao consultar posição do símbolo",
+                        repos,
+                        alerter,
+                    )
+                    .await?;
+                }
             }
 
             // Reconciliação: posição aberta OU ordem pendente no símbolo impede
@@ -1073,6 +1137,17 @@ async fn run_live(
                 Ok(false) => {}
             }
 
+            // C3: sem persistência confiável o estado de risco congela —
+            // nenhuma entrada nova até o banco voltar.
+            if live_fills.persistence_degraded {
+                info!(
+                    symbol = %args.symbol,
+                    "persistência degradada; entrada suspensa neste candle"
+                );
+                last_processed = Some(candles[i].timestamp);
+                continue;
+            }
+
             match analyze_and_execute(
                 &args.symbol,
                 args.timeframe,
@@ -1095,6 +1170,19 @@ async fn run_live(
                 Ok(Some(placed)) => {
                     // Cada execução conta para o limite de trades do dia.
                     risk_state.daily_trades += 1;
+                    if placed.order_db_id.is_none() {
+                        // Sem id de banco os fills dessa ordem não são
+                        // persistidos (drain_order_events desiste) e o trade
+                        // nunca fecha: mesma família de dano do C3.
+                        live_fills.persistence_degraded = true;
+                        let message = format!(
+                            "ordem de {} enviada mas NAO persistida - entradas SUSPENSAS ate o banco voltar",
+                            args.symbol
+                        );
+                        record_event(repos, "critical", "live", "persistence_failure", &message)
+                            .await;
+                        alerter.critical_await(&message).await;
+                    }
                     // A ordem passa a ser rastreada: fills dela (e das filhas
                     // do bracket) fecharão o trade via drain_order_events.
                     live_fills.open_order = Some(placed);
@@ -1149,6 +1237,18 @@ struct LiveFillState {
     /// Marca que o fechamento em andamento foi disparado pela saída por
     /// tempo — o trade fechado deve sair com `ExitReason::Time`.
     time_exit_triggered: bool,
+    /// Marca que o fechamento em andamento é o flatten de fim de sessão.
+    flatten_triggered: bool,
+    /// Checagens consecutivas em que a posição apareceu SEM stop trabalhando.
+    /// A recolocação só acontece na segunda detecção seguida: `open_orders`
+    /// pode não listar as pernas logo após um restart, e recolocar sobre um
+    /// stop que existe deixaria uma ordem órfã capaz de abrir posição
+    /// invertida — pior do que o problema.
+    unprotected_streak: u32,
+    /// Persistência crítica (fill, ordem ou trade) falhou: novas entradas
+    /// ficam suspensas até o banco voltar. Sem isso o bot seguia operando com
+    /// perda diária e perdas consecutivas congeladas (C3 da auditoria).
+    persistence_degraded: bool,
 }
 
 /// Expira uma entrada stop que não rompeu em `validity` candles.
@@ -1258,7 +1358,25 @@ async fn drain_order_events(
             Some(repos) => match repos.fill_repo.save(&fill).await {
                 Ok(id) => id.is_some(),
                 Err(e) => {
-                    warn!(error = %e, "falha ao persistir fill; ignorado");
+                    // C3 da auditoria: o fill é DESCARTADO e nunca reemitido
+                    // (o dedupe do adapter é em memória). O trade não fecha no
+                    // tracker e o risk_state congela — perda diária e perdas
+                    // consecutivas param no tempo. Suspender entradas é melhor
+                    // do que seguir operando com os freios desatualizados.
+                    warn!(error = %e, "falha ao persistir fill; entradas suspensas");
+                    state.persistence_degraded = true;
+                    let message = format!(
+                        "falha ao persistir fill de {symbol}: {e} - entradas SUSPENSAS ate o banco voltar"
+                    );
+                    record_event(
+                        Some(repos),
+                        "critical",
+                        "live",
+                        "persistence_failure",
+                        &message,
+                    )
+                    .await;
+                    alerter.critical_await(&message).await;
                     continue;
                 }
             },
@@ -1302,8 +1420,14 @@ async fn finalize_live_trade(
     risk_state: &mut RiskState,
     alerter: &crate::alerts::Alerter,
 ) {
+    let was_flatten = state.flatten_triggered;
     let exit_reason = if state.time_exit_triggered {
         trader_domain::ExitReason::Time
+    } else if was_flatten {
+        // O domínio não tem variante EndOfDay; o flatten é uma saída ativa,
+        // como qualquer fechamento a mercado fora de stop/alvo. O journal
+        // guarda a origem exata.
+        trader_domain::ExitReason::Manual
     } else {
         classify_exit_reason(
             closed.direction,
@@ -1313,6 +1437,7 @@ async fn finalize_live_trade(
         )
     };
     state.time_exit_triggered = false;
+    state.flatten_triggered = false;
     let result_in_r = if ctx.risk_amount > Decimal::ZERO {
         closed.net_pnl / ctx.risk_amount
     } else {
@@ -1342,7 +1467,11 @@ async fn finalize_live_trade(
         strategy_id: ctx.strategy_id.clone(),
         strategy_version: ctx.strategy_version.clone(),
         config_hash: ctx.config_hash.clone(),
-        journal: serde_json::json!({ "source": "live_fills" }),
+        journal: if was_flatten {
+            serde_json::json!({ "source": "live_fills", "forced_exit": "session_flatten" })
+        } else {
+            serde_json::json!({ "source": "live_fills" })
+        },
         correlation_id: uuid::Uuid::new_v4().to_string(),
     };
 
@@ -1363,7 +1492,20 @@ async fn finalize_live_trade(
 
     if let Some(repos) = repos {
         if let Err(e) = repos.trade_repo.save(&trade).await {
-            warn!(error = %e, "falha ao persistir trade do live");
+            warn!(error = %e, "falha ao persistir trade do live; entradas suspensas");
+            state.persistence_degraded = true;
+            let message = format!(
+                "falha ao persistir trade de {symbol}: {e} - entradas SUSPENSAS ate o banco voltar"
+            );
+            record_event(
+                Some(repos),
+                "critical",
+                "live",
+                "persistence_failure",
+                &message,
+            )
+            .await;
+            alerter.critical_await(&message).await;
         }
         if let Some(order_db_id) = ctx.order_db_id {
             if let Err(e) = repos
@@ -1527,37 +1669,263 @@ async fn has_exposure<B: Broker>(broker: &B, symbol: &str) -> Result<bool, Broke
     Ok(open_orders.iter().any(|o| o.symbol == symbol))
 }
 
-/// Encerra uma posição aberta a mercado (saída ativa — ex.: saída por tempo).
+/// Tentativas do envio da ordem de fechamento a mercado antes de desistir.
+const CLOSE_ATTEMPTS: u32 = 3;
+/// Espera entre as tentativas de fechamento — segundos, não o próximo candle.
+const CLOSE_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+/// Encerra uma posição aberta a mercado (saída ativa — saída por tempo,
+/// flatten de fim de sessão).
 ///
-/// Cancela antes as ordens abertas do símbolo (pernas stop/alvo do bracket
-/// server-side) para não deixar ordem órfã trabalhando após o fechamento.
+/// ORDEM DAS OPERAÇÕES (C1 da auditoria de 30/08/2026): FECHA primeiro,
+/// cancela as pernas de proteção depois. A versão anterior cancelava antes de
+/// enviar o fechamento — se o envio falhasse, a posição ficava NUA e a
+/// retentativa só vinha no próximo candle, 15 minutos depois. Aqui o stop
+/// server-side continua trabalhando durante o envio, e a janela em que as
+/// duas ordens coexistem é de segundos.
 async fn close_position_at_market<B: Broker>(
     broker: &B,
     symbol: &str,
     position: &trader_domain::Position,
 ) -> Result<()> {
-    let open_orders = broker.get_open_orders().await?;
-    for order in open_orders.iter().filter(|o| o.symbol == symbol) {
-        if let Some(broker_order_id) = &order.broker_order_id {
-            let id = trader_domain::OrderId::from(broker_order_id.clone());
-            if let Err(e) = broker.cancel_order(&id).await {
-                warn!(order_id = %id, error = %e, "falha ao cancelar perna do bracket na saída ativa");
-            }
-        }
-    }
-
     let side = match position.direction {
         Direction::Long => OrderSide::Sell,
         Direction::Short => OrderSide::Buy,
     };
-    let order = Order::new(symbol, side, OrderType::Market, position.quantity, "ibkr")
-        .map_err(|e| anyhow::anyhow!("ordem de fechamento inválida: {e}"))?;
-    broker
-        .place_order(order)
-        .await
-        .map_err(|e| anyhow::anyhow!("falha ao enviar ordem de fechamento a mercado: {e}"))?;
-    info!(%symbol, quantity = %position.quantity, "ordem de fechamento a mercado enviada (saída ativa)");
+
+    let mut last_error: Option<String> = None;
+    for attempt in 1..=CLOSE_ATTEMPTS {
+        let order = Order::new(symbol, side, OrderType::Market, position.quantity, "ibkr")
+            .map_err(|e| anyhow::anyhow!("ordem de fechamento inválida: {e}"))?;
+        match broker.place_order(order).await {
+            Ok(_) => {
+                last_error = None;
+                info!(%symbol, quantity = %position.quantity, attempt,
+                    "ordem de fechamento a mercado enviada (saída ativa)");
+                break;
+            }
+            Err(e) => {
+                warn!(%symbol, attempt, error = %e, "falha ao enviar fechamento a mercado; retentando");
+                last_error = Some(e.to_string());
+                if attempt < CLOSE_ATTEMPTS {
+                    tokio::time::sleep(CLOSE_RETRY_DELAY).await;
+                }
+            }
+        }
+    }
+    if let Some(e) = last_error {
+        return Err(anyhow::anyhow!(
+            "falha ao enviar ordem de fechamento a mercado após {CLOSE_ATTEMPTS} tentativas: {e}"
+        ));
+    }
+
+    // Só agora as pernas de proteção saem. Uma perna órfã que execute depois
+    // abre posição invertida, que o bot ignora como "fill sem ordem
+    // rastreada" — por isso a falha de cancelamento é ruidosa.
+    cancel_open_orders(broker, symbol).await;
     Ok(())
+}
+
+/// Cancela todas as ordens abertas do símbolo (pernas do bracket, entrada
+/// pendente). Melhor esforço: cada falha vira aviso, nenhuma interrompe.
+async fn cancel_open_orders<B: Broker>(broker: &B, symbol: &str) {
+    let open_orders = match broker.get_open_orders().await {
+        Ok(orders) => orders,
+        Err(e) => {
+            warn!(%symbol, error = %e, "falha ao listar ordens abertas para cancelar");
+            return;
+        }
+    };
+    for order in open_orders.iter().filter(|o| o.symbol == symbol) {
+        if let Some(broker_order_id) = &order.broker_order_id {
+            let id = trader_domain::OrderId::from(broker_order_id.clone());
+            if let Err(e) = broker.cancel_order(&id).await {
+                warn!(order_id = %id, error = %e, "falha ao cancelar ordem aberta na saída ativa");
+            }
+        }
+    }
+}
+
+/// Janela (ET) do encerramento forçado da sessão.
+///
+/// O pregão fecha às 16h00 ET e os timers do host param os containers às
+/// 16h10 ET; 15h55 dá cinco minutos de folga para o fechamento a mercado
+/// resolver, com retentativas nos ticks seguintes dentro da janela.
+const FLATTEN_START_MINUTES: u32 = 15 * 60 + 55;
+const FLATTEN_END_MINUTES: u32 = 16 * 60 + 10;
+
+/// `true` quando o relógio de Nova York está na janela de flatten.
+fn in_flatten_window(now: chrono::DateTime<chrono::Utc>) -> bool {
+    use chrono::Timelike;
+    let ny = now.with_timezone(&chrono_tz::America::New_York);
+    let minutes = ny.hour() * 60 + ny.minute();
+    (FLATTEN_START_MINUTES..FLATTEN_END_MINUTES).contains(&minutes)
+}
+
+/// Encerra a sessão: cancela entrada pendente e fecha a posição aberta a
+/// mercado. Retorna `Ok(true)` quando havia posição para fechar.
+///
+/// Por que existe (C1 da auditoria): as pernas do bracket vão com TIF Day e
+/// EXPIRAM no fechamento do pregão. Uma posição que atravessa o sino fica
+/// overnight SEM stop, e a recuperação do dia seguinte vê a posição, bloqueia
+/// novas entradas e NÃO recoloca a proteção. Nenhuma posição atravessa o
+/// fechamento.
+async fn flatten_session<B: Broker>(
+    broker: &B,
+    symbol: &str,
+    state: &mut LiveFillState,
+    repos: Option<&Repositories>,
+    alerter: &crate::alerts::Alerter,
+) -> Result<bool> {
+    // Entrada stop ainda trabalhando: cancela antes de tudo — abrir posição a
+    // cinco minutos do sino é o oposto do que queremos.
+    if !state.tracker.is_open() {
+        if let Some(pending) = state.open_order.as_ref() {
+            if !pending.broker_order_id.is_empty() {
+                let id = trader_domain::OrderId::from(pending.broker_order_id.clone());
+                match broker.cancel_order(&id).await {
+                    Ok(()) => {
+                        info!(order_id = %id, "entrada pendente cancelada no fim da sessão");
+                        state.open_order = None;
+                    }
+                    Err(e) => {
+                        warn!(order_id = %id, error = %e, "falha ao cancelar entrada pendente no fim da sessão")
+                    }
+                }
+            }
+        }
+    }
+
+    let Some(position) = broker.get_position(symbol).await? else {
+        return Ok(false);
+    };
+
+    state.flatten_triggered = true;
+    if let Err(e) = close_position_at_market(broker, symbol, &position).await {
+        state.flatten_triggered = false;
+        return Err(e);
+    }
+    state.time_exit.reset();
+
+    let message = format!(
+        "flatten de fim de sessão: {} {} encerrada a mercado (pernas do bracket expiram no sino)",
+        position.quantity, symbol
+    );
+    record_event(repos, "warning", "live", "session_flatten", &message).await;
+    alerter.info(&message);
+    Ok(true)
+}
+
+/// Watchdog "posição aberta ⇒ stop trabalhando" (C1 da auditoria).
+///
+/// A regra nº 1 do projeto ("nunca opera sem stop") valia só no envio da
+/// ordem e não era vigiada depois: uma perna de stop rejeitada de forma
+/// assíncrona pela IBKR (tick inválido, margem) deixava a entrada cheia sem
+/// proteção e nada detectava.
+///
+/// Na PRIMEIRA detecção só alerta — `open_orders` pode não listar as pernas
+/// logo após um restart, e recolocar sobre um stop que existe deixaria ordem
+/// órfã capaz de abrir posição invertida. Na segunda seguida, recoloca.
+#[allow(clippy::too_many_arguments)]
+async fn ensure_stop_protection<B: Broker>(
+    broker: &B,
+    symbol: &str,
+    position: &trader_domain::Position,
+    known_stop: Option<Decimal>,
+    state: &mut LiveFillState,
+    repos: Option<&Repositories>,
+    alerter: &crate::alerts::Alerter,
+) {
+    let exit_side = match position.direction {
+        Direction::Long => OrderSide::Sell,
+        Direction::Short => OrderSide::Buy,
+    };
+
+    let orders = match broker.get_open_orders().await {
+        Ok(orders) => orders,
+        Err(e) => {
+            warn!(%symbol, error = %e, "falha ao verificar o stop da posição aberta");
+            return;
+        }
+    };
+
+    // A perna de proteção é uma STP do lado CONTRÁRIO à posição. O lado
+    // distingue a proteção do parent de entrada stop, que é do mesmo lado da
+    // posição e pode continuar trabalhando num fill parcial.
+    let protected = orders
+        .iter()
+        .any(|o| o.symbol == symbol && o.order_type == OrderType::Stop && o.side == exit_side);
+    if protected {
+        state.unprotected_streak = 0;
+        return;
+    }
+
+    state.unprotected_streak += 1;
+    let message = format!(
+        "POSICAO SEM STOP: {} {} aberta sem perna de protecao trabalhando (deteccao {})",
+        position.quantity, symbol, state.unprotected_streak
+    );
+    record_event(repos, "critical", "live", "position_unprotected", &message).await;
+    alerter.critical_await(&message).await;
+
+    if state.unprotected_streak < 2 {
+        return;
+    }
+
+    let Some(stop_price) = known_stop.filter(|p| *p > Decimal::ZERO) else {
+        let message = format!(
+            "{symbol} SEM STOP e sem stop conhecido para recolocar - intervencao manual necessaria"
+        );
+        record_event(repos, "critical", "live", "position_unprotected", &message).await;
+        alerter.critical_await(&message).await;
+        return;
+    };
+
+    let mut order = match Order::new(
+        symbol,
+        exit_side,
+        OrderType::Stop,
+        position.quantity,
+        "ibkr",
+    ) {
+        Ok(order) => order,
+        Err(e) => {
+            warn!(%symbol, error = %e, "stop de proteção inválido; não recolocado");
+            return;
+        }
+    };
+    order.stop_price = Some(stop_price);
+
+    let message = match broker.place_order(order).await {
+        Ok(id) => {
+            state.unprotected_streak = 0;
+            format!("{symbol} estava sem stop; stop recolocado em {stop_price} (ordem {id})")
+        }
+        Err(e) => format!("{symbol} SEM STOP: falha ao recolocar stop em {stop_price}: {e}"),
+    };
+    record_event(repos, "critical", "live", "stop_replaced", &message).await;
+    alerter.critical_await(&message).await;
+}
+
+/// Sonda de persistência: grava um evento leve para saber se o banco voltou.
+///
+/// Usada só enquanto o live está com a persistência degradada (C3), para
+/// religar as entradas assim que o Postgres responder de novo.
+async fn persistence_recovered(repos: Option<&Repositories>) -> bool {
+    let Some(repos) = repos else {
+        return false;
+    };
+    repos
+        .event_repo
+        .record(
+            "info",
+            "live",
+            "persistence_probe",
+            "sonda de persistência após degradação",
+            None,
+        )
+        .await
+        .is_ok()
 }
 
 struct Repositories {
@@ -1596,4 +1964,34 @@ async fn setup_repositories(config: &CliConfig) -> Result<Repositories> {
         context_repo: SqlxMarketContextRepository::new(pool.clone()),
         event_repo: SqlxSystemEventRepository::new(pool.clone()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_flatten_window;
+    use chrono::{DateTime, Utc};
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    /// A janela é definida em horário de NY, não em UTC fixo: no horário de
+    /// verão (EDT, UTC-4) 15h55 ET é 19h55 UTC.
+    #[test]
+    fn janela_de_flatten_no_horario_de_verao() {
+        assert!(!in_flatten_window(utc("2026-08-31T19:54:00Z")));
+        assert!(in_flatten_window(utc("2026-08-31T19:55:00Z")));
+        assert!(in_flatten_window(utc("2026-08-31T20:09:00Z")));
+        assert!(!in_flatten_window(utc("2026-08-31T20:10:00Z")));
+    }
+
+    /// Depois da virada do DST (EST, UTC-5) a mesma janela é 20h55–21h10 UTC.
+    /// É exatamente o deslocamento que o A2 aponta nas janelas de negociação.
+    #[test]
+    fn janela_de_flatten_apos_a_virada_do_dst() {
+        assert!(!in_flatten_window(utc("2026-11-02T19:55:00Z")));
+        assert!(in_flatten_window(utc("2026-11-02T20:55:00Z")));
+        assert!(in_flatten_window(utc("2026-11-02T21:09:00Z")));
+        assert!(!in_flatten_window(utc("2026-11-02T21:10:00Z")));
+    }
 }
