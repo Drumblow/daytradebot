@@ -177,9 +177,13 @@ impl SimulatedBroker {
                     if let Some(trade) =
                         close_position_to_trade(&position, price, reason, &self.config, Utc::now())
                     {
-                        // Recebe o valor da venda menos comissão de saída.
                         let exit_commission = trade.commissions / Decimal::from(2);
-                        state.cash += price * position.quantity - exit_commission;
+                        state.cash += exit_cash_flow(
+                            position.direction,
+                            price,
+                            position.quantity,
+                            exit_commission,
+                        );
                         state.daily_pnl += trade.net_pnl;
                         state.equity = state.cash;
                         state.closed_trades.push(trade);
@@ -297,8 +301,14 @@ impl SimulatedBroker {
                                 target_price: entry.target_price,
                             },
                         );
-                        state.cash -= fill_price * entry.quantity + commission;
-                        state.equity = state.cash + entry.quantity * fill_price;
+                        state.cash +=
+                            entry_cash_flow(entry.direction, fill_price, entry.quantity, commission);
+                        state.equity = mark_to_market_equity(
+                            state.cash,
+                            entry.direction,
+                            fill_price,
+                            entry.quantity,
+                        );
 
                         if let Some(order) = state.orders.get_mut(&entry.order_id) {
                             order.status = OrderStatus::Filled;
@@ -364,7 +374,12 @@ impl SimulatedBroker {
                         state.now,
                     ) {
                         let exit_commission = trade.commissions / Decimal::from(2);
-                        state.cash += exit_price * position.quantity - exit_commission;
+                        state.cash += exit_cash_flow(
+                            position.direction,
+                            exit_price,
+                            position.quantity,
+                            exit_commission,
+                        );
                         state.daily_pnl += trade.net_pnl;
                         state.equity = state.cash;
                         state.closed_trades.push(trade);
@@ -406,7 +421,12 @@ impl SimulatedBroker {
         {
             // Recebe o valor da venda menos comissão de saída.
             let exit_commission = trade.commissions / Decimal::from(2);
-            state.cash += price * position.quantity - exit_commission;
+            state.cash += exit_cash_flow(
+                position.direction,
+                price,
+                position.quantity,
+                exit_commission,
+            );
             state.daily_pnl += trade.net_pnl;
             state.equity = state.cash;
             state.closed_trades.push(trade);
@@ -513,8 +533,9 @@ impl Broker for SimulatedBroker {
 
                 state.positions.insert(order.symbol.clone(), position);
 
-                state.cash -= fill_price * order.quantity + commission;
-                state.equity = state.cash + order.quantity * fill_price;
+                state.cash += entry_cash_flow(direction, fill_price, order.quantity, commission);
+                state.equity =
+                    mark_to_market_equity(state.cash, direction, fill_price, order.quantity);
 
                 order.status = OrderStatus::Filled;
                 order.filled_quantity = order.quantity;
@@ -578,8 +599,9 @@ impl Broker for SimulatedBroker {
                     .pending_exits
                     .insert(order.symbol.clone(), pending_exit);
 
-                state.cash -= fill_price * order.quantity + commission;
-                state.equity = state.cash + order.quantity * fill_price;
+                state.cash += entry_cash_flow(direction, fill_price, order.quantity, commission);
+                state.equity =
+                    mark_to_market_equity(state.cash, direction, fill_price, order.quantity);
 
                 order.status = OrderStatus::Filled;
                 order.filled_quantity = order.quantity;
@@ -695,6 +717,55 @@ impl Broker for SimulatedBroker {
     }
 }
 
+/// Fluxo de caixa da ENTRADA, com direção.
+///
+/// Comprar debita o caixa; vender a descoberto CREDITA (o short recebe o
+/// valor da venda e passa a dever as ações). Tratar short como compra
+/// invertia a equity: um short vencedor derrubava a curva e um perdedor a
+/// subia, corrompendo Sharpe, drawdown e o capital que dimensiona os
+/// trades seguintes.
+fn entry_cash_flow(
+    direction: Direction,
+    fill_price: Decimal,
+    quantity: Decimal,
+    commission: Decimal,
+) -> Decimal {
+    let notional = fill_price * quantity;
+    match direction {
+        Direction::Long => -notional - commission,
+        Direction::Short => notional - commission,
+    }
+}
+
+/// Fluxo de caixa da SAÍDA, espelho de [`entry_cash_flow`]: vender credita,
+/// cobrir o short debita.
+fn exit_cash_flow(
+    direction: Direction,
+    exit_price: Decimal,
+    quantity: Decimal,
+    commission: Decimal,
+) -> Decimal {
+    let notional = exit_price * quantity;
+    match direction {
+        Direction::Long => notional - commission,
+        Direction::Short => -notional - commission,
+    }
+}
+
+/// Equity marcada a mercado: caixa mais o valor da posição — que é negativo
+/// no short, onde a posição é um passivo de recompra.
+fn mark_to_market_equity(
+    cash: Decimal,
+    direction: Direction,
+    price: Decimal,
+    quantity: Decimal,
+) -> Decimal {
+    match direction {
+        Direction::Long => cash + price * quantity,
+        Direction::Short => cash - price * quantity,
+    }
+}
+
 /// Fecha uma posição e gera o `Trade` correspondente.
 fn close_position_to_trade(
     position: &Position,
@@ -770,7 +841,7 @@ fn close_position_to_trade(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trader_domain::Candle;
+    use trader_domain::{Candle, TimeFrame};
 
     fn market_order(symbol: &str, quantity: Decimal) -> Order {
         Order::new(
@@ -799,6 +870,175 @@ mod tests {
         // a entrada stop (default) tem testes próprios.
         order.entry_order_type = EntryOrderType::Limit;
         order
+    }
+
+    fn zero_cost_config(initial_cash: i64, commission: Decimal) -> SimulatedBrokerConfig {
+        SimulatedBrokerConfig {
+            account_id: Some("DU_SIM".to_string()),
+            initial_cash: Decimal::from(initial_cash),
+            commission_per_trade: commission,
+            slippage_pct: Decimal::ZERO,
+            entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
+        }
+    }
+
+    fn directional_bracket(
+        symbol: &str,
+        side: OrderSide,
+        quantity: Decimal,
+        entry: Decimal,
+        stop: Decimal,
+        target: Decimal,
+    ) -> Order {
+        let mut order =
+            Order::new(symbol, side, OrderType::Bracket, quantity, "simulated").unwrap();
+        order.price = Some(entry);
+        order.stop_price = Some(stop);
+        order.target_price = Some(target);
+        // Limit enche na hora; a entrada stop tem testes próprios.
+        order.entry_order_type = EntryOrderType::Limit;
+        order
+    }
+
+    fn candle(symbol: &str, open: i64, high: i64, low: i64, close: i64) -> Candle {
+        Candle::new(
+            symbol,
+            TimeFrame::M15,
+            Utc::now(),
+            Decimal::from(open),
+            Decimal::from(high),
+            Decimal::from(low),
+            Decimal::from(close),
+            Decimal::from(1_000),
+        )
+        .unwrap()
+    }
+
+    /// Invariante de caixa (C5 da auditoria): fechado o round-trip, a equity
+    /// final tem de ser exatamente o capital inicial mais a soma dos
+    /// `net_pnl`. Antes do fix a entrada short debitava caixa como se fosse
+    /// compra: um short vencedor DERRUBAVA a equity, corrompendo curva de
+    /// equity, Sharpe e o capital que dimensiona os trades seguintes.
+    #[tokio::test]
+    async fn short_round_trip_fecha_equity_com_o_net_pnl() {
+        let commission = Decimal::from(35) / Decimal::from(100);
+        let broker = SimulatedBroker::new(zero_cost_config(100_000, commission));
+
+        broker
+            .place_order(directional_bracket(
+                "SPY",
+                OrderSide::Sell,
+                Decimal::from(10),
+                Decimal::from(100),
+                Decimal::from(105),
+                Decimal::from(90),
+            ))
+            .await
+            .unwrap();
+
+        // Candle que atinge o alvo do short (low <= 90) sem tocar o stop.
+        broker.set_market_candle("SPY", &candle("SPY", 95, 96, 89, 90));
+
+        let trades = broker.get_closed_trades();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].exit_reason, ExitReason::Target);
+        // Short vencedor: 10 × (100 - 90) menos 2 comissões.
+        assert_eq!(trades[0].net_pnl, Decimal::from(100) - commission * Decimal::TWO);
+        assert!(trades[0].net_pnl > Decimal::ZERO);
+
+        let summary = broker.get_account_summary().await.unwrap();
+        let soma: Decimal = trades.iter().map(|t| t.net_pnl).sum();
+        assert_eq!(summary.equity, Decimal::from(100_000) + soma);
+        assert_eq!(summary.cash, summary.equity);
+    }
+
+    #[tokio::test]
+    async fn short_perdedor_derruba_equity_na_medida_do_net_pnl() {
+        let broker = SimulatedBroker::new(zero_cost_config(100_000, Decimal::ZERO));
+
+        broker
+            .place_order(directional_bracket(
+                "SPY",
+                OrderSide::Sell,
+                Decimal::from(10),
+                Decimal::from(100),
+                Decimal::from(105),
+                Decimal::from(90),
+            ))
+            .await
+            .unwrap();
+
+        broker.set_market_candle("SPY", &candle("SPY", 102, 106, 101, 105));
+
+        let trades = broker.get_closed_trades();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].exit_reason, ExitReason::Stop);
+        assert_eq!(trades[0].net_pnl, Decimal::from(-50));
+
+        let summary = broker.get_account_summary().await.unwrap();
+        assert_eq!(summary.equity, Decimal::from(100_000) - Decimal::from(50));
+    }
+
+    #[tokio::test]
+    async fn long_round_trip_fecha_equity_com_o_net_pnl() {
+        let commission = Decimal::from(35) / Decimal::from(100);
+        let broker = SimulatedBroker::new(zero_cost_config(100_000, commission));
+
+        broker
+            .place_order(directional_bracket(
+                "SPY",
+                OrderSide::Buy,
+                Decimal::from(10),
+                Decimal::from(100),
+                Decimal::from(95),
+                Decimal::from(110),
+            ))
+            .await
+            .unwrap();
+
+        broker.set_market_candle("SPY", &candle("SPY", 105, 111, 104, 110));
+
+        let trades = broker.get_closed_trades();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].exit_reason, ExitReason::Target);
+
+        let summary = broker.get_account_summary().await.unwrap();
+        let soma: Decimal = trades.iter().map(|t| t.net_pnl).sum();
+        assert_eq!(summary.equity, Decimal::from(100_000) + soma);
+    }
+
+    /// A equity marcada a mercado de um short sobe quando o preço cai.
+    #[tokio::test]
+    async fn equity_marcada_a_mercado_do_short_sobe_com_a_queda() {
+        let broker = SimulatedBroker::new(zero_cost_config(100_000, Decimal::ZERO));
+
+        broker
+            .place_order(directional_bracket(
+                "SPY",
+                OrderSide::Sell,
+                Decimal::from(10),
+                Decimal::from(100),
+                Decimal::from(105),
+                Decimal::from(80),
+            ))
+            .await
+            .unwrap();
+
+        // Sem custos, abrir o short não muda a equity.
+        assert_eq!(
+            broker.get_account_summary().await.unwrap().equity,
+            Decimal::from(100_000)
+        );
+
+        // Preço cai 5 sem tocar stop nem alvo: +50 não realizados.
+        broker.set_market_candle("SPY", &candle("SPY", 99, 100, 94, 95));
+
+        assert!(broker.get_position("SPY").await.unwrap().is_some());
+        assert_eq!(
+            broker.get_account_summary().await.unwrap().equity,
+            Decimal::from(100_050)
+        );
     }
 
     #[tokio::test]
