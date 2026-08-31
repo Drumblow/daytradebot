@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -40,67 +41,73 @@ impl IbkrBrokerAdapter {
 #[async_trait]
 impl Broker for IbkrBrokerAdapter {
     async fn place_order(&self, order: Order) -> Result<OrderId, BrokerError> {
-        info!(symbol = %order.symbol, side = ?order.side, qty = %order.quantity, "enviando ordem para IBKR");
+        with_timeout("place_order", PLACE_ORDER_TIMEOUT, async move {
+            info!(symbol = %order.symbol, side = ?order.side, qty = %order.quantity, "enviando ordem para IBKR");
 
-        let client = connect(&self.config).await?;
+            let client = connect(&self.config).await?;
 
-        let contract = Contract::stock(&order.symbol).build();
-        let quantity = f64_from_decimal(order.quantity)?;
+            let contract = Contract::stock(&order.symbol).build();
+            let quantity = f64_from_decimal(order.quantity)?;
 
-        let result = match order.order_type {
-            OrderType::Market | OrderType::Limit | OrderType::Stop => {
-                let ib_order = build_simple_order(&client, &contract, &order, quantity)?;
-                submit_and_confirm(&client, &contract, ib_order).await
-            }
-            OrderType::Bracket => {
-                let ib_orders = build_bracket_orders(&client, &contract, &order, quantity)?;
-                submit_bracket_and_confirm(&client, &contract, ib_orders).await
-            }
-            OrderType::StopLimit => Err(BrokerError::OrderRejected(
-                "stop-limit não suportado ainda".to_string(),
-            )),
-        };
+            let result = match order.order_type {
+                OrderType::Market | OrderType::Limit | OrderType::Stop => {
+                    let ib_order = build_simple_order(&client, &contract, &order, quantity)?;
+                    submit_and_confirm(&client, &contract, ib_order).await
+                }
+                OrderType::Bracket => {
+                    let ib_orders = build_bracket_orders(&client, &contract, &order, quantity)?;
+                    submit_bracket_and_confirm(&client, &contract, ib_orders).await
+                }
+                OrderType::StopLimit => Err(BrokerError::OrderRejected(
+                    "stop-limit não suportado ainda".to_string(),
+                )),
+            };
 
-        disconnect(&client).await;
-        result.map(|broker_id| OrderId::from(broker_id.to_string()))
+            disconnect(&client).await;
+            result.map(|broker_id| OrderId::from(broker_id.to_string()))
+        })
+        .await
     }
 
     async fn cancel_order(&self, id: &OrderId) -> Result<(), BrokerError> {
-        info!(%id, "cancelando ordem na IBKR");
+        with_timeout("cancel_order", BROKER_OP_TIMEOUT, async move {
+            info!(%id, "cancelando ordem na IBKR");
 
-        let client = connect(&self.config).await?;
+            let client = connect(&self.config).await?;
 
-        let numeric_id: i32 =
-            id.0.parse()
-                .map_err(|e| BrokerError::Internal(format!("ID inválido: {e}")))?;
+            let numeric_id: i32 =
+                id.0.parse()
+                    .map_err(|e| BrokerError::Internal(format!("ID inválido: {e}")))?;
 
-        let mut subscription = client
-            .cancel_order(numeric_id, "")
-            .await
-            .map_err(|e| BrokerError::Internal(e.to_string()))?;
+            let mut subscription = client
+                .cancel_order(numeric_id, "")
+                .await
+                .map_err(|e| BrokerError::Internal(e.to_string()))?;
 
-        // Consome a subscrição para confirmar cancelamento.
-        while let Some(item) = subscription.next().await {
-            match item {
-                Ok(SubscriptionItem::Data(_)) => {}
-                Ok(SubscriptionItem::Notice(n)) => {
-                    warn!(notice = %n, "aviso no cancelamento");
-                }
-                // O código 202 ("Ordem cancelada") é a confirmação do
-                // cancelamento — mensagem informacional, não erro.
-                Err(ibapi::Error::Notice(n)) if n.is_cancellation() => {
-                    info!(notice = %n, "cancelamento confirmado pelo gateway");
-                    break;
-                }
-                Err(e) => {
-                    disconnect(&client).await;
-                    return Err(BrokerError::Internal(e.to_string()));
+            // Consome a subscrição para confirmar cancelamento.
+            while let Some(item) = subscription.next().await {
+                match item {
+                    Ok(SubscriptionItem::Data(_)) => {}
+                    Ok(SubscriptionItem::Notice(n)) => {
+                        warn!(notice = %n, "aviso no cancelamento");
+                    }
+                    // O código 202 ("Ordem cancelada") é a confirmação do
+                    // cancelamento — mensagem informacional, não erro.
+                    Err(ibapi::Error::Notice(n)) if n.is_cancellation() => {
+                        info!(notice = %n, "cancelamento confirmado pelo gateway");
+                        break;
+                    }
+                    Err(e) => {
+                        disconnect(&client).await;
+                        return Err(BrokerError::Internal(e.to_string()));
+                    }
                 }
             }
-        }
 
-        disconnect(&client).await;
-        Ok(())
+            disconnect(&client).await;
+            Ok(())
+        })
+        .await
     }
 
     async fn get_order_status(&self, id: &OrderId) -> Result<OrderStatus, BrokerError> {
@@ -119,21 +126,24 @@ impl Broker for IbkrBrokerAdapter {
     }
 
     async fn get_open_orders(&self) -> Result<Vec<Order>, BrokerError> {
-        debug!("consultando ordens abertas na IBKR");
+        with_timeout("get_open_orders", BROKER_OP_TIMEOUT, async move {
+            debug!("consultando ordens abertas na IBKR");
 
-        let client = connect(&self.config).await?;
+            let client = connect(&self.config).await?;
 
-        // `open_orders` retorna as ordens abertas deste client; o stream
-        // termina sozinho ao receber `OpenOrderEnd` do gateway.
-        let mut subscription = client
-            .open_orders()
-            .await
-            .map_err(|e| BrokerError::Internal(e.to_string()))?;
+            // `open_orders` retorna as ordens abertas deste client; o stream
+            // termina sozinho ao receber `OpenOrderEnd` do gateway.
+            let mut subscription = client
+                .open_orders()
+                .await
+                .map_err(|e| BrokerError::Internal(e.to_string()))?;
 
-        let result = collect_open_orders(&mut subscription).await;
+            let result = collect_open_orders(&mut subscription).await;
 
-        disconnect(&client).await;
-        result
+            disconnect(&client).await;
+            result
+        })
+        .await
     }
 
     async fn get_position(&self, symbol: &str) -> Result<Option<Position>, BrokerError> {
@@ -142,62 +152,68 @@ impl Broker for IbkrBrokerAdapter {
     }
 
     async fn get_positions(&self) -> Result<Vec<Position>, BrokerError> {
-        debug!("consultando posições abertas na IBKR");
+        with_timeout("get_positions", BROKER_OP_TIMEOUT, async move {
+            debug!("consultando posições abertas na IBKR");
 
-        let client = connect(&self.config).await?;
+            let client = connect(&self.config).await?;
 
-        // `positions` é um stream contínuo: primeiro replay da lista completa,
-        // encerrado por `PositionEnd`. Paramos aí e o drop cancela o stream.
-        let mut subscription = client
-            .positions()
-            .await
-            .map_err(|e| BrokerError::Internal(e.to_string()))?;
+            // `positions` é um stream contínuo: primeiro replay da lista completa,
+            // encerrado por `PositionEnd`. Paramos aí e o drop cancela o stream.
+            let mut subscription = client
+                .positions()
+                .await
+                .map_err(|e| BrokerError::Internal(e.to_string()))?;
 
-        let account_filter = self.config.account_id.as_deref().filter(|s| !s.is_empty());
-        let result = collect_positions(&mut subscription, account_filter).await;
+            let account_filter = self.config.account_id.as_deref().filter(|s| !s.is_empty());
+            let result = collect_positions(&mut subscription, account_filter).await;
 
-        disconnect(&client).await;
-        result
+            disconnect(&client).await;
+            result
+        })
+        .await
     }
 
     async fn get_account_summary(&self) -> Result<AccountSummary, BrokerError> {
-        debug!("consultando resumo da conta na IBKR");
+        with_timeout("get_account_summary", BROKER_OP_TIMEOUT, async move {
+            debug!("consultando resumo da conta na IBKR");
 
-        let client = connect(&self.config).await?;
+            let client = connect(&self.config).await?;
 
-        let group = AccountGroup("All".to_string());
-        let tags = [
-            AccountSummaryTags::NET_LIQUIDATION,
-            AccountSummaryTags::TOTAL_CASH_VALUE,
-            AccountSummaryTags::BUYING_POWER,
-        ];
+            let group = AccountGroup("All".to_string());
+            let tags = [
+                AccountSummaryTags::NET_LIQUIDATION,
+                AccountSummaryTags::TOTAL_CASH_VALUE,
+                AccountSummaryTags::BUYING_POWER,
+            ];
 
-        let mut subscription = client
-            .account_summary(&group, &tags)
-            .await
-            .map_err(|e| BrokerError::Internal(e.to_string()))?;
+            let mut subscription = client
+                .account_summary(&group, &tags)
+                .await
+                .map_err(|e| BrokerError::Internal(e.to_string()))?;
 
-        // String vazia na config significa "sem filtro de conta".
-        let account_filter = self.config.account_id.as_deref().filter(|s| !s.is_empty());
+            // String vazia na config significa "sem filtro de conta".
+            let account_filter = self.config.account_id.as_deref().filter(|s| !s.is_empty());
 
-        let values = collect_account_summary_values(&mut subscription, account_filter).await;
+            let values = collect_account_summary_values(&mut subscription, account_filter).await;
 
-        disconnect(&client).await;
-        let values = values?;
+            disconnect(&client).await;
+            let values = values?;
 
-        let get = |tag: &str| values.get(tag).copied().unwrap_or(Decimal::ZERO);
+            let get = |tag: &str| values.get(tag).copied().unwrap_or(Decimal::ZERO);
 
-        Ok(AccountSummary {
-            broker: "ibkr".to_string(),
-            account_id: account_filter.map(str::to_string),
-            cash: get(AccountSummaryTags::TOTAL_CASH_VALUE),
-            equity: get(AccountSummaryTags::NET_LIQUIDATION),
-            buying_power: get(AccountSummaryTags::BUYING_POWER),
-            // DailyPnL não é exposto via account summary (requer stream `pnl`
-            // separado); fica zero até que essa fonte seja integrada.
-            daily_pnl: Decimal::ZERO,
-            timestamp: Utc::now(),
+            Ok(AccountSummary {
+                broker: "ibkr".to_string(),
+                account_id: account_filter.map(str::to_string),
+                cash: get(AccountSummaryTags::TOTAL_CASH_VALUE),
+                equity: get(AccountSummaryTags::NET_LIQUIDATION),
+                buying_power: get(AccountSummaryTags::BUYING_POWER),
+                // DailyPnL não é exposto via account summary (requer stream `pnl`
+                // separado); fica zero até que essa fonte seja integrada.
+                daily_pnl: Decimal::ZERO,
+                timestamp: Utc::now(),
+            })
         })
+        .await
     }
 
     async fn subscribe_order_events(
@@ -234,6 +250,42 @@ impl Broker for IbkrBrokerAdapter {
         Ok(SubscriptionHandle {
             id: "ibkr-executions-poll".to_string(),
         })
+    }
+}
+
+/// Timeout padrão de qualquer operação do broker na borda do adapter.
+///
+/// Um gateway travado (socket aberto, sem responder — cenário clássico de TWS
+/// wedged) pendurava `get_positions`/`get_open_orders`/`get_account_summary`
+/// PARA SEMPRE: os coletores drenam o stream até o marcador de fim, que nunca
+/// chega. O circuit breaker conta erros, não travamentos, e nunca disparava
+/// (A5 da auditoria de 30/08/2026). Com o timeout, o travamento vira erro e
+/// alimenta o circuit breaker como qualquer outra falha do broker.
+const BROKER_OP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Envio de ordem tem folga maior: `connect` faz até 4 tentativas com backoff
+/// (~6 s só de sleeps) e `confirm_order` espera até 10 s pela confirmação.
+const PLACE_ORDER_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Envolve uma operação do broker em timeout, convertendo travamento em erro.
+async fn with_timeout<T>(
+    operation: &'static str,
+    limit: Duration,
+    fut: impl std::future::Future<Output = Result<T, BrokerError>>,
+) -> Result<T, BrokerError> {
+    match tokio::time::timeout(limit, fut).await {
+        Ok(result) => result,
+        Err(_) => {
+            warn!(
+                operation,
+                timeout_s = limit.as_secs(),
+                "operação do broker IBKR não respondeu dentro do timeout; gateway travado?"
+            );
+            Err(BrokerError::Internal(format!(
+                "timeout de {}s em {operation}: gateway IBKR sem resposta",
+                limit.as_secs()
+            )))
+        }
     }
 }
 

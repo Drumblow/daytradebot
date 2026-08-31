@@ -77,5 +77,14 @@ ENV IBC_INI=/opt/trader/ibc/ibc.ini \
     DISPLAY=:97
 
 EXPOSE 4002
+
+# Healthcheck: a porta da API do Gateway tem de aceitar conexao. Pega o caso
+# comum de "Gateway caiu / nao subiu" e deixa o estado visivel no docker ps
+# em vez de so no log. NAO pega o gateway wedged (socket aberto, sem
+# responder) — contra esse cenario a defesa e o timeout na borda do adapter
+# (A5 da auditoria de 30/08/2026), nao o healthcheck.
+# start-period generoso: o login com 2FA do Gateway leva minutos.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5m --retries=3     CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/4002' || exit 1
+
 USER trader
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
