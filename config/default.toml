@@ -36,8 +36,11 @@ max_consecutive_losses = 3
 entry_overshoot_tolerance = 0.25
 
 [alerts]
-# Webhook para alertas críticos (Slack/Discord/Teams: POST {"text": "..."}).
-# Vazio = apenas logs.
+# Webhook para alertas críticos. O formato do corpo é detectado pela URL:
+#   Discord  -> {"content": "..."}   (URL discord.com/api/webhooks/...)
+#   Slack    -> {"text": "..."}      (e o endpoint .../slack do Discord)
+# Vazio = apenas logs. Em produção o valor NÃO vem daqui: o entrypoint do
+# bot carrega TRADER__ALERTS__WEBHOOK_URL de secrets/alerts.env (ADR-013).
 webhook_url = ""
 
 [logging]

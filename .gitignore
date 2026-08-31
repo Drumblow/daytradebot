@@ -11,6 +11,7 @@
 
 # Environment and secrets
 .env
+secrets/
 .env.local
 .env.*.local
 *.pem
