@@ -218,3 +218,37 @@ impl Fill {
         })
     }
 }
+
+/// Regra ÚNICA de expiração da entrada stop, compartilhada por live e
+/// backtest.
+///
+/// `candles_waited` conta os candles já FECHADOS desde o envio da ordem
+/// (1 = o candle seguinte ao envio acabou de fechar). `validity` é o
+/// `entry_validity_candles` da estratégia — 1 significa "só o próximo
+/// candle", como documentado nos TOMLs.
+///
+/// A regra existia duplicada com operadores diferentes: `>` no broker
+/// simulado e `>=` no live, dando 2 candles de rompimento no backtest e 1
+/// no live (A3 da auditoria de 30/08/2026). Qualquer novo caminho de
+/// execução deve chamar esta função em vez de reescrever a comparação.
+pub fn stop_entry_expired(candles_waited: u32, validity: u32) -> bool {
+    candles_waited >= validity
+}
+
+#[cfg(test)]
+mod expiracao_entrada_stop_tests {
+    use super::stop_entry_expired;
+
+    #[test]
+    fn entrada_stop_com_validade_1_expira_no_candle_seguinte() {
+        assert!(!stop_entry_expired(0, 1));
+        assert!(stop_entry_expired(1, 1));
+    }
+
+    #[test]
+    fn entrada_stop_com_validade_2_da_dois_candles() {
+        assert!(!stop_entry_expired(1, 2));
+        assert!(stop_entry_expired(2, 2));
+        assert!(stop_entry_expired(3, 2));
+    }
+}

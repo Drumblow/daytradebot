@@ -220,8 +220,11 @@ impl SimulatedBroker {
                     Direction::Long => candle.high >= entry.trigger_price,
                     Direction::Short => candle.low <= entry.trigger_price,
                 };
-                let expired =
-                    !triggered && entry.candles_waiting > self.config.entry_validity_candles;
+                let expired = !triggered
+                    && trader_domain::stop_entry_expired(
+                        entry.candles_waiting,
+                        self.config.entry_validity_candles,
+                    );
                 (triggered, expired)
             }
             None => (false, false),
@@ -301,8 +304,12 @@ impl SimulatedBroker {
                                 target_price: entry.target_price,
                             },
                         );
-                        state.cash +=
-                            entry_cash_flow(entry.direction, fill_price, entry.quantity, commission);
+                        state.cash += entry_cash_flow(
+                            entry.direction,
+                            fill_price,
+                            entry.quantity,
+                            commission,
+                        );
                         state.equity = mark_to_market_equity(
                             state.cash,
                             entry.direction,
@@ -944,7 +951,10 @@ mod tests {
         assert_eq!(trades.len(), 1);
         assert_eq!(trades[0].exit_reason, ExitReason::Target);
         // Short vencedor: 10 × (100 - 90) menos 2 comissões.
-        assert_eq!(trades[0].net_pnl, Decimal::from(100) - commission * Decimal::TWO);
+        assert_eq!(
+            trades[0].net_pnl,
+            Decimal::from(100) - commission * Decimal::TWO
+        );
         assert!(trades[0].net_pnl > Decimal::ZERO);
 
         let summary = broker.get_account_summary().await.unwrap();
@@ -1291,8 +1301,7 @@ mod tests {
         );
         let id = broker.place_order(order).await.unwrap();
 
-        // Dois candles sem rompimento: expira (validade = 1).
-        broker.set_market_candle("SPY", &candle_at(104, 98, 102));
+        // Validade 1 = só o próximo candle: um candle sem rompimento expira.
         broker.set_market_candle("SPY", &candle_at(104, 98, 102));
 
         assert_eq!(
