@@ -59,7 +59,7 @@ impl Alerter {
                 .send()
                 .await;
             if let Err(e) = result {
-                error!(error = %e, "falha ao enviar alerta para webhook");
+                error!(error = %e.without_url(), "falha ao enviar alerta para webhook");
             }
         });
     }
@@ -78,7 +78,7 @@ impl Alerter {
         .await;
         match result {
             Ok(Ok(_)) => {}
-            Ok(Err(e)) => error!(error = %e, "falha ao enviar alerta para webhook"),
+            Ok(Err(e)) => error!(error = %e.without_url(), "falha ao enviar alerta para webhook"),
             Err(_) => error!("timeout (5s) ao enviar alerta para webhook"),
         }
     }
