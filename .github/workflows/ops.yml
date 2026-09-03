@@ -89,7 +89,7 @@ jobs:
               fi
               CONFIRM=""
               if [ "${{ inputs.confirmar }}" = "true" ]; then CONFIRM="--confirm"; fi
-              docker run --rm --network host -e TRADER__IBKR__HOST=127.0.0.1 -e TRADER__IBKR__PORT=4002 -e TRADER__IBKR__CLIENT_ID=96 --entrypoint /opt/trader/bin/trader-cli ghcr.io/drumblow/trader-bot:latest flatten --provider ibkr --symbol "${{ inputs.simbolo }}" $CONFIRM
+              docker run --rm --network host -e TRADER__IBKR__HOST=127.0.0.1 -e TRADER__IBKR__PORT=4002 -e TRADER__IBKR__CLIENT_ID=99 --entrypoint /opt/trader/bin/trader-cli ghcr.io/drumblow/trader-bot:latest flatten --provider ibkr --symbol "${{ inputs.simbolo }}" $CONFIRM
               ;;
 
             exposicao)
@@ -102,13 +102,15 @@ jobs:
               # as duas instancias de IWM sem avaliar nada entre 07/08 e
               # 03/09/2026.
               #
-              # client_id 97 e proposital: as instancias usam 1..11 (e 101..111
-              # no adapter do broker), entao 97 nao colide com sessao viva.
+              # client_id 99 e o id reservado a DIAGNOSTICO MANUAL, declarado
+              # no compose da store e coberto por teste no adapter: market data
+              # usa 1..11, broker 101..111, poll 201..211. Nenhuma instancia
+              # pode usar 99, entao ele nunca derruba sessao viva.
               #
               # `--provider ibkr` e obrigatorio: o flag tem default "simulated"
               # e sobrescreve TRADER_PROVIDER, entao sem ele o comando responde
               # com a conta simulada e o diagnostico fica inutil.
-              docker run --rm --network host                 -e TRADER_PROVIDER=ibkr                 -e TRADER__IBKR__HOST=127.0.0.1                 -e TRADER__IBKR__PORT=4002                 -e TRADER__IBKR__CLIENT_ID=97                 --entrypoint /opt/trader/bin/trader-cli                 ghcr.io/drumblow/trader-bot:latest account --provider ibkr
+              docker run --rm --network host                 -e TRADER_PROVIDER=ibkr                 -e TRADER__IBKR__HOST=127.0.0.1                 -e TRADER__IBKR__PORT=4002                 -e TRADER__IBKR__CLIENT_ID=99                 --entrypoint /opt/trader/bin/trader-cli                 ghcr.io/drumblow/trader-bot:latest account --provider ibkr
               ;;
           esac
 
