@@ -71,8 +71,8 @@ pub async fn run(config: &CliConfig, symbol: &str, confirm: bool) -> Result<()> 
         bail!("nada foi enviado. Repita com --confirm para executar de verdade.");
     }
 
-    close_at_market(&broker, symbol, &position, exit_side).await?;
-    cancel_exit_side_orders(&broker, symbol, exit_side).await;
+    let ordem_de_fechamento = close_at_market(&broker, symbol, &position, exit_side).await?;
+    cancel_exit_side_orders(&broker, symbol, exit_side, ordem_de_fechamento.as_deref()).await;
 
     // Confere o resultado no próprio broker: um comando que fecha posição e
     // não mostra o depois obriga alguém a conferir por fora.
@@ -105,7 +105,7 @@ async fn close_at_market<B: Broker>(
     symbol: &str,
     position: &Position,
     exit_side: OrderSide,
-) -> Result<()> {
+) -> Result<Option<String>> {
     const TENTATIVAS: u32 = 3;
     let mut ultimo_erro = None;
 
@@ -118,7 +118,7 @@ async fn close_at_market<B: Broker>(
                 println!(
                     "\nA tentativa anterior chegou ao broker (há ordem de saída trabalhando em {symbol}); nada foi reenviado."
                 );
-                return Ok(());
+                return Ok(None);
             }
         }
 
@@ -134,7 +134,7 @@ async fn close_at_market<B: Broker>(
             Ok(id) => {
                 info!(%symbol, %id, tentativa, "ordem de fechamento manual enviada");
                 println!("\nOrdem de fechamento enviada: {id}");
-                return Ok(());
+                return Ok(Some(id.0));
             }
             Err(e) => {
                 warn!(%symbol, tentativa, error = %e, "falha ao enviar fechamento");
@@ -162,10 +162,22 @@ async fn tem_ordem_de_saida<B: Broker>(
         .any(|o| o.symbol == symbol && o.side == exit_side))
 }
 
-/// Cancela as ordens do lado da saída (pernas de proteção órfãs). Filtrar pelo
-/// lado evita derrubar a entrada pendente de outra estratégia no mesmo ativo —
-/// IWM, IWV e AVUV rodam com duas instâncias cada.
-async fn cancel_exit_side_orders<B: Broker>(broker: &B, symbol: &str, exit_side: OrderSide) {
+/// Cancela as ordens do lado da saída (pernas de proteção órfãs), PRESERVANDO
+/// a ordem de fechamento recém-enviada.
+///
+/// `manter` é obrigatório na prática: a ordem de fechamento é, ela mesma, uma
+/// ordem do lado da saída. Sem essa exceção o comando cancelava exatamente o
+/// que tinha acabado de mandar — aconteceu de verdade em 03/09/2026 com a
+/// ordem 4 de IWM, que foi enviada e cancelada em menos de um segundo.
+///
+/// Filtrar pelo lado também evita derrubar a entrada pendente de outra
+/// estratégia no mesmo ativo — IWM, IWV e AVUV rodam com duas instâncias cada.
+async fn cancel_exit_side_orders<B: Broker>(
+    broker: &B,
+    symbol: &str,
+    exit_side: OrderSide,
+    manter: Option<&str>,
+) {
     let orders = match broker.get_open_orders().await {
         Ok(orders) => orders,
         Err(e) => {
@@ -178,6 +190,9 @@ async fn cancel_exit_side_orders<B: Broker>(broker: &B, symbol: &str, exit_side:
         .filter(|o| o.symbol == symbol && o.side == exit_side)
     {
         if let Some(broker_order_id) = &order.broker_order_id {
+            if manter == Some(broker_order_id.as_str()) {
+                continue;
+            }
             let id = OrderId::from(broker_order_id.clone());
             match broker.cancel_order(&id).await {
                 Ok(()) => println!("Ordem {id} cancelada."),

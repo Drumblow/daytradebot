@@ -1854,22 +1854,41 @@ async fn close_position_at_market<B: Broker>(
     };
 
     let mut last_error: Option<String> = None;
+    let mut ordem_de_fechamento: Option<String> = None;
     for attempt in 1..=CLOSE_ATTEMPTS {
+        if attempt > 1 {
+            tokio::time::sleep(CLOSE_RETRY_DELAY).await;
+            // Repetir ordem a mercado às cegas duplica posição. Só a ausência
+            // COMPROVADA de ordem de saída no broker autoriza reenviar.
+            match broker.get_open_orders().await {
+                Ok(orders) => {
+                    if orders.iter().any(|o| o.symbol == symbol && o.side == side) {
+                        warn!(%symbol, "tentativa anterior chegou ao broker; fechamento não reenviado");
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    warn!(%symbol, error = %e, "não deu para conferir se o fechamento anterior foi enviado; não reenviando");
+                    return Err(anyhow::anyhow!(
+                        "fechamento de {symbol} em estado incerto: {e}"
+                    ));
+                }
+            }
+        }
+
         let order = Order::new(symbol, side, OrderType::Market, position.quantity, "ibkr")
             .map_err(|e| anyhow::anyhow!("ordem de fechamento inválida: {e}"))?;
         match broker.place_order(order).await {
-            Ok(_) => {
+            Ok(id) => {
                 last_error = None;
-                info!(%symbol, quantity = %position.quantity, attempt,
+                ordem_de_fechamento = Some(id.0.clone());
+                info!(%symbol, quantity = %position.quantity, attempt, %id,
                     "ordem de fechamento a mercado enviada (saída ativa)");
                 break;
             }
             Err(e) => {
-                warn!(%symbol, attempt, error = %e, "falha ao enviar fechamento a mercado; retentando");
+                warn!(%symbol, attempt, error = %e, "falha ao enviar fechamento a mercado");
                 last_error = Some(e.to_string());
-                if attempt < CLOSE_ATTEMPTS {
-                    tokio::time::sleep(CLOSE_RETRY_DELAY).await;
-                }
             }
         }
     }
@@ -1882,18 +1901,24 @@ async fn close_position_at_market<B: Broker>(
     // Só agora as pernas de proteção saem. Uma perna órfã que execute depois
     // abre posição invertida, que o bot ignora como "fill sem ordem
     // rastreada" — por isso a falha de cancelamento é ruidosa.
-    cancel_protection_legs(broker, symbol, side).await;
+    cancel_protection_legs(broker, symbol, side, ordem_de_fechamento.as_deref()).await;
     Ok(())
 }
 
 /// Cancela as pernas de PROTEÇÃO do símbolo — as ordens do lado da saída
-/// (stop e alvo de uma posição long são vendas; de uma short, compras).
+/// (stop e alvo de uma posição long são vendas; de uma short, compras),
+/// preservando a ordem de fechamento recém-enviada (`manter`).
 ///
 /// Filtrar pelo lado importa porque três símbolos rodam com duas instâncias
 /// (IWM, IWV e AVUV). Cancelar tudo do símbolo derrubava a entrada pendente da
 /// instância vizinha — que é de outra estratégia e não tem nada a ver com esta
 /// posição.
-async fn cancel_protection_legs<B: Broker>(broker: &B, symbol: &str, exit_side: OrderSide) {
+async fn cancel_protection_legs<B: Broker>(
+    broker: &B,
+    symbol: &str,
+    exit_side: OrderSide,
+    manter: Option<&str>,
+) {
     let open_orders = match broker.get_open_orders().await {
         Ok(orders) => orders,
         Err(e) => {
@@ -1906,6 +1931,12 @@ async fn cancel_protection_legs<B: Broker>(broker: &B, symbol: &str, exit_side: 
         .filter(|o| o.symbol == symbol && o.side == exit_side)
     {
         if let Some(broker_order_id) = &order.broker_order_id {
+            // A ordem de fechamento é, ela mesma, do lado da saída: sem esta
+            // exceção o cancelamento derruba exatamente o que acabou de ser
+            // enviado (aconteceu em 03/09/2026 com a ordem 4 de IWM).
+            if manter == Some(broker_order_id.as_str()) {
+                continue;
+            }
             let id = trader_domain::OrderId::from(broker_order_id.clone());
             if let Err(e) = broker.cancel_order(&id).await {
                 warn!(order_id = %id, error = %e, "falha ao cancelar ordem aberta na saída ativa");
