@@ -28,6 +28,8 @@ Livros aprovados como base inicial:
 | **The Art and Science of Technical Analysis — Adam Grimes** | Estrutura de mercado, pullbacks validados, failure test (spring) | Fonte da `failure-test-long-v1` (análise: `docs/books/analysis/grimes-art-science-ta.md`) |
 | **Mind over Markets — James Dalton** | Market Profile: value area, initial balance, tipos de dia | Setups de abertura/balance via proxy de candles (análise: `docs/books/analysis/dalton-mind-over-markets.md`) |
 | **Advances in Financial Machine Learning — López de Prado** | Validação: triple-barrier, purged CV, Deflated Sharpe, meta-labeling | Método de validação/backtest, não setups (análise: `docs/books/analysis/lopez-afml.md`) |
+| **Technical Analysis of the Financial Markets — John J. Murphy** | Livro-texto canônico: Donchian/weekly rule, pivot points intraday, Starc/Keltner, ADX, objetivos medidos | Fonte de `pivot-point-intraday-v1`, `keltner-breakout-v1`, `donchian-channel-v1` e dos filtros de regime (análise: `docs/books/analysis/murphy-technical-analysis.md`) |
+| **The New Age of Technical Analysis — Brandon Rosewag** | EMAs 5/8/21/55 com papéis fixos, opening range breakout, compressão de volatilidade (squeeze) | ⚠️ Fonte de **menor rigor** (autopublicado, sem estatísticas, exemplos selecionados) — usar só como gerador de hipóteses (análise: `docs/books/analysis/rosewag-new-age-ta.md`) |
 
 Novas fontes podem ser adicionadas, desde que passem pelo mesmo processo de análise.
 

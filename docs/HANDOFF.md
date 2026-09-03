@@ -198,6 +198,14 @@ app sobrevive, o acesso humano não. E **não existe alerta** se algo cair: o
 
 - **Pregões 31/08, 01/09 e 02/09 (app umbrelOS)** — `docs/reports/pregoes-2026-08-31_a_09-02.md`. **Zero trades nos três dias, e o backtest sobre os mesmos pregões também dá zero** (11 pares): a seca é regime de mercado, não falha de estratégia — 0 barras de uptrend em IWV e IWO, e o pullback exige uptrend. Estatística do portfólio: 0,74 trade/pregão, 56% dos pregões zerados, 21% das janelas de 3 pregões secas. **Quatro problemas encontrados:** (1) as 2 instâncias de IWM estão cegas desde 07/08 — exposição órfã na conta paper faz `find_exposure` interromper o ciclo antes de gravar contexto; (2) a ordem 17 (VBR, 28/08) não executou com o mercado 35c além do gatilho — provável rejeição da IBKR assumida como aceita no timeout de confirmação; (3) `live_stopped` nunca aconteceu em toda a vida do projeto (só SIGINT era tratado, `docker stop` manda SIGTERM); (4) 3 barras abandonadas sem registro. Itens 1, 3 e 4 corrigidos; o 2 agora vira alerta (`order_missing`).
 
+- **03/09/2026 — noite de correcoes, incidente e uma decisao de portfolio.** Relatorios: `docs/reports/incidente-2026-09-03-ordens-duplicadas.md` e `docs/decisions/ADR-016-reduzir-pullback-trend-v1.md`.
+  - **Branch de auditoria mergeada e no ar** (C1, C3, C5, A1, A2, A3, A5, A6, alertas Discord) + A7 (suite verde antes de publicar imagem, guarda de janela no deploy, pin por commit).
+  - **A posicao orfa de IWM foi confirmada e encerrada:** 827 acoes long desde 07/08, sem stop, ~-5.8k nao realizados que nunca apareceram no painel. Ordem de venda enfileirada para a abertura de 04/09. Enquanto ela existia, as DUAS instancias de IWM ficaram 18 pregoes sem avaliar nada.
+  - **Causa raiz das ordens orfas encontrada:** `confirm_order` tratava fim de stream sem status como FALHA, embora a ordem ja estivesse transmitida. O chamador achava que falhou, nao rastreava, e a ordem ficava orfa. Corrigido.
+  - **Incidente:** o flatten manual repetiu a ordem 3x por causa disso e deixou 3 vendas de 827 enfileiradas (viraria posicao vendida de 1.654). Detectado em 3 minutos pela acao nova `exposicao`, cancelado, causa corrigida.
+  - **Ferramentas novas de operacao** (`ops.yml`): `exposicao` (le posicoes e ordens reais no broker — o painel so le o banco), `flatten`, `cancelar-ordens`, `logs-instancia`.
+  - **Queda de energia** derrubou o servidor as 21h30 UTC; voltou por acao manual. A BIOS continua sem religamento automatico.
+
 ## 8. Nova estratégia implementada: `failure-test-long-v1` (2026-08-05)
 
 - Análise de 4 livros novos (`docs/books/analysis/`): Brooks Bar-by-Bar, Grimes, Dalton, López de Prado. Tabela de fontes atualizada em `docs/strategy-analysis-framework.md` §2. Chan ficou pendente (PDF escaneado, precisa OCR).
