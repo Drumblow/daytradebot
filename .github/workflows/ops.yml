@@ -23,6 +23,13 @@ on:
           - backup
           - restart-app
           - logs-gateway
+          - exposicao
+          - logs-instancia
+      instancia:
+        description: 'Nome da instancia para logs-instancia (ex.: iwm-pullback)'
+        required: false
+        type: string
+        default: 'iwm-pullback'
 
 jobs:
   ops:
@@ -47,6 +54,29 @@ jobs:
 
             logs-gateway)
               docker logs daytradebot_gateway_1 --tail 60
+              ;;
+
+            logs-instancia)
+              # O log da instancia e a unica fonte de algumas decisoes que NAO
+              # viram linha no banco — a mais importante sendo "exposicao
+              # existente; sem novo sinal", que interrompe o ciclo antes de
+              # gravar o contexto de mercado.
+              docker logs "daytradebot_${{ inputs.instancia }}_1" --tail 150
+              ;;
+
+            exposicao)
+              # SO LE. Pergunta ao Gateway quais posicoes e ordens estao
+              # realmente abertas na conta — coisa que o painel nao mostra,
+              # porque ele le o banco e nunca o broker.
+              #
+              # Por que importa: exposicao que o bot nao rastreia trava o
+              # simbolo na reconciliacao do live, em silencio. Foi o que deixou
+              # as duas instancias de IWM sem avaliar nada entre 07/08 e
+              # 03/09/2026.
+              #
+              # client_id 97 e proposital: as instancias usam 1..11 (e 101..111
+              # no adapter do broker), entao 97 nao colide com sessao viva.
+              docker run --rm --network host                 -e TRADER_PROVIDER=ibkr                 -e TRADER__IBKR__HOST=127.0.0.1                 -e TRADER__IBKR__PORT=4002                 -e TRADER__IBKR__CLIENT_ID=97                 --entrypoint /opt/trader/bin/trader-cli                 ghcr.io/drumblow/trader-bot:latest account
               ;;
           esac
 
