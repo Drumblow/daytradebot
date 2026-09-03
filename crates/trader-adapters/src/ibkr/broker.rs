@@ -763,9 +763,22 @@ async fn confirm_order(
                 Err(e) => return Err(BrokerError::Internal(e.to_string())),
             }
         }
-        Err(BrokerError::Internal(
-            "stream de confirmação encerrado sem status".to_string(),
-        ))
+        // Stream acabou sem status. A ordem JÁ FOI TRANSMITIDA — ausência de
+        // confirmação não é rejeição, e tratá-la como erro é pior do que o
+        // problema que se quer evitar: o chamador acha que falhou, não
+        // rastreia a ordem, e ela fica órfã no broker (foi assim que 827 ações
+        // de IWM ficaram penduradas desde 07/08/2026). Uma ordem que a IBKR
+        // aceita mas segura para a abertura — aviso 399, "will not be placed
+        // at the exchange until 09:30" — cai exatamente aqui.
+        //
+        // Mesma decisão do caminho de timeout logo abaixo: assume aceita e
+        // avisa. Rejeição de verdade chega como Notice 2xx ou status
+        // Inactive/Cancelled, e essas continuam virando erro.
+        warn!(
+            order_id,
+            "stream de confirmação encerrou sem status; ordem foi transmitida, assumindo aceita"
+        );
+        Ok(())
     })
     .await;
 

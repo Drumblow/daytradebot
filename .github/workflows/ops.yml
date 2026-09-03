@@ -26,13 +26,14 @@ on:
           - exposicao
           - logs-instancia
           - flatten
+          - cancelar-ordens
       simbolo:
         description: 'Simbolo para flatten (ex.: IWM)'
         required: false
         type: string
         default: ''
       confirmar:
-        description: 'flatten: marque para ENVIAR a ordem de verdade'
+        description: 'flatten/cancelar-ordens: marque para EXECUTAR de verdade'
         required: false
         type: boolean
         default: false
@@ -73,6 +74,18 @@ jobs:
               # existente; sem novo sinal", que interrompe o ciclo antes de
               # gravar o contexto de mercado.
               docker logs "daytradebot_${{ inputs.instancia }}_1" --tail 150
+              ;;
+
+            cancelar-ordens)
+              # Limpeza: tira do broker ordens que nao deveriam existir. Sem
+              # `confirmar`, apenas lista.
+              if [ -z "${{ inputs.simbolo }}" ]; then
+                echo "ERRO: informe o simbolo" >&2
+                exit 1
+              fi
+              CONFIRM=""
+              if [ "${{ inputs.confirmar }}" = "true" ]; then CONFIRM="--confirm"; fi
+              docker run --rm --network host -e TRADER__IBKR__HOST=127.0.0.1 -e TRADER__IBKR__PORT=4002 -e TRADER__IBKR__CLIENT_ID=99 --entrypoint /opt/trader/bin/trader-cli ghcr.io/drumblow/trader-bot:latest cancel-orders --provider ibkr --symbol "${{ inputs.simbolo }}" $CONFIRM
               ;;
 
             flatten)

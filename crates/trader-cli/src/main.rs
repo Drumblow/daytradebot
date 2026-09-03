@@ -50,6 +50,18 @@ enum Commands {
         #[arg(long)]
         confirm: bool,
     },
+    /// Cancela todas as ordens abertas de um simbolo no broker (conta paper).
+    CancelOrders {
+        /// Símbolo.
+        #[arg(short, long)]
+        symbol: String,
+        /// Provedor.
+        #[arg(long, default_value = "simulated")]
+        provider: String,
+        /// Sem esta flag o comando só lista.
+        #[arg(long)]
+        confirm: bool,
+    },
     /// Ingere candles históricos no banco.
     Ingest {
         /// Símbolo do ativo.
@@ -227,6 +239,14 @@ async fn main() -> Result<()> {
         } => {
             let config = config_with_provider(app_config, provider);
             commands::flatten::run(&config, &symbol, confirm).await
+        }
+        Commands::CancelOrders {
+            symbol,
+            provider,
+            confirm,
+        } => {
+            let config = config_with_provider(app_config, provider);
+            commands::flatten::cancel_orders(&config, &symbol, confirm).await
         }
         Commands::Ingest {
             symbol,
