@@ -21,13 +21,74 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/images.yml'
   workflow_dispatch:
+    inputs:
+      forcar_em_pregao:
+        description: 'Recriar as instancias MESMO dentro do pregao (derruba posicao aberta)'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Gate de qualidade: NENHUMA imagem e publicada sem a suite verde (A7 da
+  # auditoria de 30/08/2026). Antes disto o images.yml so compilava — um
+  # commit com teste quebrado que compilasse ia direto para producao, porque
+  # o job de deploy depende dos builds de imagem, nao do workflow de CI.
+  #
+  # Duplica o ci.yml de proposito: `needs` so enxerga jobs do MESMO workflow,
+  # e amarrar por `workflow_run` deixaria a publicacao acontecer antes do
+  # veredito. O custo e alguns minutos de runner; o beneficio e que a imagem
+  # publicada e sempre de um commit testado.
+  testes:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: trader
+          POSTGRES_PASSWORD: trader_secret
+          POSTGRES_DB: trader_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://trader:trader_secret@localhost:5432/trader_db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+
+      - name: Run migrations
+        run: sqlx migrate run --source crates/trader-infra/src/db/migrations
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets
+
   bot:
     runs-on: ubuntu-latest
+    needs: [testes]
     permissions:
       contents: read
       packages: write
@@ -119,6 +180,7 @@ jobs:
 
   gateway:
     runs-on: ubuntu-latest
+    needs: [testes]
     permissions:
       contents: read
       packages: write
@@ -157,6 +219,7 @@ jobs:
 
   scheduler:
     runs-on: ubuntu-latest
+    needs: [testes]
     permissions:
       contents: read
       packages: write
@@ -185,6 +248,7 @@ jobs:
 
   runner:
     runs-on: ubuntu-latest
+    needs: [testes]
     permissions:
       contents: read
       packages: write
@@ -210,6 +274,7 @@ jobs:
   # trader-web usa sqlx em runtime (sem macros query!), entao compila sem banco.
   web:
     runs-on: ubuntu-latest
+    needs: [testes]
     permissions:
       contents: read
       packages: write
@@ -252,12 +317,59 @@ jobs:
   # So as 11 instancias sao recriadas (--no-deps): postgres e gateway ficam de
   # pe. Fora do pregao as instancias sobem com a imagem nova e saem sozinhas
   # pela guarda de janela, ficando paradas ate as 9h25 — que e o desejado.
-  deploy:
+  # Guarda de janela (A7 da auditoria de 30/08/2026): um merge as 11h ET
+  # derrubava e recriava as 11 instancias COM POSICAO ABERTA, sem nenhuma
+  # trava. As imagens continuam sendo publicadas; o que espera o sino e a
+  # RECRIACAO dos containers.
+  #
+  # Roda num runner hospedado de proposito, e nao no self-hosted: e so uma
+  # conta de horas, e a imagem do runner do app nao tem tzdata — a checagem
+  # la dentro cairia em UTC (4h de erro) ou se bloquearia para sempre, ja que
+  # o deploy nao recria o proprio runner.
+  janela:
     needs: [bot, gateway, scheduler, runner, web]
+    if: vars.APP_DEPLOY == 'enabled'
+    runs-on: ubuntu-latest
+    outputs:
+      pode: ${{ steps.check.outputs.pode }}
+    steps:
+      - name: Estamos fora do pregao?
+        id: check
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.forcar_em_pregao }}" = "true" ]; then
+            echo "forcado pelo operador (forcar_em_pregao=true)"
+            echo "pode=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          dow=$(TZ=America/New_York date +%u)
+          # 10# forca base decimal: "0925" em contexto aritmetico seria octal.
+          hhmm=$((10#$(TZ=America/New_York date +%H%M)))
+          echo "agora em NY: $(TZ=America/New_York date '+%a %H:%M %Z')"
+
+          # Janela protegida: seg-sex, das 9h25 (quando o scheduler liga as
+          # instancias) as 16h10 ET (quando ele as para).
+          if [ "$dow" -le 5 ] && [ "$hhmm" -ge 925 ] && [ "$hhmm" -lt 1610 ]; then
+            echo "::warning::dentro do pregao (seg-sex 09:25-16:10 ET): instancias NAO serao recriadas"
+            echo "As imagens deste commit ja estao publicadas. Depois das 16h10 ET rode:"
+            echo "  gh workflow run images.yml"
+            echo "ou, para recriar agora mesmo (derruba posicao aberta):"
+            echo "  gh workflow run images.yml -f forcar_em_pregao=true"
+            echo "pode=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "fora do pregao: pode recriar"
+          echo "pode=true" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: [janela]
     # Ligado so depois do cutover (`gh variable set APP_DEPLOY --body enabled`).
     # Antes disso o runner self-hosted ainda e o antigo, do systemd, que nao tem
     # APP_DATA_DIR — sem esta trava o job falharia em todo push ate o cutover.
-    if: vars.APP_DEPLOY == 'enabled'
+    if: vars.APP_DEPLOY == 'enabled' && needs.janela.outputs.pode == 'true'
     runs-on: [self-hosted, linux, x64, home]
     steps:
       - name: Recriar instancias com a imagem nova
@@ -269,14 +381,24 @@ jobs:
                       vbr-balance avuv-balance iwm-openrev iwn-openrev
                       avuv-rangefade slyv-rangefade iwv-rangefade"
 
-          docker pull ghcr.io/drumblow/trader-bot:latest
-          docker pull ghcr.io/drumblow/trader-scheduler:latest
+          # Pin por commit (A7): `:latest` e uma tag flutuante — entre o build
+          # e este passo ela pode ter sido movida por outro push, e o deploy
+          # subiria uma imagem que ninguem escolheu. Puxamos a tag do SHA
+          # deste run e a reetiquetamos como :latest, que e o que o compose
+          # instalado no host referencia.
+          SHA=${{ github.sha }}
+          for img in trader-bot trader-scheduler; do
+            docker pull "ghcr.io/drumblow/$img:$SHA"
+            docker tag "ghcr.io/drumblow/$img:$SHA" "ghcr.io/drumblow/$img:latest"
+          done
+          echo "imagens fixadas no commit $SHA"
 
           # O painel so entra se o compose instalado no host ja o declarar —
           # o app da store pode estar uma versao atras do repositorio do bot.
           EXTRAS=""
           if docker compose -p daytradebot -f /appdata/docker-compose.yml config --services | grep -qx web; then
-            docker pull ghcr.io/drumblow/trader-web:latest
+            docker pull "ghcr.io/drumblow/trader-web:$SHA"
+            docker tag "ghcr.io/drumblow/trader-web:$SHA" ghcr.io/drumblow/trader-web:latest
             EXTRAS="web"
           fi
 
