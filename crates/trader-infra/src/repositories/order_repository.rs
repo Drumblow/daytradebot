@@ -248,7 +248,9 @@ impl SqlxOrderRepository {
                 filled_quantity = COALESCE($2, filled_quantity),
                 avg_fill_price = COALESCE($3, avg_fill_price),
                 updated_at = $4,
-                filled_at = CASE WHEN $1 = 'filled' THEN $4 ELSE filled_at END
+                filled_at = CASE WHEN $1 = 'filled' THEN $4 ELSE filled_at END,
+                cancelled_at = CASE WHEN $1 IN ('cancelled', 'rejected', 'expired')
+                                    THEN $4 ELSE cancelled_at END
             WHERE id = $5
             "#,
             status_str,

@@ -159,9 +159,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
     tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("falha ao escutar Ctrl+C");
+        wait_for_stop_signal().await;
         println!("\n🛑 Sinal de parada recebido. Encerrando paper trading...");
         shutdown_clone.store(true, Ordering::SeqCst);
     });
@@ -943,6 +941,22 @@ async fn run_live(
                         degenerate_streak,
                         "barra degenerada não consolidou; barra abandonada"
                     );
+                    // Cada barra abandonada vira evento: o cursor avança e ela
+                    // NUNCA é avaliada. Sem este registro a perda é invisível —
+                    // só dá para descobrir comparando `candles` com
+                    // `market_contexts` (foi assim que as três barras puladas
+                    // em 01–02/09/2026 apareceram).
+                    record_event(
+                        repos,
+                        "warn",
+                        "data_quality",
+                        "bar_abandoned",
+                        &format!(
+                            "{}: barra {} abandonada sem consolidar; setup deste fechamento nao foi avaliado",
+                            args.symbol, bar.timestamp
+                        ),
+                    )
+                    .await;
                     if degenerate_streak == DEGENERATE_BAR_ALERT_THRESHOLD {
                         record_event(
                             repos,
@@ -1116,9 +1130,57 @@ async fn run_live(
             // Reconciliação: posição aberta OU ordem pendente no símbolo impede
             // novo sinal. A checagem de ordens abertas evita entradas duplicadas
             // enquanto a limit de entrada do bracket não é preenchida.
-            match has_exposure(&broker, &args.symbol).await {
-                Ok(true) => {
-                    info!(symbol = %args.symbol, "exposição existente (posição ou ordem aberta); sem novo sinal");
+            match find_exposure(&broker, &args.symbol).await {
+                Ok(Exposure::None) => {
+                    live_fills.untracked_exposure_streak = 0;
+                    // Rastreamos uma entrada pendente, mas o broker não conhece
+                    // ordem nem posição no símbolo: a ordem NÃO está
+                    // trabalhando. Foi assim que a ordem 17 (VBR, 28/08/2026)
+                    // morreu — o mercado atravessou o gatilho por 35 centavos,
+                    // nada encheu, e o bot a deu por "expirada" dois candles
+                    // depois, em silêncio.
+                    if live_fills.pending_entry_at_broker() {
+                        live_fills.missing_order_streak += 1;
+                        if live_fills.missing_order_streak == MISSING_ORDER_ALERT_STREAK {
+                            let id = live_fills
+                                .open_order
+                                .as_ref()
+                                .map(|o| o.broker_order_id.clone())
+                                .unwrap_or_default();
+                            let message = format!(
+                                "ordem {id} de {} NAO esta no broker (sem ordem aberta e sem posicao) - provavel rejeicao nao detectada; a entrada nao vai executar",
+                                args.symbol
+                            );
+                            record_event(repos, "critical", "live", "order_missing", &message)
+                                .await;
+                            alerter.critical_await(&message).await;
+                        }
+                    } else {
+                        live_fills.missing_order_streak = 0;
+                    }
+                }
+                Ok(exposure) => {
+                    info!(symbol = %args.symbol, %exposure, "exposição existente; sem novo sinal");
+                    // Exposição que o bot NÃO rastreia trava o símbolo para
+                    // sempre — e em silêncio: este `break` acontece antes de
+                    // `analyze_and_execute`, que é quem grava o contexto de
+                    // mercado. Foi o que aconteceu com as duas instâncias de
+                    // IWM entre 07/08 e 03/09/2026: 18 pregões sem avaliar
+                    // nada, sem nenhum sinal disso no painel.
+                    if live_fills.tracking_nothing() {
+                        live_fills.untracked_exposure_streak += 1;
+                        if live_fills.untracked_exposure_streak == UNTRACKED_EXPOSURE_ALERT_STREAK {
+                            let message = format!(
+                                "{} BLOQUEADO: exposicao no broker que o bot nao rastreia ({exposure}) - nenhum setup sera avaliado ate limpar",
+                                args.symbol
+                            );
+                            record_event(repos, "critical", "live", "untracked_exposure", &message)
+                                .await;
+                            alerter.critical_await(&message).await;
+                        }
+                    } else {
+                        live_fills.untracked_exposure_streak = 0;
+                    }
                     last_processed = Some(candles[i].timestamp);
                     break;
                 }
@@ -1134,7 +1196,6 @@ async fn run_live(
                     .await?;
                     break;
                 }
-                Ok(false) => {}
             }
 
             // C3: sem persistência confiável o estado de risco congela —
@@ -1227,6 +1288,36 @@ impl PendingBar {
     }
 }
 
+/// Espera por um sinal de parada do sistema operacional.
+///
+/// Escutava só `ctrl_c()` — ou seja, SIGINT. Em produção quem para as
+/// instâncias é `docker stop`, que manda **SIGTERM**: ninguém tratava, o
+/// processo era morto à força depois da carência e o caminho de encerramento
+/// nunca rodava. O banco confirma: 384 eventos `live_started` e **zero**
+/// `live_stopped` em toda a vida do projeto (análise de 03/09/2026).
+async fn wait_for_stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = sigterm.recv() => {}
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "não foi possível escutar SIGTERM; só Ctrl+C encerra");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
 /// Estado do rastreamento de fills do modo live.
 #[derive(Default)]
 struct LiveFillState {
@@ -1249,6 +1340,36 @@ struct LiveFillState {
     /// ficam suspensas até o banco voltar. Sem isso o bot seguia operando com
     /// perda diária e perdas consecutivas congeladas (C3 da auditoria).
     persistence_degraded: bool,
+    /// Ciclos seguidos bloqueados por exposição que o bot não rastreia.
+    untracked_exposure_streak: u32,
+    /// Ciclos seguidos com entrada rastreada que o broker não conhece.
+    missing_order_streak: u32,
+}
+
+/// Ciclos de exposição não rastreada antes de gritar. Dois, e não um, porque
+/// logo depois de enviar um bracket a listagem do broker pode ainda não
+/// refletir o estado — mas dois candles seguidos já são anomalia.
+const UNTRACKED_EXPOSURE_ALERT_STREAK: u32 = 2;
+/// Idem para a entrada rastreada que sumiu do broker.
+const MISSING_ORDER_ALERT_STREAK: u32 = 2;
+
+impl LiveFillState {
+    /// `true` quando o bot não tem nem posição nem ordem própria em jogo —
+    /// então qualquer exposição no broker é órfã, de outra sessão ou de um
+    /// bracket que ficou para trás.
+    fn tracking_nothing(&self) -> bool {
+        !self.tracker.is_open() && self.open_order.is_none()
+    }
+
+    /// `true` quando há uma entrada rastreada que deveria estar trabalhando no
+    /// broker (ordem enviada, ainda sem fill).
+    fn pending_entry_at_broker(&self) -> bool {
+        !self.tracker.is_open()
+            && self
+                .open_order
+                .as_ref()
+                .is_some_and(|o| !o.broker_order_id.is_empty())
+    }
 }
 
 /// Expira uma entrada stop que não rompeu em `validity` candles.
@@ -1661,12 +1782,51 @@ async fn rebuild_risk_state(repos: &Repositories, symbol: &str) -> RiskState {
 }
 
 /// Verifica se já existe exposição no símbolo: posição aberta ou ordem pendente.
-async fn has_exposure<B: Broker>(broker: &B, symbol: &str) -> Result<bool, BrokerError> {
-    if broker.get_position(symbol).await?.is_some() {
-        return Ok(true);
+/// O que o broker reporta para o símbolo. Diferente de um `bool`, isto diz
+/// *o quê* está bloqueando — sem essa informação o operador não consegue agir
+/// sobre o alerta.
+enum Exposure {
+    None,
+    Position {
+        quantity: Decimal,
+        direction: Direction,
+    },
+    OpenOrders(Vec<String>),
+}
+
+impl std::fmt::Display for Exposure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "nenhuma"),
+            Self::Position {
+                quantity,
+                direction,
+            } => write!(f, "posicao {direction:?} de {quantity}"),
+            Self::OpenOrders(ids) => write!(f, "ordens abertas: {}", ids.join(", ")),
+        }
     }
-    let open_orders = broker.get_open_orders().await?;
-    Ok(open_orders.iter().any(|o| o.symbol == symbol))
+}
+
+/// Posição aberta ou ordem pendente no símbolo, com o detalhe do que é.
+async fn find_exposure<B: Broker>(broker: &B, symbol: &str) -> Result<Exposure, BrokerError> {
+    if let Some(position) = broker.get_position(symbol).await? {
+        return Ok(Exposure::Position {
+            quantity: position.quantity,
+            direction: position.direction,
+        });
+    }
+    let ids: Vec<String> = broker
+        .get_open_orders()
+        .await?
+        .iter()
+        .filter(|o| o.symbol == symbol)
+        .map(|o| o.broker_order_id.clone().unwrap_or_else(|| "?".to_string()))
+        .collect();
+    if ids.is_empty() {
+        Ok(Exposure::None)
+    } else {
+        Ok(Exposure::OpenOrders(ids))
+    }
 }
 
 /// Tentativas do envio da ordem de fechamento a mercado antes de desistir.
