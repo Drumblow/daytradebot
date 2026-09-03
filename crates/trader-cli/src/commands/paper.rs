@@ -1882,13 +1882,18 @@ async fn close_position_at_market<B: Broker>(
     // Só agora as pernas de proteção saem. Uma perna órfã que execute depois
     // abre posição invertida, que o bot ignora como "fill sem ordem
     // rastreada" — por isso a falha de cancelamento é ruidosa.
-    cancel_open_orders(broker, symbol).await;
+    cancel_protection_legs(broker, symbol, side).await;
     Ok(())
 }
 
-/// Cancela todas as ordens abertas do símbolo (pernas do bracket, entrada
-/// pendente). Melhor esforço: cada falha vira aviso, nenhuma interrompe.
-async fn cancel_open_orders<B: Broker>(broker: &B, symbol: &str) {
+/// Cancela as pernas de PROTEÇÃO do símbolo — as ordens do lado da saída
+/// (stop e alvo de uma posição long são vendas; de uma short, compras).
+///
+/// Filtrar pelo lado importa porque três símbolos rodam com duas instâncias
+/// (IWM, IWV e AVUV). Cancelar tudo do símbolo derrubava a entrada pendente da
+/// instância vizinha — que é de outra estratégia e não tem nada a ver com esta
+/// posição.
+async fn cancel_protection_legs<B: Broker>(broker: &B, symbol: &str, exit_side: OrderSide) {
     let open_orders = match broker.get_open_orders().await {
         Ok(orders) => orders,
         Err(e) => {
@@ -1896,7 +1901,10 @@ async fn cancel_open_orders<B: Broker>(broker: &B, symbol: &str) {
             return;
         }
     };
-    for order in open_orders.iter().filter(|o| o.symbol == symbol) {
+    for order in open_orders
+        .iter()
+        .filter(|o| o.symbol == symbol && o.side == exit_side)
+    {
         if let Some(broker_order_id) = &order.broker_order_id {
             let id = trader_domain::OrderId::from(broker_order_id.clone());
             if let Err(e) = broker.cancel_order(&id).await {
@@ -1959,6 +1967,24 @@ async fn flatten_session<B: Broker>(
     let Some(position) = broker.get_position(symbol).await? else {
         return Ok(false);
     };
+
+    // NUNCA fechar posição que esta instância não abriu. Três símbolos rodam
+    // com DUAS instâncias (IWM, IWV e AVUV): se as duas fizessem flatten da
+    // mesma posição, a primeira zeraria e a segunda abriria uma posição
+    // INVERTIDA do mesmo tamanho, a mercado, cinco minutos antes do sino.
+    //
+    // Posição que ninguém rastreia é problema de operação, não de automação:
+    // vira alerta crítico e espera decisão humana. É o caso do IWM, que
+    // carrega 827 ações órfãs desde 07/08/2026.
+    if !state.tracker.is_open() {
+        let message = format!(
+            "{symbol}: posicao de {} no broker que esta instancia NAO rastreia - flatten de fim de sessao NAO executado, intervencao manual necessaria",
+            position.quantity
+        );
+        record_event(repos, "critical", "live", "untracked_position", &message).await;
+        alerter.critical_await(&message).await;
+        return Ok(false);
+    }
 
     state.flatten_triggered = true;
     if let Err(e) = close_position_at_market(broker, symbol, &position).await {
