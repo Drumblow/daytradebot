@@ -35,6 +35,21 @@ enum Commands {
         #[arg(long, default_value = "simulated")]
         provider: String,
     },
+    /// Encerra MANUALMENTE uma posição aberta no broker (conta paper).
+    ///
+    /// Para posição que nenhuma instância rastreia — o flatten automático de
+    /// fim de sessão, de proposito, so fecha o que a propria instancia abriu.
+    Flatten {
+        /// Símbolo a zerar.
+        #[arg(short, long)]
+        symbol: String,
+        /// Provedor.
+        #[arg(long, default_value = "simulated")]
+        provider: String,
+        /// Sem esta flag o comando só mostra o que faria.
+        #[arg(long)]
+        confirm: bool,
+    },
     /// Ingere candles históricos no banco.
     Ingest {
         /// Símbolo do ativo.
@@ -204,6 +219,14 @@ async fn main() -> Result<()> {
         Commands::Account { provider } => {
             let config = config_with_provider(app_config, provider);
             commands::account::run(&config).await
+        }
+        Commands::Flatten {
+            symbol,
+            provider,
+            confirm,
+        } => {
+            let config = config_with_provider(app_config, provider);
+            commands::flatten::run(&config, &symbol, confirm).await
         }
         Commands::Ingest {
             symbol,

@@ -25,6 +25,17 @@ on:
           - logs-gateway
           - exposicao
           - logs-instancia
+          - flatten
+      simbolo:
+        description: 'Simbolo para flatten (ex.: IWM)'
+        required: false
+        type: string
+        default: ''
+      confirmar:
+        description: 'flatten: marque para ENVIAR a ordem de verdade'
+        required: false
+        type: boolean
+        default: false
       instancia:
         description: 'Nome da instancia para logs-instancia (ex.: iwm-pullback)'
         required: false
@@ -62,6 +73,23 @@ jobs:
               # existente; sem novo sinal", que interrompe o ciclo antes de
               # gravar o contexto de mercado.
               docker logs "daytradebot_${{ inputs.instancia }}_1" --tail 150
+              ;;
+
+            flatten)
+              # Encerramento MANUAL de posicao no broker. Existe para o que a
+              # automacao nao resolve de proposito: posicao que nenhuma
+              # instancia rastreia (o flatten de fim de sessao so fecha o que a
+              # propria instancia abriu).
+              #
+              # Sem `confirmar`, o comando apenas mostra o que faria — o proprio
+              # binario recusa executar sem --confirm.
+              if [ -z "${{ inputs.simbolo }}" ]; then
+                echo "ERRO: informe o simbolo" >&2
+                exit 1
+              fi
+              CONFIRM=""
+              if [ "${{ inputs.confirmar }}" = "true" ]; then CONFIRM="--confirm"; fi
+              docker run --rm --network host -e TRADER__IBKR__HOST=127.0.0.1 -e TRADER__IBKR__PORT=4002 -e TRADER__IBKR__CLIENT_ID=96 --entrypoint /opt/trader/bin/trader-cli ghcr.io/drumblow/trader-bot:latest flatten --provider ibkr --symbol "${{ inputs.simbolo }}" $CONFIRM
               ;;
 
             exposicao)
