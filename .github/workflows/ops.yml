@@ -76,7 +76,11 @@ jobs:
               #
               # client_id 97 e proposital: as instancias usam 1..11 (e 101..111
               # no adapter do broker), entao 97 nao colide com sessao viva.
-              docker run --rm --network host                 -e TRADER_PROVIDER=ibkr                 -e TRADER__IBKR__HOST=127.0.0.1                 -e TRADER__IBKR__PORT=4002                 -e TRADER__IBKR__CLIENT_ID=97                 --entrypoint /opt/trader/bin/trader-cli                 ghcr.io/drumblow/trader-bot:latest account
+              #
+              # `--provider ibkr` e obrigatorio: o flag tem default "simulated"
+              # e sobrescreve TRADER_PROVIDER, entao sem ele o comando responde
+              # com a conta simulada e o diagnostico fica inutil.
+              docker run --rm --network host                 -e TRADER_PROVIDER=ibkr                 -e TRADER__IBKR__HOST=127.0.0.1                 -e TRADER__IBKR__PORT=4002                 -e TRADER__IBKR__CLIENT_ID=97                 --entrypoint /opt/trader/bin/trader-cli                 ghcr.io/drumblow/trader-bot:latest account --provider ibkr
               ;;
           esac
 
