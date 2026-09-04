@@ -84,6 +84,12 @@ pub struct SimulatedBrokerConfig {
     pub account_id: Option<String>,
     pub initial_cash: Decimal,
     pub commission_per_trade: Decimal,
+    /// Slippage como FRAÇÃO do preço: `0.001` = 0,1%.
+    ///
+    /// Já foi lido como "percentual" e dividido por 100 na aplicação, o que
+    /// tornava o custo efetivo 0,001% — cem vezes menor do que a configuração
+    /// dizia (A4 da auditoria de 30/08/2026). O teste
+    /// `slippage_efetivo_e_a_fracao_configurada` trava a semântica.
     pub slippage_pct: Decimal,
     /// Candles de validade de uma entrada stop aguardando o rompimento.
     pub entry_validity_candles: u32,
@@ -101,7 +107,7 @@ impl Default for SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
             commission_per_trade: Decimal::from(35) / Decimal::from(100), // $0.35
-            slippage_pct: Decimal::from(1) / Decimal::from(1000),         // 0.1%
+            slippage_pct: Decimal::from(2) / Decimal::from(10_000),       // 2 bp (0,02%)
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100), // 25%
         }
@@ -276,11 +282,8 @@ impl SimulatedBroker {
                     "entrada stop invalidada: abertura além do gatilho excede a tolerância de overshoot"
                 );
             } else {
-                let slippage_factor = Decimal::ONE + self.config.slippage_pct / Decimal::from(100);
-                let fill_price = match entry.direction {
-                    Direction::Long => fill_base * slippage_factor,
-                    Direction::Short => fill_base / slippage_factor,
-                };
+                let fill_price =
+                    apply_slippage(fill_base, entry.direction, true, self.config.slippage_pct);
                 let commission = self.config.commission_per_trade;
 
                 match Position::new(
@@ -348,21 +351,38 @@ impl SimulatedBroker {
         if let Some(exit) = state.pending_exits.get(symbol).cloned() {
             // Pior caso primeiro: stop antes do alvo quando ambos são
             // tocados no mesmo candle.
+            // As entradas ganharam modelagem de gap no ADR-015; as saídas
+            // enchiam no preço exato do nível, como se o mercado sempre
+            // parasse ali (A4 da auditoria). Agora:
+            //   - STOP vira ordem a mercado ao ser tocado: se o candle ABRE
+            //     além dele, o fill é na abertura (pior), e ainda leva
+            //     slippage;
+            //   - ALVO é ordem limite: um gap além dele enche na abertura
+            //     (melhor — foi o que aconteceu no trade 11, IWO 13/08/2026),
+            //     e limite não sofre slippage.
             let hit = match direction {
                 Some(Direction::Long) => {
                     if candle.low <= exit.stop_price {
-                        Some((exit.stop_price, ExitReason::Stop))
+                        let base = candle.open.min(exit.stop_price);
+                        Some((
+                            apply_slippage(base, Direction::Long, false, self.config.slippage_pct),
+                            ExitReason::Stop,
+                        ))
                     } else if candle.high >= exit.target_price {
-                        Some((exit.target_price, ExitReason::Target))
+                        Some((candle.open.max(exit.target_price), ExitReason::Target))
                     } else {
                         None
                     }
                 }
                 Some(Direction::Short) => {
                     if candle.high >= exit.stop_price {
-                        Some((exit.stop_price, ExitReason::Stop))
+                        let base = candle.open.max(exit.stop_price);
+                        Some((
+                            apply_slippage(base, Direction::Short, false, self.config.slippage_pct),
+                            ExitReason::Stop,
+                        ))
                     } else if candle.low <= exit.target_price {
-                        Some((exit.target_price, ExitReason::Target))
+                        Some((candle.open.min(exit.target_price), ExitReason::Target))
                     } else {
                         None
                     }
@@ -422,6 +442,10 @@ impl SimulatedBroker {
             return false;
         };
         state.pending_exits.remove(symbol);
+
+        // Saída ativa é execução a mercado: escorrega contra o trader, como
+        // a entrada e o stop (A4 da auditoria).
+        let price = apply_slippage(price, position.direction, false, self.config.slippage_pct);
 
         if let Some(trade) =
             close_position_to_trade(&position, price, reason, &self.config, state.now)
@@ -506,7 +530,7 @@ impl Broker for SimulatedBroker {
         };
 
         // Aplica slippage contra o trader: entrada pior para long, melhor para short.
-        let slippage_factor = Decimal::ONE + self.config.slippage_pct / Decimal::from(100);
+        let slippage_factor = Decimal::ONE + self.config.slippage_pct;
         let fill_price = match direction {
             Direction::Long => base_price * slippage_factor,
             Direction::Short => base_price / slippage_factor,
@@ -721,6 +745,32 @@ impl Broker for SimulatedBroker {
         Ok(SubscriptionHandle {
             id: "simulated-orders".to_string(),
         })
+    }
+}
+
+/// Aplica slippage SEMPRE contra o trader.
+///
+/// `slippage` é fração do preço (`0.001` = 0,1%). Numa ENTRADA, comprar sai
+/// mais caro e vender a descoberto sai mais barato; numa SAÍDA é o espelho:
+/// vender (fechar long) sai mais barato, cobrir short sai mais caro.
+///
+/// Vale só para execução a mercado — stop acionado e fechamento ativo. Ordem
+/// limite (o alvo) não escorrega: ou enche no preço, ou não enche.
+fn apply_slippage(
+    price: Decimal,
+    direction: Direction,
+    is_entry: bool,
+    slippage: Decimal,
+) -> Decimal {
+    let factor = Decimal::ONE + slippage;
+    let compra = matches!(
+        (direction, is_entry),
+        (Direction::Long, true) | (Direction::Short, false)
+    );
+    if compra {
+        price * factor
+    } else {
+        price / factor
     }
 }
 
@@ -1049,6 +1099,102 @@ mod tests {
             broker.get_account_summary().await.unwrap().equity,
             Decimal::from(100_050)
         );
+    }
+
+    /// Trava a semântica do slippage: `0.001` significa 0,1% do preço, não
+    /// 0,001%. A configuração dizia "0,1%" e a aplicação dividia por 100 de
+    /// novo — o custo efetivo era cem vezes menor (A4 da auditoria).
+    #[test]
+    fn slippage_efetivo_e_a_fracao_configurada() {
+        let um_decimo_de_por_cento = Decimal::from(1) / Decimal::from(1000);
+        // Compra de entrada long a 100 paga 100,10 — não 100,001.
+        assert_eq!(
+            apply_slippage(
+                Decimal::from(100),
+                Direction::Long,
+                true,
+                um_decimo_de_por_cento
+            ),
+            Decimal::from(1001) / Decimal::from(10)
+        );
+    }
+
+    /// O slippage nunca ajuda: sai contra o trader nos quatro casos.
+    #[test]
+    fn slippage_sempre_contra_o_trader() {
+        let sl = Decimal::from(1) / Decimal::from(100); // 1%
+        let p = Decimal::from(100);
+        // Entradas
+        assert!(
+            apply_slippage(p, Direction::Long, true, sl) > p,
+            "long entra mais caro"
+        );
+        assert!(
+            apply_slippage(p, Direction::Short, true, sl) < p,
+            "short entra mais barato"
+        );
+        // Saídas
+        assert!(
+            apply_slippage(p, Direction::Long, false, sl) < p,
+            "long sai mais barato"
+        );
+        assert!(
+            apply_slippage(p, Direction::Short, false, sl) > p,
+            "short cobre mais caro"
+        );
+    }
+
+    /// Candle que ABRE além do stop enche na abertura, não no stop: as
+    /// entradas ganharam modelagem de gap no ADR-015 e as saídas não tinham.
+    #[tokio::test]
+    async fn stop_com_gap_enche_na_abertura_e_nao_no_stop() {
+        let broker = SimulatedBroker::new(zero_cost_config(100_000, Decimal::ZERO));
+        broker
+            .place_order(directional_bracket(
+                "SPY",
+                OrderSide::Buy,
+                Decimal::from(10),
+                Decimal::from(100),
+                Decimal::from(95),
+                Decimal::from(110),
+            ))
+            .await
+            .unwrap();
+        // Abre em 90, cinco abaixo do stop de 95.
+        broker.set_market_candle("SPY", &candle("SPY", 90, 91, 89, 90));
+
+        let trades = broker.get_closed_trades();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].exit_reason, ExitReason::Stop);
+        assert_eq!(
+            trades[0].exit_price,
+            Decimal::from(90),
+            "deveria encher na abertura (90), não no stop (95)"
+        );
+    }
+
+    /// Espelho do gap no alvo: ordem limite além do preço enche melhor —
+    /// foi o que aconteceu de verdade no trade 11 (IWO, 13/08/2026).
+    #[tokio::test]
+    async fn alvo_com_gap_enche_na_abertura_melhor() {
+        let broker = SimulatedBroker::new(zero_cost_config(100_000, Decimal::ZERO));
+        broker
+            .place_order(directional_bracket(
+                "SPY",
+                OrderSide::Buy,
+                Decimal::from(10),
+                Decimal::from(100),
+                Decimal::from(95),
+                Decimal::from(110),
+            ))
+            .await
+            .unwrap();
+        broker.set_market_candle("SPY", &candle("SPY", 115, 116, 114, 115));
+
+        let trades = broker.get_closed_trades();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].exit_reason, ExitReason::Target);
+        assert_eq!(trades[0].exit_price, Decimal::from(115));
     }
 
     #[tokio::test]

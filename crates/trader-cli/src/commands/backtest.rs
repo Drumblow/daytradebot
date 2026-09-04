@@ -27,6 +27,13 @@ pub struct Args {
     pub allow_synthetic: bool,
     /// Caminho opcional para exportar o relatório em JSON.
     pub output: Option<String>,
+    /// Slippage por execução, em pontos-base do preço (1 bp = 0,01%).
+    ///
+    /// Existe para CALIBRAR, não para embelezar: o custo de execução destas
+    /// estratégias é da mesma ordem de grandeza do risco por trade (stops de
+    /// ~0,13% do preço), então o resultado é muito sensível a ele. Varie e
+    /// veja onde o PF cruza 1 antes de acreditar em qualquer backtest.
+    pub slippage_bps: Option<u32>,
 }
 
 /// Executa um backtest da estratégia solicitada.
@@ -104,7 +111,12 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         symbol: args.symbol.clone(),
         initial_capital: Decimal::from(100_000),
         commission_per_trade: Decimal::from(35) / Decimal::from(100),
-        slippage_pct: Decimal::from(1) / Decimal::from(1000),
+        slippage_pct: match args.slippage_bps {
+            Some(bps) => Decimal::from(bps) / Decimal::from(10_000),
+            // 2 bp — ver a justificativa da calibracao em
+            // trader-backtest/src/engine.rs.
+            None => Decimal::from(2) / Decimal::from(10_000),
+        },
         entry_validity_candles: strategy.entry_validity_candles() as u32,
         time_exit: strategy.time_exit(),
     };

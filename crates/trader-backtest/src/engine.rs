@@ -37,7 +37,14 @@ impl Default for BacktestConfig {
             symbol: "SPY".to_string(),
             initial_capital: Decimal::from(100_000),
             commission_per_trade: Decimal::from(35) / Decimal::from(100),
-            slippage_pct: Decimal::from(1) / Decimal::from(1000), // 0.1%
+            // 2 bp (0,02%). Calibrado, nao chutado: os pares operados sao
+            // ETFs cotados entre $120 e $435, onde 1 centavo de spread vale
+            // 0,23 a 0,83 bp. 2 bp cobre cerca de um spread cheio nos nomes
+            // mais caros de negociar (AVUV, SLYV) e e conservador nos demais.
+            // O valor antigo, 0,1%, seria de 12 a 43 centavos por execucao —
+            // irreal para estes ativos, e sozinho levava o portfolio de
+            // +33k para -40k em 18 meses.
+            slippage_pct: Decimal::from(2) / Decimal::from(10_000),
             entry_validity_candles: 1,
             time_exit: None,
         }

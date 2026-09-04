@@ -116,6 +116,9 @@ enum Commands {
         /// Exporta o relatório em JSON para o caminho indicado.
         #[arg(short, long)]
         output: Option<String>,
+        /// Slippage por execução em pontos-base (1 bp = 0,01%). Padrão: 10 bp.
+        #[arg(long)]
+        slippage_bps: Option<u32>,
     },
     /// Validação walk-forward out-of-sample sobre dados reais do banco.
     Walkforward {
@@ -291,6 +294,7 @@ async fn main() -> Result<()> {
             timeframe,
             allow_synthetic,
             output,
+            slippage_bps,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -309,6 +313,7 @@ async fn main() -> Result<()> {
                     timeframe: timeframe.into(),
                     allow_synthetic,
                     output,
+                    slippage_bps,
                 },
             )
             .await
