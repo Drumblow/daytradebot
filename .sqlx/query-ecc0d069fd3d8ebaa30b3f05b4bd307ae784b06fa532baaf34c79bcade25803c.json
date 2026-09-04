@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                r.id,\n                a.symbol,\n                r.strategy_version,\n                r.config_hash,\n                r.timeframe,\n                r.period_start,\n                r.period_end,\n                r.final_equity,\n                r.metrics as \"metrics!: serde_json::Value\",\n                r.label,\n                r.created_at\n            FROM backtest_runs r\n            JOIN assets a ON a.id = r.asset_id\n            WHERE r.strategy_id = $1\n            ORDER BY r.created_at DESC\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "strategy_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "config_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "timeframe",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "period_start",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "period_end",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "final_equity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "metrics!: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "ecc0d069fd3d8ebaa30b3f05b4bd307ae784b06fa532baaf34c79bcade25803c"
+}

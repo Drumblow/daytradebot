@@ -137,7 +137,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     // também pode sobrescrever o risco por trade (ex.: 0,5% do failure test).
     // Compartilhado com o backtest para garantir paridade de validação.
     let risk_config =
-        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params());
+        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
 
     let broker = SimulatedBroker::new(SimulatedBrokerConfig {
         account_id: Some("DU_SIM".to_string()),
@@ -2286,11 +2286,39 @@ async fn ensure_stop_protection<B: Broker>(
     // A perna de proteção é uma STP do lado CONTRÁRIO à posição. O lado
     // distingue a proteção do parent de entrada stop, que é do mesmo lado da
     // posição e pode continuar trabalhando num fill parcial.
-    let protected = orders
+    let protecao = orders
         .iter()
-        .any(|o| o.symbol == symbol && o.order_type == OrderType::Stop && o.side == exit_side);
-    if protected {
+        .find(|o| o.symbol == symbol && o.order_type == OrderType::Stop && o.side == exit_side);
+
+    if let Some(stop_leg) = protecao {
         state.unprotected_streak = 0;
+
+        // FILL PARCIAL. As pernas do bracket saem com a quantidade CHEIA da
+        // ordem. Se a entrada encher só em parte, o stop protege mais ações do
+        // que a conta tem: quando ele dispara, vende o que existe E abre
+        // posição invertida no resto. O contrário — stop cobrindo menos que a
+        // posição — deixa o excedente nu.
+        //
+        // Não dá para corrigir isso aqui sem arriscar cancelar a proteção que
+        // está funcionando, então a regra é gritar: quantidade divergente é
+        // intervenção humana, com o número exato dos dois lados.
+        if stop_leg.quantity != position.quantity {
+            let message = format!(
+                "{symbol}: PROTECAO COM QUANTIDADE ERRADA - posicao {} x stop {} (provavel fill parcial); disparo do stop deixaria {} acoes descobertas ou invertidas",
+                position.quantity,
+                stop_leg.quantity,
+                (stop_leg.quantity - position.quantity).abs()
+            );
+            record_event(
+                repos,
+                "critical",
+                "live",
+                "protection_quantity_mismatch",
+                &message,
+            )
+            .await;
+            alerter.critical_await(&message).await;
+        }
         return;
     }
 

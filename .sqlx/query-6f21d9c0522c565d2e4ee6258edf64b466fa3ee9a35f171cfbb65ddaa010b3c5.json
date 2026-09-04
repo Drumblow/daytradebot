@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO assets (symbol, name, asset_type, exchange, currency, tick_size, lot_size, sector, is_active)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            ON CONFLICT (symbol) DO UPDATE SET\n                name = EXCLUDED.name,\n                asset_type = EXCLUDED.asset_type,\n                exchange = EXCLUDED.exchange,\n                currency = EXCLUDED.currency,\n                tick_size = EXCLUDED.tick_size,\n                lot_size = EXCLUDED.lot_size,\n                sector = EXCLUDED.sector,\n                is_active = EXCLUDED.is_active,\n                updated_at = NOW()\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Numeric",
+        "Numeric",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6f21d9c0522c565d2e4ee6258edf64b466fa3ee9a35f171cfbb65ddaa010b3c5"
+}

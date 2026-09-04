@@ -7,7 +7,9 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use tracing::{debug, warn};
 
-use trader_domain::{MarketContext, Quote, RejectionReason, Signal, TradingMode, VolatilityRegime};
+use trader_domain::{
+    Direction, MarketContext, Quote, RejectionReason, Signal, TradingMode, VolatilityRegime,
+};
 
 /// Configuração de risco.
 #[derive(Debug, Clone, Copy)]
@@ -191,6 +193,24 @@ impl RiskManager {
                     ),
                 );
             }
+        }
+
+        // Lado do stop e do alvo. O cálculo abaixo usa distâncias ABSOLUTAS,
+        // então um sinal long com stop ACIMA da entrada passava por todos os
+        // filtros e virava um bracket que estopa no instante seguinte. Barato
+        // de checar, caro de descobrir em produção.
+        let lados_ok = match signal.direction {
+            Direction::Long => stop < entry && entry < target,
+            Direction::Short => target < entry && entry < stop,
+        };
+        if !lados_ok {
+            return RiskCheck::Rejected(
+                RejectionReason::StopMissing,
+                format!(
+                    "stop/alvo do lado errado para {:?}: entrada {entry}, stop {stop}, alvo {target}",
+                    signal.direction
+                ),
+            );
         }
 
         // Risco/retorno.
@@ -425,6 +445,49 @@ mod tests {
             RiskCheck::Rejected(RejectionReason::PoorRiskReward, _) => {}
             other => panic!("esperado rejeição por risco/retorno, obtido {:?}", other),
         }
+    }
+
+    /// O cálculo de risco usa distâncias absolutas: sem esta checagem, um long
+    /// com stop ACIMA da entrada passa por todos os filtros e vira um bracket
+    /// que estopa no instante seguinte.
+    #[test]
+    fn rejeita_stop_e_alvo_do_lado_errado() {
+        let manager = RiskManager::new(RiskConfig::default());
+        let ctx = make_context(within_trading_hours());
+        let state = RiskState::default();
+
+        // Long invertido: stop acima da entrada, alvo abaixo.
+        let mut sinal = make_signal(Decimal::from(100), Decimal::from(105), Decimal::from(90));
+        sinal.direction = Direction::Long;
+        assert!(
+            matches!(
+                manager.validate(&sinal, &ctx, None, &state, Decimal::from(100_000)),
+                RiskCheck::Rejected(RejectionReason::StopMissing, _)
+            ),
+            "long invertido deveria ser recusado"
+        );
+
+        // Short invertido: stop abaixo da entrada.
+        let mut curto = make_signal(Decimal::from(100), Decimal::from(95), Decimal::from(110));
+        curto.direction = Direction::Short;
+        assert!(
+            matches!(
+                manager.validate(&curto, &ctx, None, &state, Decimal::from(100_000)),
+                RiskCheck::Rejected(RejectionReason::StopMissing, _)
+            ),
+            "short invertido deveria ser recusado"
+        );
+
+        // Short correto (stop acima, alvo abaixo) NÃO pode ser recusado por lado.
+        let mut ok = make_signal(Decimal::from(100), Decimal::from(105), Decimal::from(90));
+        ok.direction = Direction::Short;
+        assert!(
+            !matches!(
+                manager.validate(&ok, &ctx, None, &state, Decimal::from(100_000)),
+                RiskCheck::Rejected(RejectionReason::StopMissing, _)
+            ),
+            "short correto não deveria falhar na checagem de lado"
+        );
     }
 
     #[test]

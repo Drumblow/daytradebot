@@ -1,0 +1,142 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                s.id,\n                a.symbol,\n                s.strategy_id,\n                s.strategy_version,\n                s.config_hash,\n                s.timeframe,\n                s.timestamp,\n                s.direction,\n                s.status,\n                s.entry_price,\n                s.stop_price,\n                s.target_price,\n                s.risk_reward_ratio,\n                s.risk_amount,\n                s.risk_percent,\n                s.position_size,\n                s.entry_reason,\n                s.rejection_reason,\n                s.rejection_details,\n                s.market_snapshot as \"market_snapshot!: serde_json::Value\",\n                s.correlation_id\n            FROM signals s\n            JOIN assets a ON a.id = s.asset_id\n            WHERE s.id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "strategy_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "strategy_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "config_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "timeframe",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "direction",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "entry_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 10,
+        "name": "stop_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 11,
+        "name": "target_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 12,
+        "name": "risk_reward_ratio",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 13,
+        "name": "risk_amount",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 14,
+        "name": "risk_percent",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 15,
+        "name": "position_size",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 16,
+        "name": "entry_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "rejection_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "rejection_details",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 19,
+        "name": "market_snapshot!: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 20,
+        "name": "correlation_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "85784a24f6fe8b6c75a3d059a58a45b50b98b5d6a45eebb211c98ef746d3ca83"
+}

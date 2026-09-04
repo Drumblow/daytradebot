@@ -155,26 +155,49 @@ impl From<&BreakoutParams> for StrategyRiskParams {
 /// Monta o `RiskConfig` a partir da configuração da aplicação (`[risk]`) e
 /// dos parâmetros da estratégia (RR, spread, ATR e horário vêm dela; o risco
 /// por trade pode ser sobrescrito por ela — ex.: 0,5% do failure test).
-pub fn build_risk_config(risk: &RiskSettings, params: &StrategyRiskParams) -> RiskConfig {
-    RiskConfig {
+/// Monta a `RiskConfig` a partir da config da aplicação e da estratégia.
+///
+/// FALHA FECHADO. Antes, valor inválido virava o padrão em silêncio: um `NaN`
+/// no percentual de risco ou um typo no horário (`"9:30"`, `"09:3O"`) fazia o
+/// bot subir com a janela de negociação errada e ninguém ficava sabendo. Um
+/// limite de risco que o operador acha que configurou, mas que não está
+/// valendo, é pior do que não ter limite nenhum.
+pub fn build_risk_config(
+    risk: &RiskSettings,
+    params: &StrategyRiskParams,
+) -> anyhow::Result<RiskConfig> {
+    let pct = |nome: &str, v: f64| -> anyhow::Result<Decimal> {
+        Decimal::from_f64_retain(v).ok_or_else(|| anyhow::anyhow!("[risk].{nome} inválido: {v}"))
+    };
+
+    let risk_per_trade_pct = match params.risk_per_trade_pct {
+        Some(v) => v,
+        None => pct("risk_per_trade_pct", risk.risk_per_trade_pct)?,
+    };
+
+    let hora = |nome: &str, v: &str| -> anyhow::Result<(u32, u32, u32)> {
+        parse_time(v).ok_or_else(|| {
+            anyhow::anyhow!("{nome} inválido: {v:?} (esperado \"HH:MM:SS\" em horário de NY)")
+        })
+    };
+
+    Ok(RiskConfig {
         trading_mode: TradingMode::Paper,
-        risk_per_trade_pct: params
-            .risk_per_trade_pct
-            .or_else(|| Decimal::from_f64_retain(risk.risk_per_trade_pct))
-            .unwrap_or(Decimal::ONE),
-        max_daily_loss_pct: Decimal::from_f64_retain(risk.max_daily_loss_pct)
-            .unwrap_or(Decimal::from(2)),
+        risk_per_trade_pct,
+        max_daily_loss_pct: pct("max_daily_loss_pct", risk.max_daily_loss_pct)?,
         max_trades_per_day: risk.max_trades_per_day,
         max_consecutive_losses: risk.max_consecutive_losses,
         min_risk_reward: params.min_risk_reward,
         max_spread_pct: params.max_spread_pct,
         max_atr_pct: params.max_atr_pct,
         // Horário de NOVA YORK (A2): os TOMLs declaram a janela em ET.
-        trading_start_time_et: parse_time(&params.trading_start_time).unwrap_or((9, 30, 0)),
-        trading_end_time_et: parse_time(&params.trading_end_time).unwrap_or((16, 0, 0)),
-        entry_overshoot_tolerance: Decimal::from_f64_retain(risk.entry_overshoot_tolerance)
-            .unwrap_or_else(|| Decimal::from(25) / Decimal::from(100)),
-    }
+        trading_start_time_et: hora("trading_start_time", &params.trading_start_time)?,
+        trading_end_time_et: hora("trading_end_time", &params.trading_end_time)?,
+        entry_overshoot_tolerance: pct(
+            "entry_overshoot_tolerance",
+            risk.entry_overshoot_tolerance,
+        )?,
+    })
 }
 
 /// Faz parse de "HH:MM:SS" para uma tupla (h, m, s).
@@ -210,6 +233,32 @@ mod tests {
         }
     }
 
+    /// Config inválida tem que DERRUBAR o boot, não virar o padrão. Um limite
+    /// que o operador acha que configurou, mas que não está valendo, é pior do
+    /// que não ter limite.
+    #[test]
+    fn config_invalida_falha_fechado() {
+        let params = PullbackTrendV1Config::default().strategy.parameters;
+
+        let mut horario_errado = StrategyRiskParams::from(&params);
+        horario_errado.trading_start_time = "9:3O:00".to_string(); // letra O no lugar do zero
+        let erro = build_risk_config(&risk_settings(), &horario_errado)
+            .expect_err("horário inválido deveria falhar");
+        assert!(
+            erro.to_string().contains("trading_start_time"),
+            "erro deveria nomear o campo: {erro}"
+        );
+
+        let mut risco_nan = risk_settings();
+        risco_nan.max_daily_loss_pct = f64::NAN;
+        let erro = build_risk_config(&risco_nan, &StrategyRiskParams::from(&params))
+            .expect_err("NaN deveria falhar");
+        assert!(
+            erro.to_string().contains("max_daily_loss_pct"),
+            "erro deveria nomear o campo: {erro}"
+        );
+    }
+
     #[test]
     fn parses_hh_mm_ss() {
         assert_eq!(parse_time("09:30:00"), Some((9, 30, 0)));
@@ -220,14 +269,16 @@ mod tests {
     #[test]
     fn pullback_uses_global_risk_per_trade() {
         let params = PullbackTrendV1Config::default().strategy.parameters;
-        let config = build_risk_config(&risk_settings(), &StrategyRiskParams::from(&params));
+        let config = build_risk_config(&risk_settings(), &StrategyRiskParams::from(&params))
+            .expect("config válida");
         assert_eq!(config.risk_per_trade_pct, Decimal::ONE);
     }
 
     #[test]
     fn failure_test_overrides_risk_per_trade_with_half_percent() {
         let params = FailureTestLongV1Config::default().strategy.parameters;
-        let config = build_risk_config(&risk_settings(), &StrategyRiskParams::from(&params));
+        let config = build_risk_config(&risk_settings(), &StrategyRiskParams::from(&params))
+            .expect("config válida");
         assert_eq!(
             config.risk_per_trade_pct,
             Decimal::from(5) / Decimal::from(10)

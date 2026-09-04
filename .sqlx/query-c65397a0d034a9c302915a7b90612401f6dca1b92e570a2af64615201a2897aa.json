@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, symbol, name, asset_type, exchange, currency, tick_size, lot_size, sector, is_active\n            FROM assets\n            WHERE symbol = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "asset_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "exchange",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "currency",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "tick_size",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "lot_size",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "sector",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "is_active",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "c65397a0d034a9c302915a7b90612401f6dca1b92e570a2af64615201a2897aa"
+}

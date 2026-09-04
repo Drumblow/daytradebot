@@ -1,0 +1,127 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                mc.asset_id,\n                a.symbol,\n                mc.timeframe,\n                mc.timestamp,\n                mc.trend_state,\n                mc.volatility_regime,\n                mc.market_phase,\n                mc.ema_20,\n                mc.ema_50,\n                mc.sma_200,\n                mc.atr_14,\n                mc.atr_percent_14,\n                mc.volume_relative,\n                mc.hh_hl_count,\n                mc.lh_ll_count,\n                mc.range_percent,\n                mc.is_tradeable,\n                mc.raw_values as \"raw_values!: serde_json::Value\"\n            FROM market_contexts mc\n            JOIN assets a ON a.id = mc.asset_id\n            WHERE a.symbol = $1 AND mc.timeframe = $2 AND mc.timestamp >= $3 AND mc.timestamp <= $4\n            ORDER BY mc.timestamp ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "asset_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "timeframe",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "trend_state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "volatility_regime",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "market_phase",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "ema_20",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "ema_50",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 9,
+        "name": "sma_200",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 10,
+        "name": "atr_14",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 11,
+        "name": "atr_percent_14",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 12,
+        "name": "volume_relative",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 13,
+        "name": "hh_hl_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "lh_ll_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "range_percent",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 16,
+        "name": "is_tradeable",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 17,
+        "name": "raw_values!: serde_json::Value",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "932eeb6165aa785e5b6a0e2fec14f5ad1576bb5f2047bfa273970ef0287989c6"
+}

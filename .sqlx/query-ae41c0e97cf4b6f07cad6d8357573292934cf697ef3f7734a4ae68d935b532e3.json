@@ -1,0 +1,85 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                a.symbol as symbol,\n                c.timeframe as timeframe,\n                c.timestamp as timestamp,\n                c.open as open,\n                c.high as high,\n                c.low as low,\n                c.close as close,\n                c.volume as volume,\n                c.vwap as vwap,\n                c.source as source,\n                c.is_complete as is_complete\n            FROM candles c\n            JOIN assets a ON a.id = c.asset_id\n            WHERE a.symbol = $1 AND c.timeframe = $2 AND c.timestamp >= $3 AND c.timestamp <= $4\n            ORDER BY c.timestamp ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "timeframe",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "open",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 4,
+        "name": "high",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 5,
+        "name": "low",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "close",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "volume",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "vwap",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 9,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "is_complete",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "ae41c0e97cf4b6f07cad6d8357573292934cf697ef3f7734a4ae68d935b532e3"
+}

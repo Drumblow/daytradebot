@@ -1,0 +1,160 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                t.id,\n                a.symbol,\n                t.signal_id,\n                t.position_id,\n                t.direction,\n                t.entry_price,\n                t.exit_price,\n                t.quantity,\n                t.entry_time,\n                t.exit_time,\n                t.stop_price,\n                t.target_price,\n                t.gross_pnl,\n                t.commissions,\n                t.fees,\n                t.net_pnl,\n                t.risk_amount,\n                t.result_in_r,\n                t.exit_reason,\n                t.strategy_id,\n                t.strategy_version,\n                t.config_hash,\n                t.journal as \"journal!: serde_json::Value\",\n                t.correlation_id\n            FROM trades t\n            JOIN assets a ON a.id = t.asset_id\n            WHERE t.id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "signal_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "position_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "direction",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "entry_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "exit_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "quantity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "entry_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "exit_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "stop_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 11,
+        "name": "target_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 12,
+        "name": "gross_pnl",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 13,
+        "name": "commissions",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 14,
+        "name": "fees",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 15,
+        "name": "net_pnl",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 16,
+        "name": "risk_amount",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 17,
+        "name": "result_in_r",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 18,
+        "name": "exit_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "strategy_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "strategy_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "config_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 22,
+        "name": "journal!: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 23,
+        "name": "correlation_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fc59c520d20ab6690247f04847b06ff57b316365a726cd4d51686ed8687383a0"
+}

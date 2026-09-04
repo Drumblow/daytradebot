@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE orders\n            SET status = $1,\n                filled_quantity = COALESCE($2, filled_quantity),\n                avg_fill_price = COALESCE($3, avg_fill_price),\n                updated_at = $4,\n                filled_at = CASE WHEN $1 = 'filled' THEN $4 ELSE filled_at END,\n                cancelled_at = CASE WHEN $1 IN ('cancelled', 'rejected', 'expired')\n                                    THEN $4 ELSE cancelled_at END\n            WHERE id = $5\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Numeric",
+        "Numeric",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4160eee9b3c267e7fd4970e82f487dcdd6a6405796e78e3795b8b6adf7666ae0"
+}

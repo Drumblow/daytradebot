@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO candles (\n                    asset_id, timeframe, timestamp, open, high, low, close, volume, vwap, source, is_complete\n                )\n                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)\n                ON CONFLICT (asset_id, timeframe, timestamp) DO UPDATE SET\n                    open = EXCLUDED.open,\n                    high = EXCLUDED.high,\n                    low = EXCLUDED.low,\n                    close = EXCLUDED.close,\n                    volume = EXCLUDED.volume,\n                    vwap = EXCLUDED.vwap\n                -- Auto-reparo: só sobrescreve quando a linha existente é uma\n                -- barra degenerada (1 print, high==low). Barras boas são\n                -- imutáveis; barras degeneradas são corrigidas quando a versão\n                -- consolidada chega (live aguarda consolidação desde 2026-08-17\n                -- ou ingest posterior repara o histórico).\n                WHERE candles.high <= candles.low\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Timestamptz",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "64521824489286527c9fd6aa8f1e5dfdb696a1f53149f038338dc854295aa20a"
+}

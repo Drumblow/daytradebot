@@ -90,7 +90,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         ..BacktestConfig::default()
     };
     let risk_config =
-        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params());
+        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
 
     let result = run_walk_forward(
         &strategy,

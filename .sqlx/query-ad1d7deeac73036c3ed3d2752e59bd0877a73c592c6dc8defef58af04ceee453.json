@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                f.id,\n                f.order_id,\n                a.symbol,\n                f.side,\n                f.fill_price,\n                f.quantity,\n                f.commission,\n                f.fees,\n                f.broker_fill_id,\n                f.timestamp\n            FROM fills f\n            JOIN assets a ON a.id = f.asset_id\n            WHERE f.order_id = $1\n            ORDER BY f.timestamp ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "order_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "side",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "fill_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 5,
+        "name": "quantity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "commission",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "fees",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "broker_fill_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "timestamp",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "ad1d7deeac73036c3ed3d2752e59bd0877a73c592c6dc8defef58af04ceee453"
+}

@@ -123,7 +123,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
 
     // Paridade com o live: mesmos limites de risco e horário da estratégia.
     let risk_config =
-        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params());
+        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
     let mut engine = BacktestEngine::new(backtest_config, risk_config);
 
     let run = engine.run(&strategy, &candles).await?;

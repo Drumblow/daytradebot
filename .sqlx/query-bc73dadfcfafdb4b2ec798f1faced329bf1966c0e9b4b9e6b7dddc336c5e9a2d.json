@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT 1 as exists\n            FROM candles c\n            JOIN assets a ON a.id = c.asset_id\n            WHERE a.symbol = $1 AND c.timeframe = $2 AND c.timestamp = $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bc73dadfcfafdb4b2ec798f1faced329bf1966c0e9b4b9e6b7dddc336c5e9a2d"
+}

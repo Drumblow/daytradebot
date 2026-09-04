@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO ingestions (\n                asset_id, timeframe, source, start_time, end_time,\n                candles_inserted, gaps_detected, status, error_message, finished_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Int4",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "814862941b40f9af9ae4b4a802b4401adff1549cceaca48df9679d8ec6707324"
+}

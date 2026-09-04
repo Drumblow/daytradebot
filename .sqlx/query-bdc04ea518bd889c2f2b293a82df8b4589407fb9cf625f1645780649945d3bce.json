@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO market_contexts (\n                asset_id, timeframe, timestamp, trend_state, volatility_regime, market_phase,\n                ema_20, ema_50, sma_200, atr_14, atr_percent_14, volume_relative,\n                hh_hl_count, lh_ll_count, range_percent, is_tradeable, raw_values\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)\n            ON CONFLICT (asset_id, timeframe, timestamp) DO UPDATE SET\n                trend_state = EXCLUDED.trend_state,\n                volatility_regime = EXCLUDED.volatility_regime,\n                market_phase = EXCLUDED.market_phase,\n                ema_20 = EXCLUDED.ema_20,\n                ema_50 = EXCLUDED.ema_50,\n                sma_200 = EXCLUDED.sma_200,\n                atr_14 = EXCLUDED.atr_14,\n                atr_percent_14 = EXCLUDED.atr_percent_14,\n                volume_relative = EXCLUDED.volume_relative,\n                hh_hl_count = EXCLUDED.hh_hl_count,\n                lh_ll_count = EXCLUDED.lh_ll_count,\n                range_percent = EXCLUDED.range_percent,\n                is_tradeable = EXCLUDED.is_tradeable,\n                raw_values = EXCLUDED.raw_values,\n                created_at = NOW()\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Text",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Int4",
+        "Int4",
+        "Numeric",
+        "Bool",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bdc04ea518bd889c2f2b293a82df8b4589407fb9cf625f1645780649945d3bce"
+}

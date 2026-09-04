@@ -1,0 +1,160 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                o.id,\n                a.symbol,\n                o.signal_id,\n                o.broker_order_id,\n                o.parent_order_id,\n                o.side,\n                o.order_type,\n                o.status,\n                o.time_in_force,\n                o.quantity,\n                o.filled_quantity,\n                o.price,\n                o.stop_price,\n                o.target_price,\n                o.avg_fill_price,\n                o.broker,\n                o.error_message,\n                o.metadata as \"metadata!: serde_json::Value\",\n                o.correlation_id,\n                o.created_at,\n                o.updated_at,\n                o.submitted_at,\n                o.filled_at,\n                o.cancelled_at\n            FROM orders o\n            JOIN assets a ON a.id = o.asset_id\n            WHERE o.signal_id = $1\n            ORDER BY o.created_at DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "symbol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "signal_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "broker_order_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "parent_order_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "side",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "order_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "time_in_force",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "quantity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 10,
+        "name": "filled_quantity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 11,
+        "name": "price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 12,
+        "name": "stop_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 13,
+        "name": "target_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 14,
+        "name": "avg_fill_price",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 15,
+        "name": "broker",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "metadata!: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 18,
+        "name": "correlation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "submitted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 22,
+        "name": "filled_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 23,
+        "name": "cancelled_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "ec1c0403ce1374e6373db1d4551bc7747fc6ee913201772869ff6a39d3f63529"
+}
