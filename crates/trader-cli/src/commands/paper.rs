@@ -156,12 +156,21 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         MarketContextAnalyzer::new(trader_core::context::ContextAnalyzerConfig::default());
 
     // Flag de shutdown gracioso.
+    //
+    // O flag sozinho não basta: o laço do live espera até 30s no tick antes de
+    // olhar para ele, e o `docker stop` manda SIGKILL depois de 10s. Em
+    // 04/09/2026, já com o SIGTERM tratado, só 2 das 11 instâncias
+    // conseguiram registrar `live_stopped` — as outras 9 morreram esperando o
+    // tick virar. O `Notify` acorda a espera na hora.
     let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_clone = shutdown.clone();
+    let notify_clone = shutdown_notify.clone();
     tokio::spawn(async move {
         wait_for_stop_signal().await;
         println!("\n🛑 Sinal de parada recebido. Encerrando paper trading...");
         shutdown_clone.store(true, Ordering::SeqCst);
+        notify_clone.notify_waiters();
     });
 
     match args.mode {
@@ -265,6 +274,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
                 time_exit_tracker,
                 repos.as_ref(),
                 shutdown,
+                shutdown_notify,
                 &alerter,
             )
             .await?;
@@ -763,6 +773,7 @@ async fn run_live(
     time_exit_tracker: TimeExitTracker,
     repos: Option<&Repositories>,
     shutdown: Arc<AtomicBool>,
+    shutdown_notify: Arc<tokio::sync::Notify>,
     alerter: &crate::alerts::Alerter,
 ) -> Result<()> {
     let ibkr_config = config.ibkr_config()?;
@@ -870,7 +881,15 @@ async fn run_live(
     alerter.info(&format!("Live iniciado: {} @ {}", args.symbol, connection));
 
     while !shutdown.load(Ordering::SeqCst) {
-        tick.tick().await;
+        // Espera interrompível: sem isto o encerramento gracioso depende de
+        // cair no fim de um tick de 30s, e o SIGKILL do docker chega antes.
+        tokio::select! {
+            _ = tick.tick() => {}
+            _ = shutdown_notify.notified() => {}
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            break;
+        }
 
         // Processa fills pendentes (monta trades, atualiza risco).
         drain_order_events(
