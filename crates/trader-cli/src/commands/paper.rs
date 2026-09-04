@@ -19,8 +19,8 @@ use trader_core::{
 };
 use trader_domain::{
     Broker, BrokerError, CandleRepository, CandleRequest, Direction, MarketDataProvider, Order,
-    OrderEvent, OrderSide, OrderStatus, OrderType, Signal, SignalResult, Strategy, TimeFrame,
-    Trade, TradingMode,
+    OrderEvent, OrderSide, OrderStatus, OrderType, RejectionReason, Signal, SignalResult, Strategy,
+    TimeFrame, Trade, TradingMode,
 };
 use trader_infra::{
     db::create_pool,
@@ -356,6 +356,7 @@ async fn process_candle(
         risk_settings,
     )
     .await?
+    .placed
     .is_some()
     {
         risk_state.daily_trades += 1;
@@ -408,13 +409,13 @@ async fn analyze_and_execute<B: Broker>(
     // Limites da conta inteira (C2): precisam da config crua, não da
     // RiskConfig por estratégia.
     risk_settings: &trader_infra::config::RiskSettings,
-) -> Result<Option<PlacedOrderInfo>> {
+) -> Result<ExecOutcome> {
     let summary = broker.get_account_summary().await?;
     let positions = broker.get_positions().await?;
 
     // Reconciliação simples: se há posição aberta no símbolo, não busca novo sinal.
     if positions.iter().any(|p| p.symbol == symbol) {
-        return Ok(None);
+        return Ok(ExecOutcome::default());
     }
 
     // Limite de risco da CONTA INTEIRA (C2 da auditoria de 30/08/2026). Todo o
@@ -439,13 +440,16 @@ async fn analyze_and_execute<B: Broker>(
             &format!("{symbol}: entrada bloqueada pelo limite da conta - {motivo}"),
         )
         .await;
-        return Ok(None);
+        return Ok(ExecOutcome {
+            blocked: Some(BlockReason::Portfolio(motivo)),
+            ..Default::default()
+        });
     }
 
     // Computa e persiste contexto de mercado.
     let ctx = match analyzer.analyze(symbol, timeframe, candles) {
         Some(ctx) => ctx,
-        None => return Ok(None),
+        None => return Ok(ExecOutcome::default()),
     };
 
     if let Some(repos) = repos {
@@ -514,7 +518,7 @@ async fn analyze_and_execute<B: Broker>(
                         }
                     }
 
-                    return Ok(Some(PlacedOrderInfo {
+                    return Ok(ExecOutcome::placed(PlacedOrderInfo {
                         order_db_id,
                         signal_db_id,
                         broker_order_id: order_id.clone(),
@@ -542,6 +546,16 @@ async fn analyze_and_execute<B: Broker>(
                             warn!(error = %e, "falha ao persistir sinal rejeitado");
                         }
                     }
+
+                    // Recusa que PARA a operação do dia merece alerta; recusa
+                    // de rotina (não há setup, contexto ruim) não — seria
+                    // ruído a cada candle.
+                    if halts_trading(reason) {
+                        return Ok(ExecOutcome {
+                            blocked: Some(BlockReason::Risk(reason, detail)),
+                            ..Default::default()
+                        });
+                    }
                 }
                 trader_core::execution::ExecutionResult::RejectedByBroker { error } => {
                     warn!(%error, "ordem rejeitada pelo broker");
@@ -555,7 +569,67 @@ async fn analyze_and_execute<B: Broker>(
         _ => {}
     }
 
-    Ok(None)
+    Ok(ExecOutcome::default())
+}
+
+/// O que aconteceu numa tentativa de execução.
+///
+/// Antes era só `Option<PlacedOrderInfo>`: o chamador sabia que nada foi
+/// enviado, mas não POR QUÊ. Sem isso não dá para avisar que o bot parou de
+/// operar — que é justamente o evento que alguém precisa saber (A9 da
+/// auditoria).
+#[derive(Default)]
+struct ExecOutcome {
+    placed: Option<PlacedOrderInfo>,
+    /// Preenchido só quando a recusa PARA a operação, não em recusa de rotina.
+    blocked: Option<BlockReason>,
+}
+
+impl ExecOutcome {
+    fn placed(info: PlacedOrderInfo) -> Self {
+        Self {
+            placed: Some(info),
+            blocked: None,
+        }
+    }
+}
+
+enum BlockReason {
+    Risk(RejectionReason, String),
+    Portfolio(String),
+}
+
+impl BlockReason {
+    /// Chave estável para não repetir o mesmo alerta a cada candle.
+    fn key(&self) -> String {
+        match self {
+            Self::Risk(reason, _) => format!("risk:{reason:?}"),
+            Self::Portfolio(_) => "portfolio".to_string(),
+        }
+    }
+
+    fn message(&self, symbol: &str) -> String {
+        match self {
+            Self::Risk(reason, detail) => {
+                format!("{symbol}: operacao interrompida pelo risco - {reason:?}: {detail}")
+            }
+            Self::Portfolio(motivo) => {
+                format!("{symbol}: entrada bloqueada pelo limite da CONTA - {motivo}")
+            }
+        }
+    }
+}
+
+/// Recusas que significam "o bot parou de operar hoje", e não "este candle não
+/// tinha setup". Só estas viram alerta.
+fn halts_trading(reason: RejectionReason) -> bool {
+    matches!(
+        reason,
+        RejectionReason::DailyLossLimitReached
+            | RejectionReason::MaxTradesReached
+            | RejectionReason::ConsecutiveLosses
+            | RejectionReason::StopMissing
+    )
 }
 
 /// Monta a `Order` de domínio de uma ordem recém-aceita pelo broker, para
@@ -781,6 +855,9 @@ async fn run_live(
     let mut pending_bar: Option<PendingBar> = None;
     // Dia (calendário de NY) em que o flatten de fim de sessão já rodou.
     let mut flattened_on: Option<chrono::NaiveDate> = None;
+    // Motivos de bloqueio já alertados hoje — o alerta é por motivo, não por
+    // candle. Limpo na virada do dia, junto com o estado de risco.
+    let mut blocked_alerted: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     record_event(
         repos,
@@ -817,6 +894,7 @@ async fn run_live(
                 Some(repos) => rebuild_risk_state(repos, &args.symbol).await,
                 None => RiskState::default(),
             };
+            blocked_alerted.clear();
             info!("novo dia UTC: estado de risco diário reconstruído do banco");
         }
 
@@ -1261,7 +1339,23 @@ async fn run_live(
             )
             .await
             {
-                Ok(Some(placed)) => {
+                Ok(outcome) => {
+                    // Recusa que interrompe a operação vira alerta, uma vez
+                    // por motivo por dia — a cada candle seria ruído.
+                    if let Some(motivo) = &outcome.blocked {
+                        let chave = motivo.key();
+                        if blocked_alerted.insert(chave) {
+                            let message = motivo.message(&args.symbol);
+                            warn!(%message, "operação bloqueada");
+                            record_event(repos, "warning", "risk", "trading_halted", &message)
+                                .await;
+                            alerter.critical_await(&message).await;
+                        }
+                    }
+                    let Some(placed) = outcome.placed else {
+                        last_processed = Some(candles[i].timestamp);
+                        continue;
+                    };
                     // Cada execução conta para o limite de trades do dia.
                     risk_state.daily_trades += 1;
                     if placed.order_db_id.is_none() {
@@ -1281,7 +1375,6 @@ async fn run_live(
                     // do bracket) fecharão o trade via drain_order_events.
                     live_fills.open_order = Some(placed);
                 }
-                Ok(None) => {}
                 Err(e) => {
                     warn!(error = %e, "falha ao processar candle; próximo ciclo tentará novamente")
                 }
@@ -2356,6 +2449,32 @@ mod tests {
 
         // Com teto de 200% (200k) a mesma exposição passa.
         assert!(exposure_limit_hit(&posicoes, equity, 10, 200.0).is_none());
+    }
+
+    /// Só recusa que PARA a operação vira alerta. Recusa de rotina (não há
+    /// setup, contexto ruim, fora de horário) acontece a cada candle e viraria
+    /// ruído — o alerta perderia o sentido.
+    #[test]
+    fn so_recusa_que_para_a_operacao_alerta() {
+        use trader_domain::RejectionReason as R;
+        for r in [
+            R::DailyLossLimitReached,
+            R::MaxTradesReached,
+            R::ConsecutiveLosses,
+            R::StopMissing,
+        ] {
+            assert!(super::halts_trading(r), "{r:?} deveria alertar");
+        }
+        for r in [
+            R::NoContext,
+            R::OutsideTradingHours,
+            R::PoorRiskReward,
+            R::HighVolatility,
+            R::HighSpread,
+            R::SetupInvalidated,
+        ] {
+            assert!(!super::halts_trading(r), "{r:?} NAO deveria alertar");
+        }
     }
 
     #[test]
