@@ -17,6 +17,43 @@ PGPORT_NUM="${PGPORT_NUM:-5433}"
 
 log() { echo "[scheduler $(date '+%F %T %Z')] $*"; }
 
+# ── alertas ──────────────────────────────────────────────────────────────────
+# O scheduler detectava problemas e so escrevia no proprio log: backup que
+# falhou, pg_dump que devolveu um arquivo de 200 bytes, "subiram 7 de 11 no
+# open". Nada disso chegava a ninguem (A9 da auditoria de 30/08/2026).
+#
+# O segredo vem montado por volume, como nas instancias — nunca na imagem.
+ALERTS_ENV="${ALERTS_ENV_FILE:-/run/trader-secrets/alerts.env}"
+if [ -f "$ALERTS_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ALERTS_ENV"
+  set +a
+fi
+
+# Envia um alerta critico. Sem webhook configurado, so loga — nunca falha e
+# nunca interrompe a operacao por causa de um alerta.
+alerta() {
+  local msg="$1" corpo url
+  url="${TRADER__ALERTS__WEBHOOK_URL:-}"
+  [ -n "$url" ] || return 0
+
+  # Mesma deteccao do Alerter em Rust: Discord quer {"content"}, Slack quer
+  # {"text"}, e o endpoint compativel .../slack do Discord quer o do Slack.
+  case "$url" in
+    */slack) corpo=$(printf '{"text":"%s"}' "$msg") ;;
+    *discord.com/api/webhooks*|*discordapp.com/api/webhooks*)
+      corpo=$(printf '{"content":"%s"}' "$msg") ;;
+    *) corpo=$(printf '{"text":"%s"}' "$msg") ;;
+  esac
+
+  # --fail para que 4xx/5xx nao passem por sucesso; a URL carrega token e por
+  # isso nunca entra no log.
+  if ! curl -sS --fail --max-time 10 -H 'Content-Type: application/json'        -d "$corpo" "$url" >/dev/null 2>&1; then
+    log "AVISO: webhook recusou o alerta"
+  fi
+}
+
 expected_count() { echo "$INSTANCES" | wc -w | tr -d ' '; }
 
 # Estamos dentro da janela de pregao? Usado para distinguir "as instancias nao
@@ -62,7 +99,10 @@ start_instances() {
   fi
 
   log "instancias rodando: $running/$expected"
-  [ "$running" -eq "$expected" ] || log "ERRO: esperava $expected instancias, subiram $running"
+  if [ "$running" -ne "$expected" ]; then
+    log "ERRO: esperava $expected instancias, subiram $running"
+    alerta "🚨 abertura do pregao: subiram $running de $expected instancias"
+  fi
 }
 
 stop_instances() {
@@ -88,11 +128,13 @@ backup_db() {
     size=$(stat -c %s "$file" 2>/dev/null || echo 0)
     if [ "$size" -lt 10000 ]; then
       log "ERRO: backup suspeito ($size bytes) — mantido para inspecao: $file"
+      alerta "🚨 backup do banco suspeito: apenas $size bytes em $file"
     else
       log "backup ok: $file ($size bytes)"
     fi
   else
     log "ERRO: pg_dump falhou"
+    alerta "🚨 backup do banco FALHOU (pg_dump nao completou)"
     rm -f "$file"
   fi
 

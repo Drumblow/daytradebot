@@ -17,6 +17,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY trader-web /usr/local/bin/trader-web
 RUN chmod +x /usr/local/bin/trader-web
 
+# Usuario sem privilegio (SECURITY.md §8.3). O painel nao monta volume, nao le
+# segredo e so precisa abrir a porta 8551 — nada aqui exige root.
+#
+# A imagem do BOT continua como root de proposito: ela le
+# ${APP_DATA_DIR}/secrets/alerts.env, que e um diretorio 0700 do UID 1001.
+# Trocar o usuario do bot sem alinhar esse UID faria o webhook parar de
+# funcionar EM SILENCIO — o oposto do que a auditoria pediu. Fica para quando
+# o compose e o pre-install da store forem ajustados juntos.
+RUN useradd --system --no-create-home --uid 10001 web
+USER web
+
 # Horario de NY por consistencia com o resto do app (agregacoes diarias e
 # janela de pregao ja sao calculadas em America/New_York pelo proprio binario).
 ENV TZ=America/New_York \

@@ -10,14 +10,15 @@ FROM docker:28-cli
 
 # Sem cliente do postgres de proposito: o backup roda `docker exec` no container
 # do banco, entao o pg_dump usado e o da propria versao do servidor.
-RUN apk add --no-cache tzdata bash
+RUN apk add --no-cache tzdata bash curl
 
 COPY scheduler.sh /usr/local/bin/scheduler.sh
 RUN chmod +x /usr/local/bin/scheduler.sh
 
 # Toda a agenda em horario de Nova York: o pregao manda, e assim o horario de
-# verao americano e tratado pelo tzdata em vez de na mao (a config das
-# estrategias ainda precisa de ajuste manual na virada — ver os TOMLs).
+# verao americano e tratado pelo tzdata em vez de na mao. Desde o A2 da
+# auditoria as janelas das estrategias tambem sao declaradas em ET e convertidas
+# com chrono-tz — nao ha mais ajuste manual na virada do DST em lugar nenhum.
 ENV TZ=America/New_York \
     TRADING_START="25 9" \
     TRADING_END="10 16" \
