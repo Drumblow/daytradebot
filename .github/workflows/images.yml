@@ -377,7 +377,11 @@ jobs:
           set -euo pipefail
           : "${APP_DATA_DIR:?o container do runner precisa receber APP_DATA_DIR}"
 
-          INSTANCIAS="iwm-pullback iwv-pullback iwo-pullback ijs-balance
+          # ADR-016 / app v1.2.0: as tres instancias da pullback-trend-v1 sairam
+          # do compose (profile `desativado`). Precisam sair daqui TAMBEM —
+          # `docker compose up` de um servico que nao esta no profile ativo
+          # falha, e o deploy inteiro morre junto.
+          INSTANCIAS="ijs-balance
                       vbr-balance avuv-balance iwm-openrev iwn-openrev
                       avuv-rangefade slyv-rangefade iwv-rangefade"
 
