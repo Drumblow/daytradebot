@@ -203,6 +203,9 @@ mod tests {
             max_daily_loss_pct: 2.0,
             max_trades_per_day: 3,
             max_consecutive_losses: 3,
+            max_portfolio_daily_loss_pct: 4.0,
+            max_concurrent_positions: 3,
+            max_portfolio_notional_pct: 200.0,
             entry_overshoot_tolerance: 0.25,
         }
     }

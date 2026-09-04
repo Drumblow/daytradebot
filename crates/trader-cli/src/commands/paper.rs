@@ -193,6 +193,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
                     &mut time_exit_tracker,
                     repos.as_ref(),
                     cycle,
+                    &config.app_config.risk,
                 )
                 .await?;
 
@@ -248,6 +249,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
                     &mut time_exit_tracker,
                     repos.as_ref(),
                     idx,
+                    &config.app_config.risk,
                 )
                 .await?;
             }
@@ -286,6 +288,7 @@ async fn process_candle(
     time_exit_tracker: &mut TimeExitTracker,
     repos: Option<&Repositories>,
     _cycle: usize,
+    risk_settings: &trader_infra::config::RiskSettings,
 ) -> Result<()> {
     // Atualiza mercado com o candle completo: stops/alvos avaliados nos
     // extremos intrabar (high/low), não só no fechamento.
@@ -350,6 +353,7 @@ async fn process_candle(
         repos,
         "simulated",
         candles.last().map(|c| c.close),
+        risk_settings,
     )
     .await?
     .is_some()
@@ -401,12 +405,40 @@ async fn analyze_and_execute<B: Broker>(
     // overshoot (ADR-015). No live é o close da barra em formação do último
     // fetch; em simulated/replay, o close da barra do sinal.
     reference_price: Option<Decimal>,
+    // Limites da conta inteira (C2): precisam da config crua, não da
+    // RiskConfig por estratégia.
+    risk_settings: &trader_infra::config::RiskSettings,
 ) -> Result<Option<PlacedOrderInfo>> {
     let summary = broker.get_account_summary().await?;
     let positions = broker.get_positions().await?;
 
     // Reconciliação simples: se há posição aberta no símbolo, não busca novo sinal.
     if positions.iter().any(|p| p.symbol == symbol) {
+        return Ok(None);
+    }
+
+    // Limite de risco da CONTA INTEIRA (C2 da auditoria de 30/08/2026). Todo o
+    // controle de risco do projeto é por processo: cada instância valida
+    // contra o próprio estado e só soma trades do próprio símbolo. Com 11
+    // instâncias na mesma conta, a perda diária efetiva era 11× o limite
+    // configurado e o cap de notional valia por processo — a exposição
+    // agregada podia passar de várias vezes a equity, em small-caps
+    // correlacionados onde as perdas chegam juntas.
+    //
+    // As duas fontes são autoritativas e não exigem tabela nova: o BROKER diz
+    // a exposição real da conta, o BANCO diz o P&L realizado do dia.
+    if let Some(motivo) =
+        portfolio_limit_hit(&positions, summary.equity, repos, risk_settings).await
+    {
+        info!(%symbol, %motivo, "limite de portfólio atingido; sem novo sinal");
+        record_event(
+            repos,
+            "warning",
+            "risk",
+            "portfolio_limit",
+            &format!("{symbol}: entrada bloqueada pelo limite da conta - {motivo}"),
+        )
+        .await;
         return Ok(None);
     }
 
@@ -1225,6 +1257,7 @@ async fn run_live(
                 // que pega o cenário do trade 12 (preço já correu além do
                 // gatilho entre o fechamento da barra do sinal e o envio).
                 candles.last().map(|c| c.close),
+                &config.app_config.risk,
             )
             .await
             {
@@ -1286,6 +1319,97 @@ impl PendingBar {
             polls,
         }
     }
+}
+
+/// Verifica os limites de risco da CONTA INTEIRA antes de abrir posição.
+///
+/// Devolve `Some(motivo)` quando alguma trava está ativa. Três travas, todas
+/// somando as 11 instâncias:
+///
+/// 1. **perda diária agregada** — P&L realizado de hoje, todos os símbolos;
+/// 2. **posições simultâneas** — quantas posições a conta já carrega;
+/// 3. **notional agregado** — soma do valor de mercado das posições abertas.
+///
+/// Falha FECHADO: sem banco não dá para saber a perda do dia, e nesse caso a
+/// entrada é bloqueada. É o mesmo princípio do "live não sobe sem banco".
+async fn portfolio_limit_hit(
+    positions: &[trader_domain::Position],
+    equity: Decimal,
+    repos: Option<&Repositories>,
+    risk: &trader_infra::config::RiskSettings,
+) -> Option<String> {
+    // 1 e 2: exposição, medida no broker.
+    if let Some(motivo) = exposure_limit_hit(
+        positions,
+        equity,
+        risk.max_concurrent_positions,
+        risk.max_portfolio_notional_pct,
+    ) {
+        return Some(motivo);
+    }
+
+    // 3. Perda diária agregada.
+    let Some(repos) = repos else {
+        return Some("sem banco: nao da para medir a perda do dia da conta".to_string());
+    };
+    match repos.trade_repo.list_today_account().await {
+        Ok(trades) => {
+            let pnl: Decimal = trades
+                .iter()
+                .filter(|t| !t.is_latency_artifact())
+                .map(|t| t.net_pnl)
+                .sum();
+            let limite = -(equity * pct_to_fraction(risk.max_portfolio_daily_loss_pct));
+            if pnl <= limite {
+                return Some(format!(
+                    "perda do dia na conta {pnl:.2} atingiu o limite {limite:.2} ({}% do capital)",
+                    risk.max_portfolio_daily_loss_pct
+                ));
+            }
+            None
+        }
+        Err(e) => Some(format!("falha ao medir a perda do dia da conta: {e}")),
+    }
+}
+
+/// Parte PURA da trava de portfólio: posições simultâneas e notional
+/// agregado, ambos medidos no broker. Separada para poder ser testada — um
+/// guarda de risco sem teste é um guarda que ninguém sabe se funciona.
+fn exposure_limit_hit(
+    positions: &[trader_domain::Position],
+    equity: Decimal,
+    max_positions: usize,
+    max_notional_pct: f64,
+) -> Option<String> {
+    if positions.len() >= max_positions {
+        return Some(format!(
+            "{} posicoes abertas na conta (maximo {max_positions})",
+            positions.len()
+        ));
+    }
+
+    if equity > Decimal::ZERO {
+        let notional: Decimal = positions
+            .iter()
+            .map(|p| (p.avg_entry_price * p.quantity).abs())
+            .sum();
+        let teto = equity * pct_to_fraction(max_notional_pct);
+        if notional >= teto {
+            return Some(format!(
+                "notional agregado {notional:.0} >= teto {teto:.0} ({max_notional_pct}% do capital)"
+            ));
+        }
+    }
+
+    None
+}
+
+/// Converte "2.0" (por cento) em 0.02 (fração), sem passar por f64 no cálculo.
+fn pct_to_fraction(pct: f64) -> Decimal {
+    Decimal::from_f64_retain(pct)
+        .unwrap_or_default()
+        .checked_div(Decimal::from(100))
+        .unwrap_or_default()
 }
 
 /// Espera por um sinal de parada do sistema operacional.
@@ -2185,8 +2309,59 @@ async fn setup_repositories(config: &CliConfig) -> Result<Repositories> {
 
 #[cfg(test)]
 mod tests {
-    use super::in_flatten_window;
+    use super::{exposure_limit_hit, in_flatten_window};
     use chrono::{DateTime, Utc};
+    use rust_decimal::Decimal;
+
+    fn posicao(symbol: &str, preco: i64, qtd: i64) -> trader_domain::Position {
+        trader_domain::Position::new(
+            symbol,
+            1,
+            trader_domain::Direction::Long,
+            Decimal::from(qtd),
+            Decimal::from(preco),
+            Decimal::from(preco - 5),
+            "ibkr",
+        )
+        .expect("posição válida")
+    }
+
+    /// C2 da auditoria: o risco era medido por processo. Onze instâncias na
+    /// mesma conta multiplicavam por onze a exposição permitida.
+    #[test]
+    fn trava_no_numero_de_posicoes_simultaneas() {
+        let equity = Decimal::from(250_000);
+        let duas = vec![posicao("IWM", 300, 100), posicao("IWV", 400, 100)];
+        assert!(
+            exposure_limit_hit(&duas, equity, 3, 200.0).is_none(),
+            "duas posições com teto de três deve passar"
+        );
+
+        let tres = vec![
+            posicao("IWM", 300, 100),
+            posicao("IWV", 400, 100),
+            posicao("IWO", 370, 100),
+        ];
+        let motivo = exposure_limit_hit(&tres, equity, 3, 200.0).expect("deve travar");
+        assert!(motivo.contains("posicoes abertas"), "motivo: {motivo}");
+    }
+
+    #[test]
+    fn trava_no_notional_agregado() {
+        let equity = Decimal::from(100_000);
+        // Duas posições de 90k = 180k, contra teto de 150% (150k).
+        let posicoes = vec![posicao("IWM", 900, 100), posicao("IWV", 900, 100)];
+        let motivo = exposure_limit_hit(&posicoes, equity, 10, 150.0).expect("deve travar");
+        assert!(motivo.contains("notional agregado"), "motivo: {motivo}");
+
+        // Com teto de 200% (200k) a mesma exposição passa.
+        assert!(exposure_limit_hit(&posicoes, equity, 10, 200.0).is_none());
+    }
+
+    #[test]
+    fn conta_vazia_nao_trava() {
+        assert!(exposure_limit_hit(&[], Decimal::from(250_000), 3, 200.0).is_none());
+    }
 
     fn utc(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)

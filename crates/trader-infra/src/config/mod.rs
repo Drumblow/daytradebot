@@ -85,6 +85,23 @@ pub struct RiskSettings {
     /// Para de operar após N perdas consecutivas.
     #[serde(default = "default_max_consecutive_losses")]
     pub max_consecutive_losses: usize,
+    /// Perda diária máxima da CONTA INTEIRA, em % do capital.
+    ///
+    /// Os limites acima valem por instância; com 11 instâncias na mesma conta
+    /// a perda efetiva era 11× o configurado (C2 da auditoria). Este é o teto
+    /// somado — nenhuma instância abre posição depois que a conta o atinge.
+    #[serde(default = "default_max_portfolio_daily_loss_pct")]
+    pub max_portfolio_daily_loss_pct: f64,
+    /// Máximo de posições abertas ao mesmo tempo na conta, somando todas as
+    /// instâncias. Os ativos operados são small-caps correlacionados: as
+    /// perdas chegam juntas.
+    #[serde(default = "default_max_concurrent_positions")]
+    pub max_concurrent_positions: usize,
+    /// Teto do notional agregado das posições abertas, em % do capital.
+    /// O cap por posição já é ~100% do capital; sem um teto somado, N
+    /// instâncias multiplicam a exposição por N.
+    #[serde(default = "default_max_portfolio_notional_pct")]
+    pub max_portfolio_notional_pct: f64,
     /// Tolerância de overshoot numa entrada stop, como fração da distância do
     /// stop (0.25 = aceita até 25% de risco extra; além disso a entrada é
     /// invalidada em vez de perseguida — ADR-015).
@@ -101,6 +118,23 @@ fn default_entry_overshoot_tolerance() -> f64 {
 fn default_max_daily_loss_pct() -> f64 {
     2.0
 }
+/// 4% da conta: o dobro do orçamento de uma instância, e não a soma dos onze.
+fn default_max_portfolio_daily_loss_pct() -> f64 {
+    4.0
+}
+
+/// Três posições simultâneas. Os pares aprovados são quase todos small-caps
+/// correlacionados — os sinais chegam em cluster no mesmo dia.
+fn default_max_concurrent_positions() -> usize {
+    3
+}
+
+/// 200% do capital. O sizing já trava cada posição em ~100% do capital em
+/// notional; este teto impede que N instâncias multipliquem isso por N.
+fn default_max_portfolio_notional_pct() -> f64 {
+    200.0
+}
+
 fn default_max_trades_per_day() -> usize {
     3
 }

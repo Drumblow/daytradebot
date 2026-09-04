@@ -168,6 +168,59 @@ impl SqlxTradeRepository {
     }
 
     /// Lista trades de hoje.
+    /// Trades fechados hoje na CONTA INTEIRA, sem filtro de símbolo.
+    ///
+    /// O risco do projeto sempre foi medido por processo: cada instância soma
+    /// só os trades do próprio símbolo. Com 11 instâncias na mesma conta, a
+    /// perda diária efetiva era 11 × o limite configurado (C2 da auditoria de
+    /// 30/08/2026). Esta consulta é o que permite a cada instância enxergar a
+    /// conta toda antes de abrir posição.
+    pub async fn list_today_account(&self) -> Result<Vec<Trade>, RepositoryError> {
+        let start = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap();
+        let start = start.and_utc();
+
+        let rows = sqlx::query_as!(
+            TradeRow,
+            r#"
+            SELECT
+                t.id,
+                a.symbol,
+                t.signal_id,
+                t.position_id,
+                t.direction,
+                t.entry_price,
+                t.exit_price,
+                t.quantity,
+                t.entry_time,
+                t.exit_time,
+                t.stop_price,
+                t.target_price,
+                t.gross_pnl,
+                t.commissions,
+                t.fees,
+                t.net_pnl,
+                t.risk_amount,
+                t.result_in_r,
+                t.exit_reason,
+                t.strategy_id,
+                t.strategy_version,
+                t.config_hash,
+                t.journal as "journal!: serde_json::Value",
+                t.correlation_id
+            FROM trades t
+            JOIN assets a ON a.id = t.asset_id
+            WHERE t.exit_time >= $1
+            ORDER BY t.exit_time DESC
+            "#,
+            start
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepositoryError::Query(e.to_string()))?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
     pub async fn list_today(&self, symbol: &str) -> Result<Vec<Trade>, RepositoryError> {
         let start = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap();
         let start = start.and_utc();

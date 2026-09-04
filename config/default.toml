@@ -30,6 +30,12 @@ risk_per_trade_pct = 1.0
 max_daily_loss_pct = 2.0
 max_trades_per_day = 3
 max_consecutive_losses = 3
+# Limites da CONTA INTEIRA (C2 da auditoria). Os de cima valem por instancia;
+# com 11 instancias na mesma conta a perda efetiva era 11x o configurado.
+# Nenhuma instancia abre posicao depois que um destes e atingido.
+max_portfolio_daily_loss_pct = 4.0
+max_concurrent_positions = 3
+max_portfolio_notional_pct = 200.0
 # Tolerância de overshoot numa entrada stop, como fração da distância do stop
 # (0.25 = aceita até 25% de risco extra; além disso a entrada é invalidada em
 # vez de perseguida). Vale para live, replay e backtest — ADR-015.
