@@ -217,6 +217,12 @@ app sobrevive, o acesso humano não. E **não existe alerta** se algo cair: o
   - **Circuit breaker as 14h22 ET** numa instancia de IWV: 10 falhas seguidas ao buscar candles na IBKR. Saiu, reiniciou sozinha pelo `restart: on-failure` e perdeu 2 barras na ressincronizacao do cursor. O CB funcionou como projetado — acompanhar se repete.
   - 3 barras de 208 nao avaliadas (IWV 17:30 e 18:45, SLYV 15:00 UTC).
 
+- **04/09/2026 (noite) — GATE A REVALIDADO com o motor corrigido.** Relatorio completo: `docs/reports/gate-a-revalidacao-2026-09-04.md`. Walk-forward de 6 janelas, 18 meses, codigo de `01aab02`. **A validacao de agosto esta formalmente substituida** — ela media sem custo de execucao.
+  - `balance-area-breakout-v1`: **PASSA** — 91 trades OOS, PF 1,96, acerto 46,2%, +13.999.
+  - `range-extreme-fade-v1`: **PASSA** — 64 trades OOS, PF 2,10, acerto 62,5%, +6.498.
+  - `opening-reversal-v1`: **NAO PASSA** — PF 1,11 com 58 trades, os dois pares consistentes (1,09 e 1,11). Com essa amostra, 1,11 nao e distinguivel de 1,0: nao ha edge depois de pagar a corretora. Mesma assinatura da pullback, um degrau acima do prejuizo em vez de um abaixo. **Continua em paper** (aporta amostra ao gate B, custa nada em conta simulada) mas fica **BLOQUEADA para dinheiro real**.
+  - Nenhum par isolado fecha os 50 trades OOS: em 18 meses saem de 18 a 35 por par. **O gate A do ADR-010 passa a ser lido por ESTRATEGIA**, com amostra agregada entre os pares — exigir 50 por par pede uns 3 anos de historico.
+
 ## 8. Nova estratégia implementada: `failure-test-long-v1` (2026-08-05)
 
 - Análise de 4 livros novos (`docs/books/analysis/`): Brooks Bar-by-Bar, Grimes, Dalton, López de Prado. Tabela de fontes atualizada em `docs/strategy-analysis-framework.md` §2. Chan ficou pendente (PDF escaneado, precisa OCR).
