@@ -620,3 +620,26 @@ CASO 11 — limites de risco do processo (DEVE rejeitar):
 3. **Reentrada (segunda falha):** confirmar adiamento para v2.
 4. **Timeframe de contexto 1h:** a v1 opera só com 15min; adicionar filtro de 1h (ex.: não comprar failure test contra downtrend forte de 1h) ficou fora — avaliar após primeiro backtest.
 5. **Extensão do enum `RejectionReason`** no `trader-domain` com as ~12 novas variantes da seção 11.
+
+---
+
+## 17. Reteste com o motor corrigido (2026-09-04) — REPROVACAO CONFIRMADA
+
+Backtest de 24/02/2025 a 02/09/2026 sobre 14 ativos, com o motor depois das
+correcoes ADR-015 (overshoot), A3 (expiracao da entrada), A4 (custo de execucao
+realista de ~2 bp na entrada E na saida, mais gap no stop) e C5 (contabilidade
+de caixa do short).
+
+| | Resultado |
+|---|---|
+| Amostra | 200 trades em 14 ativos |
+| Profit factor | **0,61** |
+| P&L | -13.191 |
+
+O universo ampliado resolveu a duvida de amostra que a deixou 'inconclusiva' em agosto: com 200 trades o veredito e claro, PF 0,61. Nao e falta de amostra, e falta de edge.
+
+O reteste foi feito porque o motor de backtest mudou depois do veredito
+original: valia conferir se alguma reprovacao tinha sido injusta. Nenhuma foi —
+todas as cinco estrategias arquivadas pioraram, o que e o esperado quando o
+custo de execucao deixa de ser subestimado em 100x. Ver
+`docs/reports/gate-a-revalidacao-2026-09-04.md`.

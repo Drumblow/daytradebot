@@ -96,6 +96,48 @@ lenta demais para ser útil.
    mede certo, duas estratégias estão comprovadas e uma está reprovada — e sabe-se
    qual é qual.
 
+## As cinco arquivadas: vale reabrir?
+
+O motor mudou depois que elas foram reprovadas — entao valia conferir se alguma
+reprovacao tinha sido injusta. Havia uma hipotese concreta: o **C5** corrigiu a
+contabilidade de caixa do short, que corrompia a curva de equity, e a equity
+dimensiona os trades seguintes. Uma estrategia de venda a descoberto podia ter
+sido julgada com numeros distorcidos.
+
+Backtest de 24/02/2025 a 02/09/2026 sobre 14 ativos, motor atual:
+
+| Estratégia | Veredito original | Amostra agora | PF agora | P&L |
+|---|---|---|---|---|
+| breakout-first-pullback-v1 | 9 trades — rara demais | 21 trades / 12 ativos | 0,92 | −611 |
+| **low2-m2s-short-v1** | 962 trades, net −55k | 920 trades / 14 ativos | **0,66** | **−83.485** |
+| trendline-break-test-v1 | PF 1,04 (nota: "promissora") | 64 trades / 14 ativos | 0,91 | −839 |
+| value-area-reentry-v1 | PF 0,76 / 0,84 / 0,89 | 107 trades / 14 ativos | 0,65 | −7.559 |
+| failure-test-long-v1 | amostra insuficiente | 200 trades / 14 ativos | 0,61 | −13.191 |
+
+**Nenhuma se salva, e todas pioraram.** A hipotese do C5 foi refutada da forma
+mais util possivel: a `low2-m2s-short-v1` foi de −55k para **−83,5k**. A
+contabilidade de short corrompida estava *inflando* o resultado dela, nao
+escondendo uma vantagem.
+
+Dois subprodutos que valem mais que o veredito:
+
+1. **A `failure-test-long-v1` deixou de ser "inconclusiva".** Ela tinha sido
+   arquivada por amostra insuficiente (6–9 trades/ano/ativo). Com o universo de
+   14 ativos sao 200 trades — poder estatistico de sobra para dizer que o
+   problema nunca foi amostra: PF 0,61.
+2. **O "PF 1,38 promissor" da `trendline-break-test-v1` era artefato de custo
+   zero.** Com custo realista vira 0,91.
+
+Vale notar o padrao dos "melhores pares" de cada uma: PF de 3 a 7 sobre 2 a 5
+trades. E exatamente a armadilha de testes multiplos que a auditoria apontou —
+testar 14 ativos × 5 estrategias produz combinacoes espetaculares por acaso.
+Nenhuma delas significa nada.
+
+**Conclusao: as cinco continuam arquivadas, agora com veredito emitido pela
+regua certa.** A questao esta fechada e nao precisa ser reaberta a cada mudanca
+do motor — a menos que a mudanca torne o motor mais PERMISSIVO, o que nao e o
+caso de nenhuma correcao feita ate aqui.
+
 ## Limites honestos
 
 - Os pares foram **escolhidos** em agosto testando 42 combinações. Revalidá-los

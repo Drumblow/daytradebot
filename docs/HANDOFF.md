@@ -223,6 +223,8 @@ app sobrevive, o acesso humano não. E **não existe alerta** se algo cair: o
   - `opening-reversal-v1`: **NAO PASSA** — PF 1,11 com 58 trades, os dois pares consistentes (1,09 e 1,11). Com essa amostra, 1,11 nao e distinguivel de 1,0: nao ha edge depois de pagar a corretora. Mesma assinatura da pullback, um degrau acima do prejuizo em vez de um abaixo. **Continua em paper** (aporta amostra ao gate B, custa nada em conta simulada) mas fica **BLOQUEADA para dinheiro real**.
   - Nenhum par isolado fecha os 50 trades OOS: em 18 meses saem de 18 a 35 por par. **O gate A do ADR-010 passa a ser lido por ESTRATEGIA**, com amostra agregada entre os pares — exigir 50 por par pede uns 3 anos de historico.
 
+- **04/09/2026 — as 5 estrategias arquivadas retestadas com o motor corrigido: TODAS continuam reprovadas, e todas PIORARAM.** breakout-first-pullback PF 0,92 (21 trades/12 ativos); low2-m2s-short PF 0,66 e **-83,5k** (era -55k); trendline-break-test PF 0,91 (o "1,38 promissor" era artefato de custo zero); value-area-reentry PF 0,65; failure-test-long PF 0,61 com 200 trades — **deixou de ser "amostra insuficiente"**, o problema nunca foi amostra. A hipotese de que o C5 (caixa do short) poderia ter sido injusto com a low2-m2s-short foi REFUTADA: a contabilidade corrompida estava inflando o resultado dela. Questao encerrada — nao precisa ser reaberta a cada mudanca do motor, a menos que alguma correcao futura o torne mais PERMISSIVO.
+
 ## 8. Nova estratégia implementada: `failure-test-long-v1` (2026-08-05)
 
 - Análise de 4 livros novos (`docs/books/analysis/`): Brooks Bar-by-Bar, Grimes, Dalton, López de Prado. Tabela de fontes atualizada em `docs/strategy-analysis-framework.md` §2. Chan ficou pendente (PDF escaneado, precisa OCR).

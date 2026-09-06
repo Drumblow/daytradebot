@@ -334,3 +334,26 @@ permanece no repositório com os 14 testes passando; o componente de trendline
 
 Nota de método: 3 configurações × 14 ativos + 1 × 24 ativos = **66 combinações**
 somadas à superfície de testes do projeto.
+
+---
+
+## 17. Reteste com o motor corrigido (2026-09-04) — REPROVACAO CONFIRMADA
+
+Backtest de 24/02/2025 a 02/09/2026 sobre 14 ativos, com o motor depois das
+correcoes ADR-015 (overshoot), A3 (expiracao da entrada), A4 (custo de execucao
+realista de ~2 bp na entrada E na saida, mais gap no stop) e C5 (contabilidade
+de caixa do short).
+
+| | Resultado |
+|---|---|
+| Amostra | 64 trades em 14 ativos |
+| Profit factor | **0,91** |
+| P&L | -839 |
+
+O PF 1,38 que motivou a nota de 'promissora' era artefato de custo zero. Com custo real cai para 0,91 — abaixo de 1. Os pares com PF alto tem 3 a 5 trades.
+
+O reteste foi feito porque o motor de backtest mudou depois do veredito
+original: valia conferir se alguma reprovacao tinha sido injusta. Nenhuma foi —
+todas as cinco estrategias arquivadas pioraram, o que e o esperado quando o
+custo de execucao deixa de ser subestimado em 100x. Ver
+`docs/reports/gate-a-revalidacao-2026-09-04.md`.

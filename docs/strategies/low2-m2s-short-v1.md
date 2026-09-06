@@ -240,3 +240,26 @@ Pipeline: implementação espelhada (15 testes sintéticos, 179 totais, clippy l
 **ARQUIVADA** — mesmo destino da failure-test-long-v1 e da breakout-first-pullback-v1: código fica no repositório (testado, inerte, sem instância live), doc permanece como registro. Revisitar só como `low2-m2s-short-v1.1` com decisão explícita, idealmente quando houver um trecho de bear market na base (a estratégia é o hedge natural do portfólio long-heavy — o dia que o regime virar, ela merece re-teste com o filtro de "strong bear trend day" do Cap. 15 implementado de verdade).
 
 **Custo total da candidata:** ~2h de engenharia e um backtest — o funil funcionando como foi desenhado.
+
+---
+
+## 17. Reteste com o motor corrigido (2026-09-04) — REPROVACAO CONFIRMADA
+
+Backtest de 24/02/2025 a 02/09/2026 sobre 14 ativos, com o motor depois das
+correcoes ADR-015 (overshoot), A3 (expiracao da entrada), A4 (custo de execucao
+realista de ~2 bp na entrada E na saida, mais gap no stop) e C5 (contabilidade
+de caixa do short).
+
+| | Resultado |
+|---|---|
+| Amostra | 920 trades em 14 ativos |
+| Profit factor | **0,66** |
+| P&L | -83.485 |
+
+PIOROU com o motor corrigido: era -55k, virou -83,5k. Isto refuta a hipotese que motivou o reteste — a contabilidade de caixa do short corrompida (C5) estava INFLANDO o resultado, nao escondendo edge. Melhor par QQQ com PF 1,19 em 58 trades, longe da barra.
+
+O reteste foi feito porque o motor de backtest mudou depois do veredito
+original: valia conferir se alguma reprovacao tinha sido injusta. Nenhuma foi —
+todas as cinco estrategias arquivadas pioraram, o que e o esperado quando o
+custo de execucao deixa de ser subestimado em 100x. Ver
+`docs/reports/gate-a-revalidacao-2026-09-04.md`.

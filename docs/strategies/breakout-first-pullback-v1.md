@@ -230,3 +230,26 @@ Registro: `strategies/mod.rs`, `dispatch.rs`, `config/strategies/breakout-first-
 - Backtest 17,5 meses × 6 ativos (runs 75–80): **1–2 trades por ativo** no período inteiro (9 trades no total). A conjunção (nível de 80 candles + primeira tentativa + expansão + pullback controlado + stop no pivô) é rara demais em 15min de ETF — amostra estatística impossível.
 - Iterações documentadas: calibração de expansão (range 1,5→1,2 após medir p75=1,20 na distribuição real; volume 1,5→1,1; stop 3→4×ATR) e 3 formulações da regra de "primeira tentativa" até a fiel ao livro (rompimento anterior à janela do nível). Mesmo calibrada, a frequência não viabiliza validação.
 - **Decisão:** arquivada. Não vai ao live. Revisão só com mudança estrutural (ex.: operar em timeframe menor ou universo de ações individuais — fora do escopo atual).
+
+---
+
+## 17. Reteste com o motor corrigido (2026-09-04) — REPROVACAO CONFIRMADA
+
+Backtest de 24/02/2025 a 02/09/2026 sobre 14 ativos, com o motor depois das
+correcoes ADR-015 (overshoot), A3 (expiracao da entrada), A4 (custo de execucao
+realista de ~2 bp na entrada E na saida, mais gap no stop) e C5 (contabilidade
+de caixa do short).
+
+| | Resultado |
+|---|---|
+| Amostra | 21 trades em 12 ativos |
+| Profit factor | **0,92** |
+| P&L | -611 |
+
+Continua rara demais: 21 trades em 18 meses e 12 ativos. Os 'melhores' pares tem 2 trades cada (IWN PF 3,78, IWV 3,53) — ruido puro, nao sinal.
+
+O reteste foi feito porque o motor de backtest mudou depois do veredito
+original: valia conferir se alguma reprovacao tinha sido injusta. Nenhuma foi —
+todas as cinco estrategias arquivadas pioraram, o que e o esperado quando o
+custo de execucao deixa de ser subestimado em 100x. Ver
+`docs/reports/gate-a-revalidacao-2026-09-04.md`.
