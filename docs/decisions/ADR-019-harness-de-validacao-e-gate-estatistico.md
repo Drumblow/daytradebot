@@ -1,6 +1,8 @@
 # ADR-019 — Harness de validação e gate A estatístico
 
-**Status:** proposto / especificado — NÃO implementado (07/09/2026)
+**Status:** **IMPLEMENTADO** em 07/09/2026, exceto o item 8 (relatório em
+Python, `trader-research/`) e o dedupe do item 3 — ver "Ajustes feitos na
+implementação" ao final. Números em `docs/reports/gate-a-com-flatten-2026-09-07.md` §7.
 **Data:** 2026-09-07
 **Fecha:** itens §5.2 e §5.3 (e a nota de §2.6 sobre o walk-forward) de
 `docs/cto-plano-lucratividade-2026-09.md`; o "Deflated Sharpe ainda pendente"
@@ -325,3 +327,106 @@ da função e devolve estatística; nenhum valor monetário volta de f64.
 5. Atualizar `docs/strategy-analysis-framework.md` (Fase 7: critérios do
    item 7 e relatório do item 8) e `docs/runbooks/go-live-checklist.md`
    quando o dono aprovar este ADR.
+
+---
+
+## Ajustes feitos na implementação (07/09/2026)
+
+### O que entrou
+
+| Item do ADR | Onde |
+|---|---|
+| 1. `--output`, `--slippage-bps` (Decimal), `--label`, `--holdout-from`, `--strategy-config` no `walkforward` | `commands/walkforward.rs`, `main.rs` |
+| 2. `--set chave=valor` + `#[serde(deny_unknown_fields)]` nos 9 `StrategyParameters` | `strategy_source.rs` (novo), `strategies/*/config.rs` |
+| 3. `latest_for(estratégia, par, config_hash)` ignorando experimentais; `slippage_bps`/`session_flatten`/`experimental`/`overrides`/`windows`/`holdout_from` no jsonb `metrics`; índice `0005` | `backtest_run_repository.rs`, `commands/analyze.rs`, migração 0005 |
+| 4. `profit_factor_r`, `t_stat_avg_r`, `corr_risk_result`, quebra por direção e por hora **ET**, concentração por dia e por mês, `cost_total` | `metrics.rs` |
+| 5. `strategy_id`/`strategy_version`/`config_hash`/`market_snapshot` do sinal chegando ao `Trade.journal` do simulador | `execution/mod.rs`, `simulated/broker.rs` |
+| 6. `print_acceptance` com PF_R, concentração, t-stat, corr, long/short e o aviso de amostra | `commands/walkforward.rs` |
+| 7. Gate proposto impresso **como proposta**, separado do veredito do ADR-010 | idem |
+
+### Três decisões diferentes do texto
+
+**1. O gate do §7 é impresso, não aplicado.** Os critérios novos (PF_R ≥ 1,2,
+2 melhores meses ≤ 60%) aparecem sob a linha
+`--- proposta ADR-019 §7 (ainda não é o gate vigente) ---`. Adotá-los
+formalmente é a decisão 2 do dono (plano §10) e substitui o ADR-010; até lá o
+veredito que vale é o dos seis critérios de cima. Imprimir os dois lado a lado
+é o que permite ao dono decidir olhando o efeito real.
+
+**2. O dedupe de `backtest_runs` NÃO foi feito, e a migração explica por quê.**
+O ADR pede índice único em
+`(strategy_id, asset_id, config_hash, period_start, period_end, label)`
+precedido de dedupe. A auditoria de 07/09 mediu o que isso apagaria: dentro do
+maior grupo duplicado (24 linhas) há **sete valores distintos de
+`final_equity`**. Não são cópias — o `config_hash` cobre só o TOML da
+estratégia, e não a versão do motor, o slippage nem a régua de fim de sessão.
+Deduplicar por essa chave apagaria resultados diferentes entre si e destruiria
+a evidência de que o motor mudou. A migração `0005` cria só o **índice de
+busca**; o único e o dedupe ficam para quando a identidade do run for
+recuperável (os runs a partir daqui já gravam `slippage_bps` e
+`session_flatten`) **e** o dono autorizar apagar linhas.
+
+**3. `--set` não confia no parser de TOML para tipar o valor.** TOML tem
+literal de hora: `x = 11:45:00` faz parse como `Datetime`. Todos os campos de
+horário das estratégias são `String`, então o valor tipado quebraria o parse
+com uma mensagem incompreensível — justamente em `trading_end_time`, o
+override que as v2 de janela horária (§6.10) vão usar. Só inteiro, float,
+booleano e string entre aspas são tipados; o resto vira string. Coberto por
+teste.
+
+### As travas contra "ablação barata vira baseline"
+
+Verificadas com dado real em 07/09:
+
+- `--set` sem `--label` → aborta.
+- `--set` numa chave inexistente → aborta no parse, listando as chaves válidas.
+- `--set` com o mesmo valor do arquivo → aborta ("o `config_hash` continua …").
+- `--set` junto com `--holdout-from` → aborta.
+- `--holdout-from` com data inválida → **erro**, não holdout desligado em
+  silêncio (o padrão `.ok()` de `--from`/`--to` faria isso).
+- TOML de `--strategy-config` cujo `strategy.id` não bate com `--strategy` →
+  aborta (o `dispatch` casa pelo argumento, não pelo arquivo).
+- Uma ablação real (`--set target_r_multiple=3`, run 741) ficou como o run
+  **mais recente** da estratégia e o `analyze` continuou escolhendo o run 740,
+  o de produção. Sob o código antigo ela teria virado o baseline.
+
+### O que o PF em R mostrou, e não era esperado nesta intensidade
+
+Gate A OOS com flatten, hotfix ET e o harness (runs `gate-a-adr019`):
+
+| Estratégia · par | PF em $ | **PF em R** | 2 melhores meses | t-stat | corr(risco, R) |
+|---|---|---|---|---|---|
+| balance · IJS | 2,54 | 1,91 | 90% | 1,42 | 0,13 |
+| balance · VBR | 1,51 | **0,97** | 113% | −0,07 | 0,27 |
+| balance · AVUV | 1,43 | **0,74** | 115% | **−0,80** | **0,57** |
+| fade · AVUV | 1,47 | 1,37 | 128% | 0,75 | 0,10 |
+| fade · SLYV | 2,64 | 2,34 | **59%** | 1,86 | 0,04 |
+| openrev · IWM | 1,72 | 2,03 | 110% | 1,88 | −0,28 |
+| openrev · IWN | 1,56 | 1,56 | 74% | 1,08 | −0,02 |
+
+Leituras:
+
+1. **A balance-area em AVUV e VBR tem PF em R abaixo de 1** — ou seja, em
+   unidades de risco ela perde. O PF em dólares acima de 1 vem da correlação
+   entre tamanho e resultado (0,57 em AVUV, a mais alta do conjunto), que é o
+   cap de notional produzindo tamanho maior justamente nos trades de stop
+   largo. Isto reforça, por um segundo caminho independente, o veredito do
+   ADR-018.
+2. **Só a fade em SLYV passa no critério de concentração.** Todos os outros
+   ficam entre 74% e 128% (acima de 100% significa que os demais meses somam
+   negativo).
+3. **Nenhum t-stat chega a 2.** O de AVUV é negativo.
+4. A openrev **inverte** (PF_R > PF$, corr negativa), como a re-simulação
+   previa.
+
+### Pendente
+
+- **Item 8 — relatório estatístico em Python (`trader-research/`).** PSR, DSR
+  como faixa, IC95 por bootstrap estacionário em blocos, MC de drawdown. É o
+  §5.3 do plano e agora é possível, porque o `--output` do walk-forward passou
+  a existir. Sem ele, o critério "limite inferior do IC95 em blocos ≥ 1,0" do
+  §7 não tem como ser avaliado.
+- **`n_trials` / `trial_group`** não são gravados: o N da família continua
+  sendo estimativa declarada em relatório, como o próprio ADR admite.
+- **Custo por ativo** (comissão por ação, spread no alvo) é o §5.6 do plano e
+  não entrou aqui; todos os números acima usam US$ 0,35/perna.

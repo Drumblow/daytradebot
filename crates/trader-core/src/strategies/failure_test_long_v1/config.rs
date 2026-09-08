@@ -27,6 +27,11 @@ pub struct StrategyWithParameters {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// Chave desconhecida no TOML passa a FALHAR (ADR-019 §2): sem isto um
+// `--set` com typo era ignorado em silêncio e o run saía com a config
+// canônica sob outro rótulo. É infra de parse, não regra — não muda a
+// serialização nem o `config_hash`.
+#[serde(deny_unknown_fields)]
 pub struct StrategyParameters {
     pub operational_timeframe: String,
 

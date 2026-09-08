@@ -886,6 +886,35 @@ mod tests {
         );
     }
 
+    /// ADR-019 §5: o trade do backtest tem de nascer com a mesma identidade
+    /// que o live grava. Antes disto ele saía com `strategy_id = "unknown"` e
+    /// `journal = {}`, e qualquer corte por bucket (PF por distância de stop,
+    /// por tipo de dia) exigia sair do motor para um script com outra régua.
+    #[tokio::test]
+    async fn trade_do_backtest_carrega_identidade_e_snapshot() {
+        let candles = rth_hold_series("SPY", 2);
+        let mut engine =
+            BacktestEngine::new(BacktestConfig::default(), default_backtest_risk_config());
+        let run = engine.run(&AlwaysSignal, &candles).await.unwrap();
+
+        let trade = run
+            .closed_trades
+            .first()
+            .expect("a série gera ao menos um trade");
+        assert_eq!(trade.strategy_id, "always-signal");
+        assert_eq!(trade.strategy_version, "0.0.1");
+        assert_eq!(trade.config_hash, "test");
+        assert_eq!(
+            trade.journal.get("source").and_then(|v| v.as_str()),
+            Some("simulated_broker")
+        );
+        assert!(
+            trade.journal.get("market_snapshot").is_some(),
+            "o snapshot do sinal tem de chegar ao journal; veio {}",
+            trade.journal
+        );
+    }
+
     /// A entrada stop que não encheu até o sino é cancelada — no live ela vai
     /// com TIF Day e morre lá. Se sobrevivesse, encheria na abertura do dia
     /// seguinte, num preço que o live nunca veria.

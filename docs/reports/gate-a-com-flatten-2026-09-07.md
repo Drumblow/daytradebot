@@ -142,3 +142,49 @@ absoluto do último bloco, justamente o que §4 lê como sinal de regime. A
 reingestão dos 6 símbolos parados e a correção do feed (§5.6 e §5.8 do plano)
 vêm antes de qualquer baseline definitivo; até lá, o veredito de §3 vale como
 "a régua certa aplicada aos dados que temos", não como número final.
+
+
+---
+
+## 7. Releitura com o harness do ADR-019 — PF em R e concentração
+
+Os runs `gate-a-adr019` (07/09) refazem o gate A com o flatten, o hotfix ET e
+as métricas novas. As duas colunas que o gate não tinha:
+
+| Estratégia · par | n | PF em $ | **PF em R** | 2 melhores meses | t-stat avg R | corr(risco, R) | melhor dia |
+|---|---|---|---|---|---|---|---|
+| balance · IJS | 23 | 2,54 | 1,91 | 90% | 1,42 | 0,13 | 43% |
+| balance · VBR | 34 | 1,51 | **0,97** | 113% | −0,07 | 0,27 | 74% |
+| balance · AVUV | 35 | 1,43 | **0,74** | 115% | **−0,80** | **0,57** | 67% |
+| fade · AVUV | 26 | 1,47 | 1,37 | 128% | 0,75 | 0,10 | 47% |
+| fade · SLYV | 20 | 2,64 | 2,34 | **59%** | 1,86 | 0,04 | 22% |
+| openrev · IWM | 32 | 1,72 | 2,03 | 110% | 1,88 | −0,28 | 39% |
+| openrev · IWN | 26 | 1,56 | 1,56 | 74% | 1,08 | −0,02 | 31% |
+
+**1. A balance-area perde em R nos dois pares que já reprovavam.** PF_R 0,74
+em AVUV e 0,97 em VBR: em unidades de risco, essas instâncias não têm edge. O
+PF em dólares acima de 1 vem da correlação entre tamanho e resultado (0,57 em
+AVUV, a mais alta do conjunto) — o cap de notional põe posição maior
+justamente nos trades de stop largo, e stop largo ganha. É o achado 4 de §2.3
+do plano medido pelo motor, e reforça o veredito do ADR-018 por um caminho
+independente.
+
+**2. Só a fade em SLYV passa no critério de concentração** (59% contra o teto
+proposto de 60%). Todas as outras ficam entre 74% e 128% — acima de 100%
+significa que a soma dos demais meses é negativa.
+
+**3. Nenhum t-stat chega a 2**; o de AVUV é **negativo**. Com 20–35 trades
+isso é o esperado, e é o motivo de o plano tratar DSR/PSR como relatório e não
+como gate. Mas fecha o quadro: não há aqui nenhuma combinação estatisticamente
+distinguível de ruído.
+
+**4. A openrev inverte o sinal** (PF_R acima do PF$, correlação negativa entre
+risco e R), exatamente como a re-simulação previa.
+
+**Se o gate proposto no ADR-019 §7 valesse hoje** — e ele ainda não vale, é
+decisão do dono — o resultado seria: **nenhuma das sete combinações passa**, e
+a que chega mais perto é `range-extreme-fade-v1` em SLYV, reprovada só pelos
+20 trades contra os 50 exigidos. Isso não muda o que fazer no curto prazo (o
+paper forward segue sendo o único OOS verdadeiro e a amostra é o gargalo), mas
+muda a expectativa: a régua certa, aplicada aos dados que existem, não aprova
+nada.

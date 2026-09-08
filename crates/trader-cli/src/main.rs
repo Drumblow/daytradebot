@@ -9,6 +9,7 @@ mod commands;
 mod config;
 mod dispatch;
 mod risk_config;
+mod strategy_source;
 mod synthetic;
 
 use config::CliConfig;
@@ -149,6 +150,25 @@ enum Commands {
         /// os runs 413–421 e medir o delta; não vale como gate A.
         #[arg(long)]
         no_flatten: bool,
+        /// Exporta o resultado (janelas, métricas, trades do holdout) em JSON.
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Slippage por execução em pontos-base (aceita fração: 2.5).
+        #[arg(long)]
+        slippage_bps: Option<rust_decimal::Decimal>,
+        /// Rótulo do run. Obrigatório com --set/--strategy-config.
+        #[arg(long)]
+        label: Option<String>,
+        /// Bloco final travado (YYYY-MM-DD). Nunca entra em seleção; roda uma
+        /// vez por família de hipótese.
+        #[arg(long)]
+        holdout_from: Option<String>,
+        /// TOML alternativo para a mesma struct de parâmetros.
+        #[arg(long)]
+        strategy_config: Option<String>,
+        /// Sobrescreve um parâmetro: --set chave=valor (repetível).
+        #[arg(long = "set")]
+        set: Vec<String>,
     },
     /// Analisa resultados do live/paper e compara com o backtest mais recente.
     Analyze {
@@ -361,6 +381,12 @@ async fn main() -> Result<()> {
             timeframe,
             windows,
             no_flatten,
+            output,
+            slippage_bps,
+            label,
+            holdout_from,
+            strategy_config,
+            set,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -368,6 +394,19 @@ async fn main() -> Result<()> {
             let to = to
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
                 .map(|d| d.and_hms_opt(23, 59, 59).unwrap().and_utc());
+            // Data inválida aqui NÃO pode virar `None`: o padrão `.ok()` usado
+            // em `--from`/`--to` desligaria o holdout em silêncio, e um run sem
+            // holdout parece exatamente com um run com holdout que não cortou
+            // nada (ADR-019, riscos).
+            let holdout_from = holdout_from
+                .map(|s| {
+                    chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                        .map_err(|e| {
+                            anyhow::anyhow!("--holdout-from inválido ({s}): {e}. Use YYYY-MM-DD.")
+                        })
+                })
+                .transpose()?;
 
             commands::walkforward::run(
                 &app_config,
@@ -379,6 +418,12 @@ async fn main() -> Result<()> {
                     timeframe: timeframe.into(),
                     windows,
                     no_flatten,
+                    output,
+                    slippage_bps,
+                    label,
+                    holdout_from,
+                    strategy_config,
+                    set,
                 },
             )
             .await

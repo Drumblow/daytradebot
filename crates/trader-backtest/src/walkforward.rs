@@ -17,7 +17,11 @@ use crate::engine::{BacktestConfig, BacktestEngine};
 use crate::metrics::BacktestMetrics;
 
 /// Resultado de uma janela de walk-forward.
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` existem para o `--output` do ADR-019: sem eles o
+/// walk-forward só imprimia, e toda estatística de §5.3 tinha de ser refeita a
+/// partir dos JSONs de `backtest`, com outra régua.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WindowResult {
     pub window: usize,
     pub train_start: DateTime<Utc>,
@@ -29,7 +33,7 @@ pub struct WindowResult {
 }
 
 /// Resultado agregado do walk-forward.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WalkForwardResult {
     pub windows: Vec<WindowResult>,
     /// Todos os trades out-of-sample concatenados (a amostra que conta).

@@ -191,8 +191,20 @@ fn build_bracket_order(signal: &Signal, position_size: Decimal) -> Result<Order,
     order.stop_price = signal.stop_price;
     order.target_price = signal.target_price;
     order.time_in_force = trader_domain::TimeInForce::Day;
+    // ADR-019 §5: a identidade da estrategia e o snapshot do sinal viajam na
+    // ordem ate virarem `Trade.journal`. Sem isto, todo trade de backtest
+    // nascia anonimo (`strategy_id = "unknown"`, `journal = {}`) e qualquer
+    // corte por bucket -- PF por distancia de stop, por tipo de dia -- exigia
+    // sair do motor para um script em Python, com outra regua.
+    //
+    // O `paper.rs` ja gravava isso no live; aqui e paridade de DADO, nao de
+    // regra: nada muda em como a ordem e enviada.
     order.metadata = serde_json::json!({
         "entry_order_type": signal.entry_order_type,
+        "strategy_id": signal.strategy_id,
+        "strategy_version": signal.strategy_version,
+        "config_hash": signal.config_hash,
+        "market_snapshot": signal.market_snapshot,
     });
 
     Ok(order)

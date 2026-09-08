@@ -28,6 +28,46 @@ pub struct Args {
     /// Só para reproduzir os runs 413–421 e medir o delta por par. Nenhum
     /// veredito de gate A sai de um run com esta flag.
     pub no_flatten: bool,
+    /// Exporta o resultado completo (janelas + trades OOS) em JSON.
+    pub output: Option<String>,
+    /// Slippage por execução em pontos-base. `Decimal` de propósito: 2,5 bp
+    /// precisa existir para a sensibilidade ao custo do ADR-016.
+    pub slippage_bps: Option<Decimal>,
+    /// Rótulo do run. **Obrigatório** quando houver override — sem ele a
+    /// ablação vira baseline do gate B pelo `created_at` (ADR-019 §3).
+    pub label: Option<String>,
+    /// Bloco final travado (data ET). Nunca entra em seleção; roda uma vez
+    /// por família de hipótese e é reportado em separado.
+    pub holdout_from: Option<DateTime<Utc>>,
+    /// TOML alternativo para a MESMA struct de parâmetros.
+    pub strategy_config: Option<String>,
+    /// Sobrescritas `chave=valor` em `[strategy.parameters]`.
+    pub set: Vec<String>,
+}
+
+/// Bloco de saída do `--output`: o resultado do walk-forward mais o que
+/// define o run.
+///
+/// Sem os metadados, dois JSONs de ablações diferentes são indistinguíveis —
+/// que é o problema que o ADR-019 chama de "a primeira ablação vira baseline".
+#[derive(serde::Serialize)]
+struct WalkForwardOutput<'a> {
+    symbol: &'a str,
+    strategy_id: &'a str,
+    strategy_version: &'a str,
+    config_hash: &'a str,
+    timeframe: String,
+    windows: usize,
+    slippage_bps: String,
+    session_flatten: Option<String>,
+    label: &'a str,
+    experimental: bool,
+    overrides: Vec<(String, String)>,
+    strategy_source: &'a str,
+    holdout_from: Option<DateTime<Utc>>,
+    selection: &'a trader_backtest::WalkForwardResult,
+    holdout: Option<&'a trader_backtest::BacktestMetrics>,
+    holdout_trades: Vec<trader_domain::Trade>,
 }
 
 /// Executa análise walk-forward (anchored) sobre dados reais do banco.
@@ -48,10 +88,51 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     println!("   Timeframe: {}", args.timeframe);
     println!("   Janelas:   {}", args.windows);
 
-    let strategy_path = format!("config/strategies/{}.toml", args.strategy);
-    let strategy_toml = std::fs::read_to_string(&strategy_path)
-        .with_context(|| format!("falha ao ler config da estratégia em {}", strategy_path))?;
-    let strategy = crate::dispatch::load_strategy(&args.strategy, &strategy_toml)?;
+    // ADR-019 §1/§2: a config pode vir do TOML canônico, de um alternativo
+    // (`--strategy-config`) ou do canônico com `--set`. As travas contra
+    // "ablação barata vira baseline em silêncio" ficam todas aqui.
+    let resolvido = crate::strategy_source::resolve(
+        &args.strategy,
+        args.strategy_config.as_deref(),
+        &args.set,
+    )?;
+    let strategy = crate::dispatch::load_strategy(&args.strategy, &resolvido.toml)?;
+
+    if resolvido.is_experimental {
+        // Sem rótulo, o `analyze` escolhe o baseline do gate B por
+        // `created_at` e a primeira ablação toma o lugar da produção.
+        if args.label.is_none() {
+            anyhow::bail!(
+                "--label é obrigatório com --set/--strategy-config: sem ele este run \
+                 entra no histórico indistinguível do run de produção e pode virar \
+                 baseline do gate B por ordem de chegada (ADR-019 §3)."
+            );
+        }
+        // O `config_hash` sai da struct JÁ desserializada: chave inexistente é
+        // descartada no parse e o hash não muda. Se não mudou, o `--set` não
+        // fez nada e o rótulo mentiria.
+        if !args.set.is_empty() {
+            let canonico = crate::strategy_source::canonical_config_hash(&args.strategy)?;
+            if strategy.config_hash() == canonico {
+                anyhow::bail!(
+                    "o --set não alterou a configuração (config_hash continua {canonico}). \
+                     Ou a chave não existe, ou o valor é igual ao do arquivo — nos dois \
+                     casos o run seria rotulado como ablação sem ser uma."
+                );
+            }
+        }
+        if args.holdout_from.is_some() {
+            anyhow::bail!(
+                "--holdout-from não pode ser usado com --set/--strategy-config: o holdout \
+                 roda UMA vez por família de hipótese e não participa de seleção \
+                 (ADR-019 §1)."
+            );
+        }
+        println!("   ⚗️  Experimental: {}", resolvido.source);
+        for (k, v) in &resolvido.overrides {
+            println!("      --set {k}={v}");
+        }
+    }
 
     let database_url = config
         .app_config
@@ -88,11 +169,53 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         to.date_naive()
     );
 
+    // Holdout travado (ADR-019 §1, plano §3.4). O walk-forward do repo NÃO é
+    // OOS em relação ao desenho das regras — as estratégias são funções puras
+    // e nada é re-ajustado, então o "OOS" é a mesma rodada determinística
+    // depois do primeiro bloco. O holdout é a única fatia que nenhuma seleção
+    // toca, e por isso tem de sair da série ANTES de `split_windows`: se
+    // ficasse, entraria nos blocos de treino e deixaria de ser holdout.
+    let (selecao, holdout_candles) = match args.holdout_from {
+        Some(corte) => {
+            let idx = candles.partition_point(|c| c.timestamp < corte);
+            if idx == 0 {
+                anyhow::bail!(
+                    "--holdout-from {} é anterior ao primeiro candle ({}): não sobra \
+                     nada para a seleção.",
+                    corte.date_naive(),
+                    candles[0].timestamp.date_naive()
+                );
+            }
+            if idx == candles.len() {
+                anyhow::bail!(
+                    "--holdout-from {} é posterior ao último candle ({}): o holdout \
+                     ficaria vazio.",
+                    corte.date_naive(),
+                    candles[candles.len() - 1].timestamp.date_naive()
+                );
+            }
+            println!(
+                "   🔒 Holdout:  {} candles a partir de {} — travados, fora da seleção\n",
+                candles.len() - idx,
+                corte.date_naive()
+            );
+            (&candles[..idx], Some(&candles[idx..]))
+        }
+        None => (&candles[..], None),
+    };
+
     let backtest_config = BacktestConfig {
         symbol: args.symbol.clone(),
         entry_validity_candles: strategy.entry_validity_candles() as u32,
         time_exit: strategy.time_exit(),
         session_flatten_et: super::session_flatten_et(&config.app_config.session, args.no_flatten),
+        // Até o ADR-019 o walk-forward herdava 2 bp do `default()` sem ninguém
+        // poder mudar: toda sensibilidade ao custo (ADR-016) tinha de ser
+        // rodada no `backtest`, com outra régua.
+        slippage_pct: args
+            .slippage_bps
+            .map(|bps| bps / Decimal::from(10_000))
+            .unwrap_or_else(|| BacktestConfig::default().slippage_pct),
         ..BacktestConfig::default()
     };
     if args.no_flatten {
@@ -106,12 +229,34 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
 
     let result = run_walk_forward(
         &strategy,
-        &candles,
+        selecao,
         args.windows,
         &backtest_config,
         risk_config,
     )
     .await?;
+
+    // O holdout roda como UM backtest sobre a série inteira (o warm-up dos
+    // indicadores precisa dos candles anteriores) e conta só os trades que
+    // entram depois do corte. Nunca participou de seleção nenhuma.
+    let (holdout_metrics, holdout_trades) = match (args.holdout_from, holdout_candles) {
+        (Some(corte), Some(_)) => {
+            let mut engine =
+                trader_backtest::BacktestEngine::new(backtest_config.clone(), risk_config);
+            let run = engine.run(&strategy, &candles).await?;
+            let trades: Vec<trader_domain::Trade> = run
+                .closed_trades
+                .into_iter()
+                .filter(|t| t.entry_time >= corte)
+                .collect();
+            let m = trader_backtest::BacktestMetrics::from_trades(
+                &trades,
+                backtest_config.initial_capital,
+            );
+            (Some(m), trades)
+        }
+        _ => (None, Vec::new()),
+    };
 
     // Relatório por janela: degradação IS → OOS indica sobreajuste/regime.
     println!("{:-<100}", "");
@@ -153,7 +298,99 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     );
     print_acceptance(m.total_trades, m);
 
+    // O holdout é reportado SEPARADO e nunca somado à seleção: misturá-los
+    // desfaria a única fatia que nenhuma escolha tocou.
+    if let Some(h) = &holdout_metrics {
+        println!("\n🔒 Holdout travado (rodado UMA vez, fora de qualquer seleção):");
+        println!("   Trades:        {}", h.total_trades);
+        println!("   Win rate:      {:.1}%", h.win_rate);
+        println!("   Profit factor: {}", h.profit_factor_display());
+        println!("   Avg R/trade:   {:.3}", h.avg_r_per_trade);
+        println!("   Net P&L:       {:.2}", h.net_pnl);
+        println!();
+        print_acceptance(h.total_trades, h);
+    }
+
+    let slippage_bps = (backtest_config.slippage_pct * Decimal::from(10_000)).normalize();
+    let label = args
+        .label
+        .clone()
+        .unwrap_or_else(|| format!("walkforward-oos-{}w", args.windows));
+
+    if let Some(path) = &args.output {
+        let strategy_id = strategy.id();
+        let config_hash = strategy.config_hash();
+        let saida = WalkForwardOutput {
+            symbol: &args.symbol,
+            strategy_id: &strategy_id.id,
+            strategy_version: &strategy_id.version,
+            config_hash: &config_hash,
+            timeframe: format!("{:?}", args.timeframe),
+            windows: args.windows,
+            slippage_bps: slippage_bps.to_string(),
+            session_flatten: backtest_config
+                .session_flatten_et
+                .map(|(h, mi)| format!("{h:02}:{mi:02}")),
+            label: &label,
+            experimental: resolvido.is_experimental,
+            overrides: resolvido.overrides.clone(),
+            strategy_source: &resolvido.source,
+            holdout_from: args.holdout_from,
+            selection: &result,
+            holdout: holdout_metrics.as_ref(),
+            holdout_trades,
+        };
+        let json = serde_json::to_string_pretty(&saida)
+            .context("falha ao serializar o resultado do walk-forward")?;
+        std::fs::write(path, json)
+            .with_context(|| format!("falha ao escrever relatório em {path}"))?;
+        println!("\n   Resultado exportado para {path}");
+    }
+
     // Persiste o run agregado OOS para histórico.
+    //
+    // O jsonb `metrics` ganha o que define o run além dos números (ADR-019
+    // §3): sem `slippage_bps`, `overrides` e `session_flatten` gravados, dois
+    // runs com custo ou régua diferentes são indistinguíveis no banco e o
+    // `analyze` pode pegar o errado como baseline do gate B.
+    let mut metrics_json =
+        serde_json::to_value(m).unwrap_or(serde_json::Value::Object(Default::default()));
+    if let Some(obj) = metrics_json.as_object_mut() {
+        obj.insert("slippage_bps".into(), slippage_bps.to_string().into());
+        obj.insert(
+            "session_flatten".into(),
+            match backtest_config.session_flatten_et {
+                Some((h, mi)) => format!("{h:02}:{mi:02}").into(),
+                None => serde_json::Value::Null,
+            },
+        );
+        obj.insert("experimental".into(), resolvido.is_experimental.into());
+        obj.insert(
+            "overrides".into(),
+            serde_json::Value::Object(
+                resolvido
+                    .overrides
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect(),
+            ),
+        );
+        obj.insert("windows".into(), args.windows.into());
+        obj.insert(
+            "holdout_from".into(),
+            match args.holdout_from {
+                Some(d) => d.to_rfc3339().into(),
+                None => serde_json::Value::Null,
+            },
+        );
+        if let Some(h) = &holdout_metrics {
+            obj.insert(
+                "holdout_metrics".into(),
+                serde_json::to_value(h).unwrap_or(serde_json::Value::Null),
+            );
+        }
+    }
+
     let record = BacktestRunRecord {
         symbol: args.symbol.clone(),
         strategy_id: strategy.id().id,
@@ -164,8 +401,8 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         period_end: candles.last().map(|c| c.timestamp).unwrap_or(to),
         initial_capital: backtest_config.initial_capital,
         final_equity: backtest_config.initial_capital + m.net_pnl,
-        metrics: serde_json::to_value(m).unwrap_or(serde_json::Value::Object(Default::default())),
-        label: Some(format!("walkforward-oos-{}w", args.windows)),
+        metrics: metrics_json,
+        label: Some(label),
     };
     let run_repo = SqlxBacktestRunRepository::new(pool);
     match run_repo.save(&record).await {
@@ -208,4 +445,66 @@ fn print_acceptance(total_trades: usize, m: &trader_backtest::BacktestMetrics) {
         m.net_pnl > Decimal::ZERO,
         format!("expectativa positiva (net P&L: {:.2})", m.net_pnl),
     );
+
+    // Critérios propostos pelo ADR-019 §7. Impressos como PROPOSTA enquanto o
+    // dono não os adotar formalmente (decisão 2 do §10 do plano): o veredito
+    // do ADR-010 continua sendo o de cima.
+    println!("   --- proposta ADR-019 §7 (ainda não é o gate vigente) ---");
+    check(
+        m.profit_factor_r
+            .map(|pf| pf >= Decimal::new(12, 1))
+            .unwrap_or(m.total_trades > 0),
+        format!(
+            "PF em R ≥ 1.2 (atual: {}) — o PF em $ infla com o sizing",
+            m.profit_factor_r_display()
+        ),
+    );
+    check(
+        m.top2_month_share <= 0.60,
+        format!(
+            "2 melhores meses ≤ 60% do net (atual: {:.0}%, em {} meses, {} positivos)",
+            m.top2_month_share * 100.0,
+            m.months_total,
+            m.months_positive
+        ),
+    );
+
+    // Relatório obrigatório, não critério (plano §3.5): com < 100 trades
+    // nenhuma estratégia deste projeto alcança DSR 0,95, então estes números
+    // informam a leitura em vez de aprovar ou reprovar sozinhos.
+    println!(
+        "   [ i] t-stat do avg R: {:.2} · corr(risco, R): {:.2} · custo: {:.2}",
+        m.t_stat_avg_r, m.corr_risk_result, m.cost_total
+    );
+    println!(
+        "   [ i] concentração: melhor dia {:.0}% · top-5 dias {:.0}% · {} pregões com trade",
+        m.top_day_share * 100.0,
+        m.top5_day_share * 100.0,
+        m.trading_days
+    );
+    if !m.by_direction.is_empty() {
+        let lado = |k: &str| {
+            m.by_direction
+                .get(k)
+                .map(|g| {
+                    format!(
+                        "{} t / PF {}",
+                        g.trades,
+                        g.profit_factor
+                            .map(|pf| format!("{pf:.2}"))
+                            .unwrap_or_else(|| "∞".into())
+                    )
+                })
+                .unwrap_or_else(|| "-".into())
+        };
+        println!("   [ i] long: {} · short: {}", lado("long"), lado("short"));
+    }
+    // Sob a hipótese nula, com n≈25 por combinação, P(PF ≥ 1,3 | sem edge) =
+    // 0,20–0,28 (plano §3.3). O número acompanha todo veredito, por decisão.
+    if m.total_trades < 50 {
+        println!(
+            "   [ !] amostra de {} trades: sob a hipótese nula, P(PF ≥ 1,3 | sem edge)              fica em 0,20–0,28 com n≈25. Nenhum veredito aqui é conclusivo.",
+            m.total_trades
+        );
+    }
 }

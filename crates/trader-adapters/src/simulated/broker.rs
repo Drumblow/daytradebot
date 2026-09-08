@@ -36,6 +36,10 @@ struct PendingEntry {
     order_id: OrderId,
     signal_id: i64,
     candles_waiting: u32,
+    /// Metadados da ordem de entrada (identidade da estrategia + snapshot do
+    /// sinal). Viajam ate a `Position` e dai ate o `Trade.journal` (ADR-019
+    /// §5); sem isso o trade que nasce de uma entrada stop e anonimo.
+    metadata: serde_json::Value,
 }
 
 /// Estado interno do broker simulado.
@@ -299,6 +303,7 @@ impl SimulatedBroker {
                         let now = state.now;
                         position.entry_time = now;
                         position.target_price = Some(entry.target_price);
+                        position.metadata = entry.metadata.clone();
                         state.positions.insert(symbol.to_string(), position);
                         state.pending_exits.insert(
                             symbol.to_string(),
@@ -581,6 +586,7 @@ impl Broker for SimulatedBroker {
                 )
                 .map_err(|e| BrokerError::Internal(e.to_string()))?;
                 position.entry_time = state.now;
+                position.metadata = order.metadata.clone();
 
                 state.positions.insert(order.symbol.clone(), position);
 
@@ -619,6 +625,7 @@ impl Broker for SimulatedBroker {
                             order_id: id.clone(),
                             signal_id: order.signal_id.unwrap_or(0),
                             candles_waiting: 0,
+                            metadata: order.metadata.clone(),
                         },
                     );
 
@@ -639,6 +646,7 @@ impl Broker for SimulatedBroker {
                 )
                 .map_err(|e| BrokerError::Internal(e.to_string()))?;
                 position.entry_time = state.now;
+                position.metadata = order.metadata.clone();
 
                 state.positions.insert(order.symbol.clone(), position);
 
@@ -910,7 +918,17 @@ fn close_position_to_trade(
         strategy_id,
         strategy_version,
         config_hash,
-        journal: serde_json::Value::Object(Default::default()),
+        // O snapshot do sinal e a origem ficam no journal, como no live. E o
+        // que permite cortar os trades por bucket (distancia de stop, tipo de
+        // dia) sem sair do motor.
+        journal: serde_json::json!({
+            "source": "simulated_broker",
+            "market_snapshot": position
+                .metadata
+                .get("market_snapshot")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        }),
         correlation_id: position.correlation_id.clone(),
     })
 }

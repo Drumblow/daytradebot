@@ -10,6 +10,8 @@ name = "trader-cli"
 path = "src/main.rs"
 
 [dependencies]
+# `--set` do ADR-019 muta o TOML da estrategia antes do load_strategy.
+toml = "0.8"
 trader-domain = { path = "../trader-domain" }
 trader-core = { path = "../trader-core" }
 trader-infra = { path = "../trader-infra" }

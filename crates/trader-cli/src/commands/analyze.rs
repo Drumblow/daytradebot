@@ -51,6 +51,31 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("falha ao listar sinais: {e}"))?;
 
+    // A config canônica define o que o gate B está comparando: o baseline tem
+    // de ser o run da MESMA estratégia, no MESMO par e com o MESMO
+    // `config_hash` (ADR-019 §3). Sem isto, `latest_by_strategy` devolvia o
+    // run mais recente em qualquer símbolo e qualquer config — e a primeira
+    // ablação virava baseline por ordem de chegada.
+    let resolvido = crate::strategy_source::resolve(&args.strategy, None, &[])?;
+    let strategy = crate::dispatch::load_strategy(&args.strategy, &resolvido.toml)?;
+    let config_hash = strategy.config_hash();
+
+    // O lado live sofria do mesmo mal, ao contrário: os trades vinham
+    // filtrados só por símbolo. Num símbolo com duas instâncias (AVUV tem), a
+    // amostra misturava estratégias. `Trade` já carrega os dois campos.
+    let total_no_simbolo = trades.len();
+    let trades: Vec<_> = trades
+        .into_iter()
+        .filter(|t| t.strategy_id == args.strategy && t.config_hash == config_hash)
+        .collect();
+    if total_no_simbolo != trades.len() {
+        println!(
+            "   ({} de {} trades do símbolo são de outra estratégia ou config e ficaram de fora)",
+            total_no_simbolo - trades.len(),
+            total_no_simbolo
+        );
+    }
+
     // Trades marcados como artefato operacional (ex.: bug de latência já
     // corrigido) não entram na amostra de validação.
     let (artifacts, sample): (Vec<_>, Vec<_>) =
@@ -73,15 +98,18 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
 
     // --- Backtest mais recente ---
     let latest = runs_repo
-        .latest_by_strategy(&args.strategy)
+        .latest_for(&args.strategy, &args.symbol, &config_hash)
         .await
         .map_err(|e| anyhow::anyhow!("falha ao consultar backtest_runs: {e}"))?;
 
     let Some(run) = latest else {
+        // Avisa em vez de pegar outro run: comparar o live contra o backtest
+        // de outro par ou de outra config é pior do que não comparar.
         println!(
-            "\n⚠️  Nenhum run de backtest encontrado para '{}'. \
-             Rode 'trader-cli backtest' ou 'trader-cli walkforward' primeiro.",
-            args.strategy
+            "\n⚠️  Nenhum run de backtest para ({}, {}, config_hash {}). \
+             Rode 'trader-cli walkforward --symbol {} --strategy {}' com a config \
+             de produção antes de ler o gate B.",
+            args.strategy, args.symbol, config_hash, args.symbol, args.strategy
         );
         return Ok(());
     };
@@ -90,13 +118,31 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("métricas do run {} inválidas: {e}", run.id))?;
 
     println!(
-        "\n📊 Backtest mais recente (id={}, label={}, {}) — {} → {}:",
+        "\n📊 Backtest de referência (id={}, {} / {}, label={}, {}) — {} → {}:",
         run.id,
+        run.symbol,
+        run.config_hash,
         run.label.as_deref().unwrap_or("-"),
         run.created_at.date_naive(),
         run.period_start.date_naive(),
         run.period_end.date_naive()
     );
+    match run.metrics.get("slippage_bps").and_then(|v| v.as_str()) {
+        Some(slip) => {
+            let flatten = match run.metrics.get("session_flatten") {
+                Some(serde_json::Value::String(h)) => h.clone(),
+                Some(serde_json::Value::Null) => "DESLIGADO".to_string(),
+                _ => "não registrado".to_string(),
+            };
+            println!("   (slippage {slip} bp · flatten {flatten})");
+        }
+        // Runs anteriores ao ADR-019 não gravam custo nem régua: o número
+        // existe, mas não se sabe sob que condições saiu.
+        None => println!(
+            "   ⚠️  run anterior ao ADR-019: não registra slippage nem flatten — \
+             não é comparável com runs novos."
+        ),
+    }
     print_metrics(&bt_metrics);
 
     // --- Veredito: critérios de aceitação em paper ---

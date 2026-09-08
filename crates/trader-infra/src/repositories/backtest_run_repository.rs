@@ -63,6 +63,57 @@ impl SqlxBacktestRunRepository {
         Ok(id)
     }
 
+    /// Run mais recente **não experimental** de uma estratégia num par
+    /// específico e com um `config_hash` específico (ADR-019 §3).
+    ///
+    /// Existe porque `latest_by_strategy` filtra só por `strategy_id` e pega o
+    /// mais recente em QUALQUER símbolo e QUALQUER config: a primeira ablação
+    /// rodada vira o baseline do gate B, em silêncio. Runs com override são
+    /// marcados `experimental` no jsonb `metrics` e ficam de fora.
+    ///
+    /// Não substitui `latest_by_strategy` de propósito — o método antigo
+    /// continua servindo a quem quiser "o último run, qualquer que seja".
+    pub async fn latest_for(
+        &self,
+        strategy_id: &str,
+        symbol: &str,
+        config_hash: &str,
+    ) -> Result<Option<StoredBacktestRun>, RepositoryError> {
+        let row = sqlx::query_as!(
+            StoredRunRow,
+            r#"
+            SELECT
+                r.id,
+                a.symbol,
+                r.strategy_version,
+                r.config_hash,
+                r.timeframe,
+                r.period_start,
+                r.period_end,
+                r.final_equity,
+                r.metrics as "metrics!: serde_json::Value",
+                r.label,
+                r.created_at
+            FROM backtest_runs r
+            JOIN assets a ON a.id = r.asset_id
+            WHERE r.strategy_id = $1
+              AND a.symbol = $2
+              AND r.config_hash = $3
+              AND COALESCE((r.metrics ->> 'experimental')::boolean, false) = false
+            ORDER BY r.created_at DESC
+            LIMIT 1
+            "#,
+            strategy_id,
+            symbol,
+            config_hash
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepositoryError::Query(e.to_string()))?;
+
+        Ok(row.map(Into::into))
+    }
+
     /// Retorna o run mais recente de uma estratégia (qualquer label).
     pub async fn latest_by_strategy(
         &self,
