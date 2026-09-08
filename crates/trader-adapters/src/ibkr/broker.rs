@@ -194,10 +194,10 @@ impl Broker for IbkrBrokerAdapter {
             // String vazia na config significa "sem filtro de conta".
             let account_filter = self.config.account_id.as_deref().filter(|s| !s.is_empty());
 
-            let values = collect_account_summary_values(&mut subscription, account_filter).await;
+            let coletado = collect_account_summary_values(&mut subscription, account_filter).await;
 
             disconnect(&client).await;
-            let values = values?;
+            let (values, currencies) = coletado?;
 
             let get = |tag: &str| values.get(tag).copied().unwrap_or(Decimal::ZERO);
 
@@ -211,6 +211,7 @@ impl Broker for IbkrBrokerAdapter {
                 // separado); fica zero até que essa fonte seja integrada.
                 daily_pnl: Decimal::ZERO,
                 timestamp: Utc::now(),
+                currencies,
             })
         })
         .await
@@ -843,11 +844,17 @@ fn rejection_from_notice(notice: &Notice) -> Option<BrokerError> {
 ///
 /// Cada tag chega em múltiplas linhas (uma por moeda); preferimos a linha na
 /// moeda BASE para evitar valores convertidos/duplicados.
+/// Devolve os valores por tag e as moedas vistas (fora "BASE").
+///
+/// A moeda era descartada: a IBKR manda uma linha "BASE" (que não diz qual
+/// moeda é) e uma linha por moeda real. O sizing trata tudo como dólar, e o
+/// ADR-020 §5 quer isso registrado — não corrigido às cegas.
 async fn collect_account_summary_values(
     subscription: &mut Subscription<AccountSummaryResult>,
     account_filter: Option<&str>,
-) -> Result<HashMap<String, Decimal>, BrokerError> {
+) -> Result<(HashMap<String, Decimal>, Vec<String>), BrokerError> {
     let mut values: HashMap<String, Decimal> = HashMap::new();
+    let mut currencies: Vec<String> = Vec::new();
 
     while let Some(item) = subscription.next().await {
         match item {
@@ -858,6 +865,9 @@ async fn collect_account_summary_values(
                     }
                 }
                 let is_base = summary.currency == "BASE" || summary.currency.is_empty();
+                if !is_base && !currencies.contains(&summary.currency) {
+                    currencies.push(summary.currency.clone());
+                }
                 if is_base || !values.contains_key(&summary.tag) {
                     match Decimal::from_str(&summary.value) {
                         Ok(value) => {
@@ -880,7 +890,8 @@ async fn collect_account_summary_values(
         }
     }
 
-    Ok(values)
+    currencies.sort();
+    Ok((values, currencies))
 }
 
 /// Consome o replay inicial do stream de `positions` (até `PositionEnd`) e

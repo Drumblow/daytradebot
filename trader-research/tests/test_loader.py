@@ -38,7 +38,9 @@ def test_juntar_runs_com_slippage_diferente_e_erro(tmp_path):
 def test_mesma_regua_passa(tmp_path):
     a = _run(tmp_path, "a.json")
     b = _run(tmp_path, "b.json")
-    assert exige_mesma_regua([a, b]) == ("2", "15:45", "ibkr-fixed-us", "2")
+    # O `None` final e o dimensionamento: nenhum run de teste declara modo,
+    # e a ADR-020 so passou a grava-lo em 08/09/2026.
+    assert exige_mesma_regua([a, b]) == ("2", "15:45", "ibkr-fixed-us", "2", None)
 
 
 def test_modelos_de_comissao_diferentes_nao_somam(tmp_path):

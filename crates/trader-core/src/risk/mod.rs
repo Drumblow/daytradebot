@@ -8,8 +8,11 @@ use rust_decimal::Decimal;
 use tracing::{debug, warn};
 
 use trader_domain::{
-    Direction, MarketContext, Quote, RejectionReason, Signal, TradingMode, VolatilityRegime,
+    Candle, Direction, MarketContext, Quote, RejectionReason, Signal, TradingMode,
+    VolatilityRegime,
 };
+
+pub mod liquidity;
 
 /// Configuração de risco.
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +35,39 @@ pub struct RiskConfig {
     /// não seria o desenhado (trade 12 do live: overshoot de 0.38 num stop de
     /// 0.35 dobrou o risco). Ver ADR-015.
     pub entry_overshoot_tolerance: Decimal,
+
+    // --- ADR-020: de quanto é uma posição ---
+    //
+    // Os quatro defaults abaixo reproduzem EXATAMENTE o sizing anterior
+    // (fração 1, multiplicador 1, sem teto absoluto, sem cap de liquidez).
+    // Nenhum run existente muda de resultado por esta ADR entrar.
+    /// Multiplicador do teto de notional (ADR-020 §1). 1 = o cap de 1× a
+    /// equity que estava hardcoded. Acima de 1 é alavancagem intraday, e o
+    /// teto de 200% da conta (ADR-017) continua valendo por cima.
+    pub max_notional_multiple: Decimal,
+    /// Teto absoluto de notional por posição, em dólares da conta (§2).
+    /// Aplicado DEPOIS do multiplicador. `None` = sem teto absoluto.
+    pub max_notional_usd: Option<Decimal>,
+    /// Fatia do capital que esta instância pode ocupar (§4). Com 3 instâncias
+    /// e 1/3, três posições cheias cabem em 100% de notional — a regra de
+    /// dinheiro real do ADR-017 sem recusar o cluster.
+    ///
+    /// **Não promete retorno**: corta o P&L em $ na mesma proporção, com PF e
+    /// avg R invariantes. É política de risco.
+    pub capital_fraction: Decimal,
+    /// Fração (em %) da barra mediana de 15m que uma posição pode ocupar
+    /// (§3). `None` = cap desligado. Ligado, uma janela insuficiente é
+    /// RECUSA, não "segue sem cap".
+    pub max_pct_of_median_bar_notional: Option<Decimal>,
+    /// Quantas barras entram na mediana de liquidez.
+    ///
+    /// 600 é a janela do live (`LIVE_MAX_CANDLES`, ≈ 23 pregões). A ADR-020
+    /// §3 pedia 60 pregões, mas exige — em letras maiúsculas — que a fonte e
+    /// o N sejam **iguais** no live e no backtest; 60 pregões custariam
+    /// triplicar a busca de candles na IBKR a cada poll, no feed que o §5.8
+    /// já mostra frágil. Entre os dois requisitos, o que não se pode
+    /// negociar é a paridade.
+    pub liquidity_lookback_bars: usize,
 }
 
 impl Default for RiskConfig {
@@ -48,7 +84,88 @@ impl Default for RiskConfig {
             trading_start_time_et: (9, 30, 0),
             trading_end_time_et: (16, 0, 0),
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100), // 25% da distância do stop
+            max_notional_multiple: Decimal::ONE,
+            max_notional_usd: None,
+            capital_fraction: Decimal::ONE,
+            max_pct_of_median_bar_notional: None,
+            liquidity_lookback_bars: 600,
         }
+    }
+}
+
+/// Qual regra fixou o teto de notional de uma posição (ADR-020).
+///
+/// Existe para o log e para a tabela de modos do harness: "o cap prendeu" é
+/// um fato diferente de "a liquidez prendeu", e o §5.5 do plano pede a fração
+/// de trades presos em cada um.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TetoDeNotional {
+    /// `capital × capital_fraction × max_notional_multiple` — o teto de
+    /// sempre, que até o ADR-020 era 1× a equity e hardcoded.
+    Capital,
+    /// `max_notional_usd`, o teto absoluto da instância.
+    Absoluto,
+    /// Fração da barra mediana de 15m (ADR-020 §3).
+    Liquidez,
+}
+
+impl TetoDeNotional {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Capital => "capital",
+            Self::Absoluto => "max_notional_usd",
+            Self::Liquidez => "liquidez",
+        }
+    }
+}
+
+impl RiskConfig {
+    /// Capital que ESTA instância pode ocupar (ADR-020 §4).
+    ///
+    /// Com `capital_fraction = 1` (default) é a equity inteira, como sempre
+    /// foi. É o número de onde saem AS DUAS pernas do sizing — orçamento de
+    /// risco e teto de notional —, e por isso a fração corta o tamanho uma
+    /// vez só, não duas.
+    pub fn capital_efetivo(&self, capital: Decimal) -> Decimal {
+        // Arredondado em CENTAVOS. A fração natural desta ADR é 1/3, que em
+        // decimal não termina: 240.000 × 0,333…3 dá 79.999,99…, e o `trunc`
+        // do sizing transformaria isso em 799 ações em vez de 800. Perder uma
+        // ação para a base 10 seria um artefato, não uma decisão de risco —
+        // e dinheiro tem centavos de qualquer forma.
+        (capital * self.capital_fraction).round_dp(2)
+    }
+
+    /// Teto de notional de UMA posição e a regra que o fixou.
+    ///
+    /// `liquidez` é a mediana do notional por barra; `None` significa "cap de
+    /// liquidez desligado". Quando o cap está LIGADO e a mediana não pôde ser
+    /// medida, quem chama recusa o sinal antes de chegar aqui — este método
+    /// não tem como sinalizar recusa, e um teto que evapora por falta de dado
+    /// é pior do que não ter teto.
+    pub fn teto_de_notional(
+        &self,
+        capital: Decimal,
+        liquidez: Option<Decimal>,
+    ) -> (Decimal, TetoDeNotional) {
+        let mut teto = self.capital_efetivo(capital) * self.max_notional_multiple;
+        let mut qual = TetoDeNotional::Capital;
+
+        if let Some(usd) = self.max_notional_usd {
+            if usd < teto {
+                teto = usd;
+                qual = TetoDeNotional::Absoluto;
+            }
+        }
+
+        if let (Some(pct), Some(mediana)) = (self.max_pct_of_median_bar_notional, liquidez) {
+            let cap = mediana * pct / Decimal::from(100);
+            if cap < teto {
+                teto = cap;
+                qual = TetoDeNotional::Liquidez;
+            }
+        }
+
+        (teto, qual)
     }
 }
 
@@ -88,6 +205,11 @@ impl RiskManager {
     }
 
     /// Valida um sinal contra todas as regras de risco.
+    /// `candles` é o MESMO buffer que a estratégia analisou — é dele que sai
+    /// a mediana de liquidez do ADR-020 §3. Passar o buffer (em vez da
+    /// mediana já calculada) é o que garante que live e backtest medem a
+    /// liquidez na mesma fonte e com o mesmo N: a conta acontece aqui dentro,
+    /// uma vez só.
     pub fn validate(
         &self,
         signal: &Signal,
@@ -95,6 +217,7 @@ impl RiskManager {
         quote: Option<&Quote>,
         state: &RiskState,
         capital: Decimal,
+        candles: &[Candle],
     ) -> RiskCheck {
         // Hard check de segurança: no MVP só é permitido operar em paper.
         if self.config.trading_mode.is_real() {
@@ -235,8 +358,13 @@ impl RiskManager {
             );
         }
 
-        // Tamanho da posição.
-        let risk_budget = capital * self.config.risk_per_trade_pct / Decimal::from(100);
+        // Tamanho da posição (ADR-020).
+        //
+        // `capital_fraction` entra ANTES de tudo: é a fatia da conta que esta
+        // instância pode ocupar, e ela corta as duas pernas do sizing de uma
+        // vez — orçamento de risco e teto de notional.
+        let capital_ef = self.config.capital_efetivo(capital);
+        let risk_budget = capital_ef * self.config.risk_per_trade_pct / Decimal::from(100);
         // Arredonda para baixo para quantidade inteira de ações.
         let qty_by_risk = (risk_budget / risk_distance).trunc();
 
@@ -247,26 +375,63 @@ impl RiskManager {
             );
         }
 
-        // Cap de notional: qty × entry não pode exceder o capital disponível
-        // (1x equity, sem margem — default seguro para o MVP).
-        // Melhoria futura: tornar o multiplicador de cap configurável no RiskConfig.
-        let qty_by_notional = (capital / entry).trunc();
+        // Cap de liquidez (ADR-020 §3): uma posição não pode ser uma fração
+        // grande da barra que o ativo negocia. FALHA FECHADO — com o cap
+        // ligado e sem janela para medir a mediana, o sinal é recusado. A
+        // alternativa ("segue sem cap") faria o teto sumir exatamente no dia
+        // em que o feed falha, que é quando ele mais importaria.
+        let liquidez = match self.config.max_pct_of_median_bar_notional {
+            None => None,
+            Some(_) => {
+                match liquidity::median_bar_notional(candles, self.config.liquidity_lookback_bars) {
+                    Some(mediana) => Some(mediana),
+                    None => {
+                        return RiskCheck::Rejected(
+                            RejectionReason::NotionalAboveLiquidityCap,
+                            format!(
+                                "cap de liquidez ligado, mas a janela de {} barras não cabe no \
+                                 buffer ({} barras): sem a barra mediana o teto não existe",
+                                self.config.liquidity_lookback_bars,
+                                candles.len()
+                            ),
+                        );
+                    }
+                }
+            }
+        };
+
+        let (teto, qual_teto) = self.config.teto_de_notional(capital, liquidez);
+        let qty_by_notional = (teto / entry).trunc();
         let position_size = qty_by_risk.min(qty_by_notional);
 
         if position_size < Decimal::ONE {
-            return RiskCheck::Rejected(
-                RejectionReason::InsufficientBuyingPower,
-                format!(
-                    "capital {capital} insuficiente para 1 unidade a {entry} (risco permitiria {qty_by_risk})"
+            // "Não cabe uma ação" tem duas causas diferentes, e chamar as duas
+            // de falta de poder de compra apagaria a que interessa: o ativo é
+            // ilíquido demais para o tamanho pedido.
+            return match qual_teto {
+                TetoDeNotional::Liquidez => RiskCheck::Rejected(
+                    RejectionReason::NotionalAboveLiquidityCap,
+                    format!(
+                        "cap de liquidez {teto} não cabe 1 unidade a {entry} \
+                         (risco permitiria {qty_by_risk})"
+                    ),
                 ),
-            );
+                _ => RiskCheck::Rejected(
+                    RejectionReason::InsufficientBuyingPower,
+                    format!(
+                        "capital {capital} insuficiente para 1 unidade a {entry} (risco permitiria {qty_by_risk})"
+                    ),
+                ),
+            };
         }
 
         if position_size < qty_by_risk {
             debug!(
                 qty_by_risk = %qty_by_risk,
                 qty_by_notional = %qty_by_notional,
-                "position size limitada pelo cap de notional (1x equity)"
+                teto = %teto,
+                qual_teto = qual_teto.as_str(),
+                "position size limitada pelo teto de notional"
             );
         }
 
@@ -330,6 +495,8 @@ mod tests {
     use trader_domain::{
         Direction, MarketPhase, Signal, SignalStatus, TimeFrame, TrendState, VolatilityRegime,
     };
+    // `Candle` vem do escopo do módulo (usado pelo `validate`).
+    use trader_domain::Candle;
 
     fn make_context(timestamp: DateTime<Utc>) -> MarketContext {
         MarketContext {
@@ -380,6 +547,309 @@ mod tests {
         }
     }
 
+    /// Barras de 15m com notional `close × volume` conhecido, para os testes
+    /// do cap de liquidez.
+    fn barras(n: usize, close: i64, volume: i64) -> Vec<Candle> {
+        (0..n)
+            .map(|i| {
+                Candle::new(
+                    "SPY",
+                    TimeFrame::M15,
+                    Utc::now() - chrono::Duration::minutes(15 * (n - i) as i64),
+                    Decimal::from(close),
+                    Decimal::from(close),
+                    Decimal::from(close),
+                    Decimal::from(close),
+                    Decimal::from(volume),
+                )
+                .expect("candle válido")
+            })
+            .collect()
+    }
+
+    /// O caso central do ADR-020 §4, com os números da própria ADR.
+    ///
+    /// Conta de 240.000 e fração 1/3: a instância enxerga 80.000. O risco de
+    /// 1% incide sobre a FATIA (800, não 2.400) e o teto de notional também
+    /// (80.000, não 240.000) — a fração corta o tamanho uma vez, não duas.
+    /// O `risk_amount` continua sendo o risco REAL da posição, então o avg R
+    /// do gate não muda de significado por causa da fração.
+    #[test]
+    fn fracao_de_capital_corta_o_tamanho_uma_vez_so() {
+        let config = RiskConfig {
+            capital_fraction: Decimal::ONE / Decimal::from(3),
+            ..RiskConfig::default()
+        };
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        // Stop a 22 bp — o stop mediano medido nas três estratégias.
+        let signal = make_signal(
+            Decimal::from(100),
+            Decimal::new(9978, 2),
+            Decimal::from(101),
+        );
+
+        match manager.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &[],
+        ) {
+            RiskCheck::Approved {
+                position_size,
+                risk_amount,
+            } => {
+                assert_eq!(position_size, Decimal::from(800), "800 ações = 80.000 de notional");
+                // 0,22 × 800. O orçamento de risco era 800: o cap prendeu, e
+                // o risco real ficou em 176 — 0,073% da conta, não 1%.
+                assert_eq!(risk_amount, Decimal::new(17600, 2));
+            }
+            outro => panic!("esperado aprovado, obtido {outro:?}"),
+        }
+    }
+
+    /// Sem fração, o mesmo sinal ocupa a conta inteira: é o mundo anterior à
+    /// ADR-020, e ele tem de continuar reproduzível — todo run gravado até
+    /// 08/09/2026 foi medido assim.
+    #[test]
+    fn sem_fracao_o_sizing_e_exatamente_o_de_antes() {
+        let manager = RiskManager::new(RiskConfig::default());
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(
+            Decimal::from(100),
+            Decimal::new(9978, 2),
+            Decimal::from(101),
+        );
+
+        match manager.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &[],
+        ) {
+            RiskCheck::Approved { position_size, .. } => {
+                assert_eq!(position_size, Decimal::from(2400));
+            }
+            outro => panic!("esperado aprovado, obtido {outro:?}"),
+        }
+    }
+
+    /// Teto absoluto por instância (ADR-020 §2): 50.000 a US$ 108 = 462 ações.
+    /// É o mecanismo que vai limitar SLYV e IJS por `env_file`, sem tocar em
+    /// código nem no `config_hash` da estratégia.
+    #[test]
+    fn teto_absoluto_em_dolares_prende_antes_do_capital() {
+        let config = RiskConfig {
+            capital_fraction: Decimal::ONE / Decimal::from(3),
+            max_notional_usd: Some(Decimal::from(50_000)),
+            ..RiskConfig::default()
+        };
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(
+            Decimal::from(108),
+            Decimal::new(10778, 2),
+            Decimal::from(109),
+        );
+
+        match manager.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &[],
+        ) {
+            RiskCheck::Approved { position_size, .. } => {
+                assert_eq!(position_size, Decimal::from(462));
+            }
+            outro => panic!("esperado aprovado, obtido {outro:?}"),
+        }
+    }
+
+    /// Cap de liquidez (ADR-020 §3) com o número medido de SLYV: barra
+    /// mediana de 15m ≈ US$ 290.000. A 1/3 dela o teto é ≈ 96.667, e a
+    /// posição cai para 895 ações — MENOS do que a fração de capital daria.
+    /// É o resultado desconfortável que a ADR manda mostrar antes de qualquer
+    /// escada de risco: em SLYV e IJS o cap REDUZ o tamanho de hoje.
+    #[test]
+    fn cap_de_liquidez_reduz_o_tamanho_nos_ativos_finos() {
+        let config = RiskConfig {
+            // 1/3 da BARRA mediana. A fração de capital fica em 1 de
+            // propósito: com 1/3 dela o teto de 80.000 prenderia ANTES dos
+            // 96.667 da liquidez, e o teste não estaria medindo o cap.
+            max_pct_of_median_bar_notional: Some(Decimal::from(100) / Decimal::from(3)),
+            liquidity_lookback_bars: 5,
+            ..RiskConfig::default()
+        };
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(
+            Decimal::from(108),
+            Decimal::new(10778, 2),
+            Decimal::from(109),
+        );
+        // 5 barras de 100 × 2.900 = 290.000 de notional cada.
+        let candles = barras(5, 100, 2_900);
+
+        match manager.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &candles,
+        ) {
+            RiskCheck::Approved { position_size, .. } => {
+                assert_eq!(position_size, Decimal::from(895));
+            }
+            outro => panic!("esperado aprovado, obtido {outro:?}"),
+        }
+
+        // Sem o cap, a mesma conta compraria 2.222 ações — 2,5× mais, e
+        // 240.000 de notional numa barra mediana de 290.000.
+        let sem_cap = RiskManager::new(RiskConfig::default());
+        match sem_cap.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &candles,
+        ) {
+            RiskCheck::Approved { position_size, .. } => {
+                assert_eq!(position_size, Decimal::from(2222));
+            }
+            outro => panic!("esperado aprovado, obtido {outro:?}"),
+        }
+    }
+
+    /// FALHA FECHADO: com o cap ligado e sem janela para medir a mediana, o
+    /// sinal é recusado — e com motivo PRÓPRIO, não "sem poder de compra".
+    ///
+    /// A alternativa (seguir sem cap) faria o teto sumir exatamente no dia em
+    /// que o feed entrega menos barras, que é quando ele mais importa. E o
+    /// motivo separado é o que permite contar, no banco, quantas entradas o
+    /// cap barrou: `InsufficientBuyingPower` já significa outra coisa.
+    #[test]
+    fn cap_ligado_sem_janela_recusa_em_vez_de_ignorar() {
+        let config = RiskConfig {
+            max_pct_of_median_bar_notional: Some(Decimal::from(100) / Decimal::from(3)),
+            liquidity_lookback_bars: 600,
+            ..RiskConfig::default()
+        };
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(
+            Decimal::from(108),
+            Decimal::new(10778, 2),
+            Decimal::from(109),
+        );
+
+        // 599 barras: uma a menos que a janela pedida.
+        let candles = barras(599, 100, 2_900);
+        match manager.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &candles,
+        ) {
+            RiskCheck::Rejected(RejectionReason::NotionalAboveLiquidityCap, detalhe) => {
+                assert!(detalhe.contains("599"), "detalhe: {detalhe}");
+            }
+            outro => panic!("esperado recusa por liquidez, obtido {outro:?}"),
+        }
+
+        // Com o cap DESLIGADO (o default), as mesmas 599 barras não impedem
+        // nada: o buffer só é exigido por quem depende dele.
+        let sem_cap = RiskManager::new(RiskConfig::default());
+        assert!(matches!(
+            sem_cap.validate(
+                &signal,
+                &ctx,
+                None,
+                &RiskState::default(),
+                Decimal::from(240_000),
+                &candles,
+            ),
+            RiskCheck::Approved { .. }
+        ));
+    }
+
+    /// Ativo fino demais para uma ação sequer: recusa por LIQUIDEZ, não por
+    /// falta de capital. São fatos diferentes e o banco precisa distingui-los.
+    #[test]
+    fn cap_de_liquidez_abaixo_de_uma_acao_recusa_com_motivo_proprio() {
+        let config = RiskConfig {
+            max_pct_of_median_bar_notional: Some(Decimal::ONE),
+            liquidity_lookback_bars: 3,
+            ..RiskConfig::default()
+        };
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(
+            Decimal::from(500),
+            Decimal::new(49978, 2),
+            Decimal::from(501),
+        );
+        // Barra mediana de 1.000: 1% dela é 10 — não paga uma ação de 500.
+        let candles = barras(3, 10, 100);
+
+        match manager.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &candles,
+        ) {
+            RiskCheck::Rejected(RejectionReason::NotionalAboveLiquidityCap, _) => {}
+            outro => panic!("esperado recusa por liquidez, obtido {outro:?}"),
+        }
+    }
+
+    /// O multiplicador de notional (ADR-020 §1) é o que era hardcoded como 1.
+    /// Acima de 1 é alavancagem intraday — aqui só se prova que o parâmetro
+    /// existe e faz o que diz; o teto de 200% da conta é outra trava, no live.
+    #[test]
+    fn multiplicador_de_notional_libera_alavancagem_intraday() {
+        let config = RiskConfig {
+            max_notional_multiple: Decimal::from(2),
+            ..RiskConfig::default()
+        };
+        let manager = RiskManager::new(config);
+        let ctx = make_context(within_trading_hours());
+        let signal = make_signal(
+            Decimal::from(100),
+            Decimal::new(9978, 2),
+            Decimal::from(101),
+        );
+
+        match manager.validate(
+            &signal,
+            &ctx,
+            None,
+            &RiskState::default(),
+            Decimal::from(240_000),
+            &[],
+        ) {
+            RiskCheck::Approved { position_size, .. } => {
+                // Teto de 480.000 a US$ 100 = 4.800 ações, o dobro do 1×.
+                // O orçamento de risco (2.400 / 0,22 = 10.909) continua sem
+                // prender: com stop de 22 bp, quem decide o tamanho é o cap —
+                // é o fato que o modo B' do harness existe para testar.
+                assert_eq!(position_size, Decimal::from(4800));
+            }
+            outro => panic!("esperado aprovado, obtido {outro:?}"),
+        }
+    }
+
     #[test]
     fn approves_valid_long_signal() {
         let config = RiskConfig::default();
@@ -388,7 +858,7 @@ mod tests {
         let signal = make_signal(Decimal::from(500), Decimal::from(495), Decimal::from(510));
         let state = RiskState::default();
 
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
             RiskCheck::Approved { position_size, .. } => {
                 assert!(position_size > Decimal::ZERO);
             }
@@ -418,7 +888,7 @@ mod tests {
         );
         let state = RiskState::default();
 
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
             RiskCheck::Approved {
                 position_size,
                 risk_amount,
@@ -441,7 +911,7 @@ mod tests {
         let signal = make_signal(Decimal::from(500), Decimal::from(499), Decimal::from(501));
         let state = RiskState::default();
 
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
             RiskCheck::Rejected(RejectionReason::PoorRiskReward, _) => {}
             other => panic!("esperado rejeição por risco/retorno, obtido {:?}", other),
         }
@@ -461,7 +931,7 @@ mod tests {
         sinal.direction = Direction::Long;
         assert!(
             matches!(
-                manager.validate(&sinal, &ctx, None, &state, Decimal::from(100_000)),
+                manager.validate(&sinal, &ctx, None, &state, Decimal::from(100_000), &[]),
                 RiskCheck::Rejected(RejectionReason::StopMissing, _)
             ),
             "long invertido deveria ser recusado"
@@ -472,7 +942,7 @@ mod tests {
         curto.direction = Direction::Short;
         assert!(
             matches!(
-                manager.validate(&curto, &ctx, None, &state, Decimal::from(100_000)),
+                manager.validate(&curto, &ctx, None, &state, Decimal::from(100_000), &[]),
                 RiskCheck::Rejected(RejectionReason::StopMissing, _)
             ),
             "short invertido deveria ser recusado"
@@ -483,7 +953,7 @@ mod tests {
         ok.direction = Direction::Short;
         assert!(
             !matches!(
-                manager.validate(&ok, &ctx, None, &state, Decimal::from(100_000)),
+                manager.validate(&ok, &ctx, None, &state, Decimal::from(100_000), &[]),
                 RiskCheck::Rejected(RejectionReason::StopMissing, _)
             ),
             "short correto não deveria falhar na checagem de lado"
@@ -504,7 +974,7 @@ mod tests {
         let signal = make_signal(Decimal::from(500), Decimal::from(495), Decimal::from(510));
         let state = RiskState::default();
 
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
             RiskCheck::Rejected(RejectionReason::OutsideTradingHours, _) => {}
             other => panic!("esperado rejeição por horário, obtido {:?}", other),
         }
@@ -521,7 +991,7 @@ mod tests {
         let signal = make_signal(Decimal::from(500), Decimal::from(495), Decimal::from(510));
         let state = RiskState::default();
 
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
             RiskCheck::Rejected(RejectionReason::NotInPaperMode, _) => {}
             other => panic!("esperado rejeição por modo real, obtido {:?}", other),
         }
@@ -547,7 +1017,7 @@ mod tests {
 
         // Risco 1% de $10k = $100 / $1 de stop = 100 ações, mas o notional de
         // 100 ações ($50k) excede o capital: cap em floor(10k / 500) = 20.
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(10_000)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(10_000), &[]) {
             RiskCheck::Approved { position_size, .. } => {
                 assert_eq!(position_size, Decimal::from(20));
             }
@@ -564,7 +1034,7 @@ mod tests {
         let state = RiskState::default();
 
         // $400 não compra 1 ação de $500 (cap = 0), mesmo com o risco permitindo.
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(400)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(400), &[]) {
             RiskCheck::Rejected(RejectionReason::InsufficientBuyingPower, _) => {}
             other => panic!(
                 "esperado rejeição por buying power insuficiente, obtido {:?}",
@@ -583,7 +1053,7 @@ mod tests {
 
         // Risco 1% de $100k = $1000 / $5 de stop = 200 ações; notional de
         // $20k cabe no capital (cap = 1000) — sizing por risco prevalece.
-        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+        match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
             RiskCheck::Approved { position_size, .. } => {
                 assert_eq!(position_size, Decimal::from(200));
             }

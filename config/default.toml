@@ -53,6 +53,34 @@ max_consecutive_losses = 3
 max_portfolio_daily_loss_pct = 4.0
 max_concurrent_positions = 3
 max_portfolio_notional_pct = 200.0
+# --- Dimensionamento (ADR-020) ---
+# Os quatro valores abaixo REPRODUZEM o comportamento anterior a ADR: fracao
+# 1 (a instancia enxerga a conta inteira), multiplicador 1 (o cap de 1x que
+# estava hardcoded), sem teto absoluto e sem cap de liquidez. Mudar qualquer
+# um deles e decisao de politica de risco, e por isso nenhum entra ligado.
+#
+# capital_fraction: a fatia da conta que ESTA instancia pode ocupar. Com
+#   1/3 (0.3333333333) as tres posicoes simultaneas cabem em 100% de
+#   notional. Corta o P&L em $ na mesma proporcao, com PF e avg R
+#   invariantes - nao promete retorno.
+capital_fraction = 1.0
+# max_notional_multiple: multiplicador do teto de notional por posicao.
+#   Acima de 1 e alavancagem intraday, que o teto de 200% acima bloqueia.
+max_notional_multiple = 1.0
+# max_notional_usd: teto absoluto por posicao, em dolares. Fica vazio aqui e
+#   e posto POR INSTANCIA via TRADER__RISK__MAX_NOTIONAL_USD nos ativos em
+#   que a posicao de 1x e grande demais para a barra (SLYV, IJS).
+# max_notional_usd = 90000.0
+# max_pct_of_median_bar_notional: % da barra mediana de 15m que uma posicao
+#   pode ocupar. Com o cap LIGADO, janela insuficiente para medir a mediana
+#   RECUSA o sinal (motivo `notional_above_liquidity_cap`) - o teto nao some
+#   por falta de dado. O "1/3" (33.33) e interpretacao nossa, nao numero de
+#   livro.
+# max_pct_of_median_bar_notional = 33.33
+# liquidity_lookback_bars: quantas barras entram na mediana. 600 e a janela
+#   que o live carrega; live e backtest TEM de usar o mesmo N, senao o cap
+#   vira uma assimetria nova entre os dois.
+liquidity_lookback_bars = 600
 # Tolerância de overshoot numa entrada stop, como fração da distância do stop
 # (0.25 = aceita até 25% de risco extra; além disso a entrada é invalidada em
 # vez de perseguida). Vale para live, replay e backtest — ADR-015.

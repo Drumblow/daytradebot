@@ -226,6 +226,7 @@ def escreve_run(
     sem_calendario: bool = False,
     commission_model: str | None = "ibkr-fixed-us",
     limit_fill_haircut_bps: str | None = "2",
+    sizing: dict | None = None,
 ) -> Path:
     corpo = {
         "symbol": trades[0]["symbol"] if trades else "TST",
@@ -255,6 +256,8 @@ def escreve_run(
     }
     if initial_capital is not None:
         corpo["initial_capital"] = initial_capital
+    if sizing is not None:
+        corpo["sizing"] = sizing
     if not sem_calendario:
         # Por padrao o calendario cobre exatamente os dias com trade; os
         # testes que precisam de pregoes vazios passam `sessions`.

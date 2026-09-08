@@ -140,6 +140,28 @@ enum Commands {
         /// NULL, para o run não ficar impossível de atribuir depois.
         #[arg(long)]
         label: Option<String>,
+        /// Risco por trade em % do capital (ADR-020 §6). Sobrepõe o
+        /// `[risk]` E o override da estratégia. Torna o run experimental.
+        #[arg(long)]
+        risk_pct: Option<rust_decimal::Decimal>,
+        /// Fatia do capital da conta que a instância pode ocupar (0 < f <= 1).
+        /// Com 1/3, três posições cheias cabem em 100% de notional. Corta o
+        /// P&L em $ na mesma proporção — é política de risco, não promessa de
+        /// retorno. Fraciona também a base do `max_drawdown_pct`.
+        #[arg(long)]
+        capital_fraction: Option<rust_decimal::Decimal>,
+        /// Multiplicador do teto de notional por posição (>= 1). Acima de 1 é
+        /// alavancagem intraday, que o teto de 200% da conta bloqueia no live.
+        #[arg(long)]
+        notional_multiple: Option<rust_decimal::Decimal>,
+        /// Teto absoluto de notional por posição, em dólares.
+        #[arg(long)]
+        notional_usd: Option<rust_decimal::Decimal>,
+        /// Teto de liquidez: % da barra mediana de 15m que uma posição pode
+        /// ocupar (o "1/3" do ADR-020 = 33.33). Sem janela para medir a
+        /// mediana, o sinal é RECUSADO — o cap não some por falta de dado.
+        #[arg(long)]
+        liquidity_pct: Option<rust_decimal::Decimal>,
     },
     /// Validação walk-forward out-of-sample sobre dados reais do banco.
     Walkforward {
@@ -195,6 +217,28 @@ enum Commands {
         /// Sobrescreve um parâmetro: --set chave=valor (repetível).
         #[arg(long = "set")]
         set: Vec<String>,
+        /// Risco por trade em % do capital (ADR-020 §6). Sobrepõe o
+        /// `[risk]` E o override da estratégia. Torna o run experimental.
+        #[arg(long)]
+        risk_pct: Option<rust_decimal::Decimal>,
+        /// Fatia do capital da conta que a instância pode ocupar (0 < f <= 1).
+        /// Com 1/3, três posições cheias cabem em 100% de notional. Corta o
+        /// P&L em $ na mesma proporção — é política de risco, não promessa de
+        /// retorno. Fraciona também a base do `max_drawdown_pct`.
+        #[arg(long)]
+        capital_fraction: Option<rust_decimal::Decimal>,
+        /// Multiplicador do teto de notional por posição (>= 1). Acima de 1 é
+        /// alavancagem intraday, que o teto de 200% da conta bloqueia no live.
+        #[arg(long)]
+        notional_multiple: Option<rust_decimal::Decimal>,
+        /// Teto absoluto de notional por posição, em dólares.
+        #[arg(long)]
+        notional_usd: Option<rust_decimal::Decimal>,
+        /// Teto de liquidez: % da barra mediana de 15m que uma posição pode
+        /// ocupar (o "1/3" do ADR-020 = 33.33). Sem janela para medir a
+        /// mediana, o sinal é RECUSADO — o cap não some por falta de dado.
+        #[arg(long)]
+        liquidity_pct: Option<rust_decimal::Decimal>,
     },
     /// Analisa resultados do live/paper e compara com o backtest mais recente.
     Analyze {
@@ -354,6 +398,11 @@ async fn main() -> Result<()> {
             legacy_cost,
             limit_haircut_bps,
             label,
+            risk_pct,
+            capital_fraction,
+            notional_multiple,
+            notional_usd,
+            liquidity_pct,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -377,6 +426,13 @@ async fn main() -> Result<()> {
                     legacy_cost,
                     limit_haircut_bps,
                     label,
+                    sizing: commands::SizingOverrides {
+                        risk_pct,
+                        capital_fraction,
+                        notional_multiple,
+                        notional_usd,
+                        liquidity_pct,
+                    },
                 },
             )
             .await
@@ -421,6 +477,11 @@ async fn main() -> Result<()> {
             set,
             legacy_cost,
             limit_haircut_bps,
+            risk_pct,
+            capital_fraction,
+            notional_multiple,
+            notional_usd,
+            liquidity_pct,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -460,6 +521,13 @@ async fn main() -> Result<()> {
                     set,
                     legacy_cost,
                     limit_haircut_bps,
+                    sizing: commands::SizingOverrides {
+                        risk_pct,
+                        capital_fraction,
+                        notional_multiple,
+                        notional_usd,
+                        liquidity_pct,
+                    },
                 },
             )
             .await

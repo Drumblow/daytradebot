@@ -80,6 +80,10 @@ pub async fn run_walk_forward<S: Strategy>(
         )
     })?;
 
+    // Base do DD: a fatia de capital desta instância (ADR-020). Com
+    // `capital_fraction = 1` é o capital inteiro, como sempre foi.
+    let base_metricas = risk_config.capital_efetivo(config.initial_capital);
+
     let mut results = Vec::with_capacity(splits.len());
     let mut oos_trades: Vec<Trade> = Vec::new();
 
@@ -110,13 +114,13 @@ pub async fn run_walk_forward<S: Strategy>(
             train_end: candles[train_range.end - 1].timestamp,
             test_start: candles[test_range.start].timestamp,
             test_end: candles[test_range.end - 1].timestamp,
-            in_sample: BacktestMetrics::from_trades(&is_trades, config.initial_capital),
-            out_of_sample: BacktestMetrics::from_trades(&window_oos, config.initial_capital),
+            in_sample: BacktestMetrics::from_trades(&is_trades, base_metricas),
+            out_of_sample: BacktestMetrics::from_trades(&window_oos, base_metricas),
         });
         oos_trades.extend(window_oos);
     }
 
-    let oos_metrics = BacktestMetrics::from_trades(&oos_trades, config.initial_capital);
+    let oos_metrics = BacktestMetrics::from_trades(&oos_trades, base_metricas);
 
     Ok(WalkForwardResult {
         windows: results,

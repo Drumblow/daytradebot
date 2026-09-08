@@ -130,3 +130,30 @@ devem ser reapertados — provavelmente 2% de perda diária e 100% de notional.
 - **Não há limite por setor ou por correlação**, só contagem e notional. Três
   posições em três small-caps que andam juntas contam como três posições
   distintas.
+
+
+---
+
+## Nota de 08/09/2026 — o teto de 200% quase nunca mordia (ADR-020 §4)
+
+Como esta ADR foi implementada, `exposure_limit_hit` (`paper.rs`) testava se
+a soma das posições **já abertas** atingia o teto. Como o sizing é
+`trunc(equity / preço)`, duas posições somam ~199,8% — abaixo do teto — e a
+terceira entrava inteira, levando a conta a ~300% de notional. Quem segurava
+a conta era o limite de **contagem** (`max_concurrent_positions = 3`), não o
+teto de notional: o número de 200% era quase decorativo.
+
+Desde 08/09/2026 a checagem soma a posição prospectiva: bloqueia quando
+`notional_existente + notional_da_nova > teto`. O valor da nova é o teto que
+a instância pode ocupar (`capital × capital_fraction × max_notional_multiple`,
+limitado por `max_notional_usd`) — um limite superior, porque o tamanho exato
+só existe depois do sinal e esta checagem roda antes dele. Erra para o lado
+conservador; com os stops medidos, teto e tamanho real coincidem em quase
+todo trade.
+
+A checagem antiga (`existente >= teto`) continua valendo em paralelo: o teto
+não pode ficar mais frouxo do que era em nenhum caminho.
+
+Esta é uma mudança de comportamento do LIVE, e só entra em produção quando as
+imagens forem reconstruídas. Detalhe e números em
+`docs/reports/sizing-adr020-2026-09-08.md` §6.

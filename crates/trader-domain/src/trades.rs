@@ -285,4 +285,15 @@ pub struct AccountSummary {
     pub buying_power: Decimal,
     pub daily_pnl: Decimal,
     pub timestamp: DateTime<Utc>,
+    /// Moedas que o broker declarou para os valores da conta, fora a linha
+    /// "BASE" (ADR-020 §5). Vazio = o broker não informou.
+    ///
+    /// Existe porque o cap de notional trata `NET_LIQUIDATION` como
+    /// **dólares** e ninguém nunca conferiu: se a conta paper for em CAD, o
+    /// teto de 1× está ≈ 1,37× errado desde sempre. É uma LISTA, e não um
+    /// campo `currency`, porque a conta pode reportar mais de uma — e nesse
+    /// caso o certo é mostrar a ambiguidade, não escolher uma e chamá-la de
+    /// "a moeda da conta".
+    #[serde(default)]
+    pub currencies: Vec<String>,
 }

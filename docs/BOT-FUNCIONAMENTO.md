@@ -102,7 +102,8 @@ Limites atuais (por processo/ativo), de `config/default.toml`:
 
 | Regra | Limite |
 |---|---|
-| Risco por trade | 1% do capital (0,5% em estratégias que pedem menor) |
+| Risco por trade | 1% do capital (0,5% em estratégias que pedem menor). **Na prática o risco REAL é 0,07–0,3%**: o teto de notional corta a posição antes — medido, 100% dos 214 trades OOS saem no teto |
+| Tamanho da posição | `min(orçamento de risco ÷ distância do stop, teto de notional)`. O teto é `capital × capital_fraction × max_notional_multiple`, limitado por `max_notional_usd` e pelo cap de liquidez, quando configurados (ADR-020). Os defaults — fração 1, multiplicador 1, sem teto absoluto, sem cap de liquidez — reproduzem o comportamento anterior a 08/09/2026 |
 | Perda máxima diária | 2% — atingiu, bloqueia entradas até o próximo dia |
 | Trades por dia | 3 |
 | Perdas consecutivas | 3 — atingiu, pausa até o próximo dia |

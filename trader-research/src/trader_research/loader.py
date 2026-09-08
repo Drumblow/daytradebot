@@ -91,6 +91,10 @@ class Run:
     #: sem trade. `None` em run gerado antes deste campo existir -- e nesse
     #: caso o bootstrap pre-registrado do ADR-019 secao 8 NAO pode ser rodado.
     oos_sessions: list[date] | None
+    #: Dimensionamento do run (ADR-020), em forma canonica e comparavel.
+    #: `None` em run anterior a 08/09/2026 — e nesse caso todos os runs da
+    #: mesma leva sao `None`, entao a regua continua fechando.
+    sizing: str | None
     trades: list[Trade]
     metrics: dict[str, Any]
     holdout_metrics: dict[str, Any] | None
@@ -108,13 +112,32 @@ class Run:
         ACAO, e nos tamanhos operados isso e US$ 12 por trade contra os US$
         0,70 do modelo fixo antigo. Somar um run de cada e a mesma classe de
         erro que somar com e sem flatten.
+
+        O `sizing` entrou no mesmo dia com o ADR-020, e e o eixo mais
+        traicoeiro dos quatro: dois modos de dimensionamento produzem o MESMO
+        PF em R e o MESMO avg R — as metricas que o gate le — e P&L em $, DD%
+        e fracao presa no cap completamente diferentes. Medido nos 214 trades:
+        o modo A rende US$ 14.574 e o modo B, com os mesmos trades, US$ 4.128.
         """
         return (
             self.slippage_bps,
             self.session_flatten,
             self.commission_model,
             self.limit_fill_haircut_bps,
+            self.sizing,
         )
+
+
+def _sizing_canonico(bruto: dict | None) -> str | None:
+    """Forma canonica do bloco `sizing` do JSON (ADR-020).
+
+    Ordena as chaves para que a comparacao nao dependa da ordem em que o
+    serializador as escreveu, e devolve `None` quando o run nao declara
+    dimensionamento — o caso de todo run anterior a 08/09/2026.
+    """
+    if not bruto:
+        return None
+    return ", ".join(f"{k}={bruto[k]}" for k in sorted(bruto))
 
 
 def load_run(caminho: str | Path) -> Run:
@@ -155,6 +178,7 @@ def load_run(caminho: str | Path) -> Run:
             if bruto.get("oos_sessions")
             else None
         ),
+        sizing=_sizing_canonico(bruto.get("sizing")),
         trades=[Trade.from_json(t) for t in selecao["oos_trades"]],
         metrics=selecao["oos_metrics"],
         holdout_metrics=bruto.get("holdout"),
@@ -183,6 +207,7 @@ def load_runs(caminhos: Iterable[str | Path]) -> list[Run]:
             r.config_hash,
             r.slippage_bps,
             r.session_flatten,
+            r.sizing,
         )
         if chave in vistos:
             raise ValueError(
@@ -249,7 +274,8 @@ def exige_mesma_regua(runs: Sequence[Run]) -> tuple[str, str | None]:
         detalhe = "; ".join(
             f"{r.caminho.name}: slippage={r.slippage_bps} bp, "
             f"flatten={r.session_flatten}, comissao={r.commission_model}, "
-            f"desconto no alvo={r.limit_fill_haircut_bps} bp"
+            f"desconto no alvo={r.limit_fill_haircut_bps} bp, "
+            f"sizing=[{r.sizing}]"
             for r in runs
         )
         raise ReguaDivergente(

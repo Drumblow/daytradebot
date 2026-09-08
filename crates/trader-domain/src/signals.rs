@@ -141,6 +141,13 @@ pub enum RejectionReason {
     StopMissing,
     InvalidQuantity,
     InsufficientBuyingPower,
+    /// O tamanho não cabe no cap de liquidez do ativo (ADR-020 §3).
+    ///
+    /// Separado de `InsufficientBuyingPower` de propósito: aquele diz que a
+    /// CONTA não comporta a posição; este diz que o ATIVO não comporta — a
+    /// barra de 15m que ele negocia é pequena demais para o tamanho. Juntar
+    /// os dois apagaria justamente o fato que o cap existe para expor.
+    NotionalAboveLiquidityCap,
     NotInPaperMode,
     BrokerError,
     Unknown,

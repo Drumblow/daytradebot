@@ -515,6 +515,7 @@ fn risk_config() -> RiskConfig {
         trading_start_time_et: (9, 45, 0),
         trading_end_time_et: (15, 30, 0),
         entry_overshoot_tolerance: dec("0.25"),
+        ..RiskConfig::default()
     }
 }
 
@@ -534,6 +535,7 @@ fn case11_position_size_uses_half_percent_risk() {
         None,
         &RiskState::default(),
         Decimal::from(100_000),
+        &[],
     ) {
         crate::risk::RiskCheck::Approved {
             position_size,
@@ -560,7 +562,7 @@ fn case11_daily_loss_limit_rejects() {
         ..RiskState::default()
     };
 
-    match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+    match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
         crate::risk::RiskCheck::Rejected(RejectionReason::DailyLossLimitReached, _) => {}
         other => panic!("esperado DailyLossLimitReached, obtido {:?}", other),
     }
@@ -576,7 +578,7 @@ fn case11_max_trades_rejects() {
         ..RiskState::default()
     };
 
-    match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+    match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
         crate::risk::RiskCheck::Rejected(RejectionReason::MaxTradesReached, _) => {}
         other => panic!("esperado MaxTradesReached, obtido {:?}", other),
     }
@@ -592,7 +594,7 @@ fn case11_consecutive_losses_rejects() {
         ..RiskState::default()
     };
 
-    match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000)) {
+    match manager.validate(&signal, &ctx, None, &state, Decimal::from(100_000), &[]) {
         crate::risk::RiskCheck::Rejected(RejectionReason::ConsecutiveLosses, _) => {}
         other => panic!("esperado ConsecutiveLosses, obtido {:?}", other),
     }

@@ -153,6 +153,51 @@ pub struct RiskSettings {
     /// invalidada em vez de perseguida — ADR-015).
     #[serde(default = "default_entry_overshoot_tolerance")]
     pub entry_overshoot_tolerance: f64,
+
+    // --- ADR-020: de quanto é uma posição ---
+    /// Multiplicador do teto de notional por posição (1 = 1× a fatia de
+    /// capital, o comportamento anterior à ADR-020). Acima de 1 é alavancagem
+    /// intraday: paper only, e o teto de 200% da conta continua por cima.
+    #[serde(default = "default_max_notional_multiple")]
+    pub max_notional_multiple: f64,
+    /// Teto absoluto de notional por posição, em dólares. Vazio = sem teto.
+    /// Existe para ser posto por instância (`TRADER__RISK__MAX_NOTIONAL_USD`)
+    /// nos ativos em que a posição de 1× é grande demais para a barra.
+    #[serde(default)]
+    pub max_notional_usd: Option<f64>,
+    /// Fatia do capital da conta que ESTA instância pode ocupar (1 = tudo,
+    /// como sempre foi). Com `1 / max_concurrent_positions`, as três posições
+    /// cheias cabem em 100% de notional — a regra de dinheiro real do ADR-017
+    /// sem recusar o cluster, que é onde o edge medido está.
+    #[serde(default = "default_capital_fraction")]
+    pub capital_fraction: f64,
+    /// Fração (%) da barra mediana de 15m que uma posição pode ocupar.
+    /// Vazio = cap de liquidez desligado. O "1/3" da ADR-020 é interpretação
+    /// nossa, não número de livro: fica em config para poder ser varrido.
+    #[serde(default)]
+    pub max_pct_of_median_bar_notional: Option<f64>,
+    /// Quantas barras entram na mediana de liquidez. O default é a janela do
+    /// live (600 barras ≈ 23 pregões): live e backtest têm de medir a mesma
+    /// coisa, e este é o N que os dois servem hoje.
+    #[serde(default = "default_liquidity_lookback_bars")]
+    pub liquidity_lookback_bars: usize,
+}
+
+/// 1× — paridade com o cap que estava hardcoded em `risk/mod.rs`.
+fn default_max_notional_multiple() -> f64 {
+    1.0
+}
+
+/// 1 = a instância enxerga a conta inteira, como antes da ADR-020. Fracionar
+/// é decisão de política de risco, e ela não entra por default.
+fn default_capital_fraction() -> f64 {
+    1.0
+}
+
+/// 600 barras de 15m ≈ 23 pregões — a janela que o live carrega
+/// (`LIVE_MAX_CANDLES`).
+fn default_liquidity_lookback_bars() -> usize {
+    600
 }
 
 fn default_risk_per_trade_pct() -> f64 {

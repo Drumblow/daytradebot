@@ -14,7 +14,7 @@
 > | 5 — hotfix ET do veto de meio-dia (§5.4) | ✅ **implementado** |
 > | 3 — harness de validação (ADR-019) | ✅ **implementado em parte** — o núcleo entrou; o que ficou de fora está na seção "Pendente" do `ADR-019` (lista e contagem canônicas), e inclui o Sharpe diário |
 > | 4 — relatório estatístico (§5.3) | ✅ **implementado** em 08/09 (`trader-research/`). O critério "IC95 em blocos ≥ 1,0" passou a ser avaliável — números em `docs/reports/estatistica-gate-a-2026-09-08.md` |
-> | 6 — ADR-020 (sizing/liquidez) | ⏳ **não implementado**, continua proposto |
+> | 6 — ADR-020 (sizing/liquidez) | ✅ **implementado** em 08/09 — os seis itens. Os defaults reproduzem produção trade a trade; o cap de liquidez entrou **desligado** porque o feed do Gateway não entrega o volume real desde 07/08 (achado 7 do §2.3, agora medido em todos os pares — achado 8 abaixo). Números em `docs/reports/sizing-adr020-2026-09-08.md` |
 > | 7 — higiene e custo real (§5.6) | ✅ **implementado** em 08/09 — comissão por ação da IBKR, desconto no fill do alvo, `tick_size` sem f64, runs rotulados. Falta reingerir os 6 símbolos parados (depende do servidor) e o casamento do `CommissionReport` em poll posterior (parcial: mede e loga, não fecha). Números em `docs/reports/custo-real-2026-09-08.md` |
 > | 2, 8, 9, 9b — feed, screener, A9, sair de IWV | ⏳ pendentes (2, 9 e 9b dependem do servidor ou de decisão do dono) |
 >
@@ -22,7 +22,7 @@
 > O estado exato de `main` não é fixado aqui de propósito: um SHA envelheceria
 > a cada commit. Use `git log --oneline`.
 >
-> **Sete coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
+> **Oito coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
 >
 > 1. **§5.4 diz que o efeito do hotfix ET seria "imensurável". Não é.** Medido:
 >    a fade cai de PF 1,74 / avg R 0,218 / +4.560 para **PF 1,57 / 0,182 /
@@ -69,9 +69,29 @@
 >    "compartilhado com o backtest para garantir paridade de validação".
 >    Corrigido: os dois vêm do mesmo `Default`.
 >
+> 8. **O achado 7 (feed esparso) medido em todos os pares — e a reingestão
+>    não conserta.** Não é achado novo: o §2.3 já registra "3–10% do volume"
+>    desde a troca para o Gateway em 07/08, com estimativas por símbolo
+>    (AVUV ≈ 9%, IJS ≈ 23%, IWM ≈ 3–4%) tiradas dos dias gravados pelo
+>    servidor. Ao calibrar o cap de liquidez do ADR-020 (08/09), a barra
+>    mediana foi medida sobre **todos** os pregões: IWM guarda **3,2%** do
+>    volume pré-Gateway, AVUV 7,1%, IWN 20%, IWV 32%, IJS 41%, VBR 51% e SLYV
+>    **89%**. Duas coisas que a estimativa não tinha: (a) o dano é muito mais
+>    disperso do que "3–10%" — SLYV quase intacto, IJS quase o dobro do
+>    estimado; (b) os pregões de agosto foram **reingeridos em 03/09 e
+>    voltaram com o mesmo volume baixo**, ou seja, não é barra parcial do poll
+>    do live e **reingerir do Gateway não repara** — o histórico de 07/08 em
+>    diante precisa vir de outra fonte, não só as barras futuras.
+>    **O que isto contamina:** o cap de liquidez do ADR-020 (por isso ele
+>    entrou desligado) e qualquer leitura de volume a partir de 07/08.
+>    **O que NÃO contamina:** nenhuma das três estratégias vivas usa volume
+>    nas regras — só a `breakout-first-pullback-v1`, arquivada, tem filtro por
+>    volume —, então os vereditos de gate A não dependem disto.
+>
 > Veredito do gate A em `docs/reports/gate-a-com-flatten-2026-09-07.md`;
 > estatística em `docs/reports/estatistica-gate-a-2026-09-08.md`; custo real em
-> `docs/reports/custo-real-2026-09-08.md`.
+> `docs/reports/custo-real-2026-09-08.md`; dimensionamento em
+> `docs/reports/sizing-adr020-2026-09-08.md`.
 
 **Regra de leitura:** nada aqui altera as **regras** das estratégias v1 em produção; as duas exceções são o hotfix do veto de meio-dia (§5.4, correção de bug com nota, precedente A2) e o piso de stop transversal (§6.9), se o dono aprová-lo. Toda mudança de regra é v2 validada do zero (framework §4); toda mudança de motor tem ADR proposto. Números de backtest são a 2 bp/lado e, salvo indicação, **sem** o flatten de fim de sessão que o live faz — ver §2.3, que é o achado central.
 
@@ -84,8 +104,6 @@
 3. **A maior alavanca de amostra está dentro de casa:** o contexto global (`is_tradeable` exige Uptrend/Downtrend) rejeita por `NoContext` **24/18/31 sinais** (73 no total) da `range-extreme-fade-v1` em AVUV/SLYV/IWV contra 31/30/35 ordens de entrada enviadas (29/21/19 trades fechados) — os 48/36/62 eram exatamente o dobro, porque a rejeição é logada duas vezes no mesmo run (`execution/mod.rs:154` e `engine.rs:228`) e a medição contou linhas de log — a estratégia de dia de range é bloqueada justamente nos dias de range. Liberar `Neutral` para ela (política de contexto por estratégia) era a hipótese de maior potencial com menor custo; medida na auditoria de 07/09 (re-simulação dos 73 sinais bloqueados com a mecânica do simulador, replay validado contra o backtest oficial), ela é **negativa**: 54 trades, WR 33,3%, PF 0,70, avg R −0,321, −US$ 3.257 (com flatten, PF 0,56). Só AVUV isolado é positivo (PF 1,33 em 20 trades); o agregado é carregado por IWV (PF 0,28).
 4. **Cripto, futuros e forex não pagam o edge que existe.** Cripto spot na IBKR Canada é, na melhor hipótese, sem stop server-side na API e a 12–18 bp/lado (Kraken: 40–80 bp/lado) contra stops de 20–30 bp; micro futuros de índice herdariam um edge que **não existe no subjacente** (IWM/SPY: PF 0,4–0,8 nas duas aprovadas, mesmo a 1 bp); forex em 15m tem barras de 5–8 bp contra piso de 20 bp de stop. O único caminho barato para "outros ativos" é o mesmo pipeline (ETFs US): ETFs setoriais de valor cíclico e ETFs de bitcoin (IBIT/ETHA) entram como tickers extras num screening **pré-registrado e agregado**, só depois do flatten no backtest.
 5. **Ordem de execução:** Onda A (2–3 semanas) corrige a régua e a higiene (flatten, integridade do feed de produção, harness de validação, hotfix do veto de meio-dia, cap de liquidez, comissão real, screener SQL como Fase 0); Onda B (4–8 semanas) testa as duas v2 com evidência que sobreviveu à crítica (`range-extreme-fade-v2` com contexto Neutral; `balance-area-breakout-v2` com filtro de convicção), o piso de stop transversal, as janelas horárias e a varredura de alvo pareada como variantes pré-registradas, o replay de portfólio com conta compartilhada e a expansão de pares pré-registrada; Onda C guarda o que depende de B ou de regime novo (`opening-reversal-v2` short-only é hipótese de regime: 2025 PF 2,33, 2026 PF 0,82). Nada disto promete um número de lucro: promete parar de medir errado e testar, na ordem certa, o que tem chance.
-
----
 
 ## 1. Como este plano foi produzido
 
@@ -210,7 +228,7 @@ Leituras: (1) o "últimos 10 meses ≈ 0" da régua antiga vira +8,6k com flatte
 | Um timeframe, um símbolo (`crates/trader-domain/src/strategy.rs:50-55`) | Sem HTF, sem SPY/VIX como regime, sem breadth | O2 (`resample`), C4 |
 | Estratégia stateless (`StrategyState` ignorado) | Sem cooldown, sem "uma tentativa por nível/dia" | O9 |
 | `is_tradeable` rígido (`context/mod.rs:79-81`) | Range mudo em 40% das barras | **§6.1** |
-| Cap de notional 1× hardcoded (`risk/mod.rs:253`) | Risco real ≪ 1%; sem cap por liquidez | **§5.5** |
+| ~~Cap de notional 1× hardcoded (`risk/mod.rs:253`)~~ **resolvido em 08/09**: `max_notional_multiple`, `max_notional_usd`, `capital_fraction` e cap por liquidez em `RiskConfig`, com paridade automática (live, backtest e walk-forward passam pelo mesmo `build_risk_config`). O risco real continua ≪ 1% no modo de produção — agora medido: **100% dos 214 trades saem no teto de notional** | Risco real ≪ 1% (medido); cap por liquidez existe e está desligado | **§5.5** ✅ |
 | ~~TIF Day + flatten só no live~~ **resolvido em 07/09**: o motor faz flatten por mudança de data ET, com a janela vindo de `[session]`. Só o swing (hold multi-dia) continua fora | Sem swing | **§5.1** ✅ |
 | Walk-forward por contagem de candles, sem purge; ~~sem holdout~~ (**`--holdout-from` entrou em 07/09**: bloco travado, reportado à parte, com erro em vez de holdout desligado em silêncio); ~~sem DSR/PSR/IC~~ (**entraram em 08/09**, §5.3) | Viés de seleção das 42+ combinações agora tem número: DSR **0,45** no portfólio com N=42, contra o 0,95 convencional | **§5.2** ✅ **, §5.3** ✅ |
 | Backtest single-symbol, capital fixo | Conta compartilhada (3 posições, 200%) não simulada | **§6.4** |
@@ -260,7 +278,7 @@ ranking continua valendo como lista de trabalho.
 | 3 ✅ | Harness de validação: `--output/--slippage-bps/--label/--holdout-from/--strategy-config` no walkforward; PF_R, corr(risk,R), métricas por exit_reason/direção/hora/dia; `analyze` por (símbolo, estratégia, hash); `strategy_id` nos trades de backtest. **vários itens NÃO entraram** — entre eles `n_trials`, o Sharpe diário e o dedupe (recusado com número). Lista e contagem canônicas na seção "Pendente" do ADR-019 | **A** | M | revisar→manter (6–7) | §5.2 |
 | 4 | Relatório estatístico em Python: PSR, IC95 por bootstrap em blocos, MC de drawdown, concentração mensal | **A** | S | manter (6–7) | §5.3 |
 | 5 ✅ | Hotfix v1.0.1 da range-fade: veto de meio-dia em ET | **A** | S | consenso | §5.4 |
-| 6 | Cap de notional por liquidez + `capital_fraction` + registro de equity/BUYING_POWER + trava de notional incluindo a posição prospectiva | **A** | S | revisar→manter | §5.5 |
+| 6 ✅ | Cap de notional por liquidez + `capital_fraction` + registro de equity/BUYING_POWER + trava de notional incluindo a posição prospectiva. **Implementado em 08/09**; o cap de liquidez fica desligado até o §5.8 (o feed não entrega o volume real desde 07/08 — achado 7) | **A** | S | revisar→manter | §5.5 |
 | 7 | Higiene e custo real: reingerir 6 símbolos parados (pelo PC/TWS); ~~dedupe runs~~ (**recusado**, ver §5.6); rotular runs sem label; `tick_size` sem f64; comissão por ação no simulador; casamento do CommissionReport; slippage por faixa de liquidez | **A** | S | consenso | §5.6 |
 | 8 | Fase 0 do framework: screener SQL com fill honesto (calibrado com controles) | **A** | S | manter (8) | §5.7 |
 | 9 | A9: rejeição/timeout de confirmação de ordem como estados próprios + checagem de shortable + teste operacional de short na paper (dono da correção) | **A** | S/M | citado como bloqueador em 5 propostas | §5.9 |
@@ -423,6 +441,49 @@ gate A de 04/09 mostrava. Detalhe em `docs/strategies/range-extreme-fade-v1.md`
 
 ### 5.5 Dimensionamento por liquidez e fração de capital (ADR-020)
 
+> ✅ **IMPLEMENTADO em 08/09/2026** — os seis itens. Relatório com as
+> medições: `docs/reports/sizing-adr020-2026-09-08.md`; runs em `out/adr020/`
+> (`trader-research/modos-sizing.ps1`); liquidez em
+> `sql/stats/14-liquidez-por-barra-adr020.sql`.
+>
+> **Regressão primeiro:** com os defaults, o motor reproduz **trade a trade**
+> os oito runs do §5.6. O texto abaixo continua valendo; o que ele não sabia:
+>
+> 1. **O feed do Gateway não entrega o volume real desde 07/08** (achado 7
+>    do §2.3, medido em todos os pares — achado 8 do banner). O cap de
+>    liquidez entrou **desligado** por causa disso: ligado hoje, mediria a
+>    barra do IWM em 12M em vez de 151M. Enquanto o §5.8 não fechar, o teto
+>    utilizável é o `max_notional_usd` estático — SLYV ≈ 104k, IJS ≈ 169k
+>    (medidos, batem com a estimativa do texto abaixo).
+> 2. **A janela ficou em 600 barras (≈ 23 pregões), não em 60 pregões.** A
+>    ADR pedia 60 pregões e, na mesma frase, exigia fonte e N **iguais** no
+>    live e no backtest. 60 pregões no live custariam triplicar a busca de
+>    candles por poll. Entre os dois requisitos, o que não se negocia é a
+>    paridade.
+> 3. **O cuidado (a) estava certo e agora tem número.** Sem fracionar a base
+>    do DD junto com o sizing, o mesmo prejuízo leria **1,01%** em vez de
+>    2,88% — o critério de 10% do gate A ficaria 2,9× mais leniente sem
+>    ninguém tê-lo mudado. A base fracionada é gravada no JSON
+>    (`initial_capital = 33333.33` no modo de fração 1/3).
+> 4. **O cuidado (c) estava certo, e o buraco era maior do que "quase nunca
+>    morde".** Duas posições a 99,9% somam 199,8% e a terceira entrava
+>    inteira: a conta ia a ~300% de notional sem trava nenhuma disparar. Quem
+>    segurava era a contagem de posições. A checagem agora soma a posição
+>    prospectiva. **É a única mudança de comportamento do live nesta ADR.**
+> 5. **A fração de capital não é neutra em R** — o mínimo de US$ 1,00 por
+>    ordem morde mais no lote menor, e o avg R cai de 0,107 para 0,102
+>    (−4,7%). O texto abaixo previu "centavos"; centavos são 4,7% do edge
+>    quando o edge é 0,107.
+> 6. **Os modos foram medidos** (item 6 do texto abaixo). Com risco uniforme
+>    (modo B), o PF em $ cai de 1,55 para 1,24 — colado no PF em R, que fica
+>    em 1,21 nos dois — e **três dos oito pares viram negativos** (os três com
+>    PF_R < 1). O modo C dá 7,45% de DD, perto do limite de 10% do gate.
+>
+> **Fica de fora:** ligar o cap de liquidez e pôr `max_notional_usd` nas
+> instâncias de SLYV e IJS (ambos dependem do §5.8 e são mudança de
+> produção), e agregar as recusas por `notional_above_liquidity_cap`.
+
+
 - `RiskConfig.max_notional_multiple` (default 1 = paridade) e `max_notional_usd: Option` por instância via `TRADER__RISK__MAX_NOTIONAL_USD` (o loader já aceita `TRADER__` com `__`); regra de elegibilidade: notional ≤ 1/3 da barra mediana de 15m dos últimos 60 pregões (calculável dos candles com paridade live/backtest): com os 60 pregões anteriores a 07/08/2026 (dado pré-Gateway, o que o próprio §5.6 manda usar): SLYV ≈ US$ 104k, IJS ≈ 169k, VBR ≈ 424k, IWN ≈ 713k, IWO ≈ 923k, AVUV ≈ 1,22M. Em SLYV/IJS isto **reduz** o tamanho atual — resultado desconfortável que precisa aparecer antes de qualquer escada de risco.
 - `capital_fraction` (= 1/`max_concurrent_positions`) para que 3 posições caibam em 100% de notional (regra de dinheiro real do ADR-017) sem recusar o cluster. É política de risco: PF/avgR invariantes, P&L em $ cai ~3× por trade — declarar assim, sem prometer retorno. Três cuidados apontados pelos críticos: (a) o backtest calcula `max_drawdown_pct` sobre `initial_capital` fixo de 100k — com fração 1/3 o DD% do gate A fica 3× mais leniente sem ninguém mudar o critério; fracionar o capital inicial do backtest junto (e gravar `capital_fraction` em `metrics`); (b) decidir se `max_daily_loss_pct` por instância é sobre a conta ou sobre a fatia; (c) **a trava de notional do ADR-017 quase nunca morde hoje**: `exposure_limit_hit` (`paper.rs:1503-1513`) testa apenas a soma das posições **já abertas** ≥ teto, antes de somar a nova, e como o sizing é `trunc(equity/preço)` duas posições somam 199,9% < 200% e a terceira entra — o que morde é `positions.len() >= 3` (e, em agosto, a posição órfã). Incluir a posição prospectiva na checagem (`notional_existente + notional_novo >= teto`), com teste do caso 2 × 99,9%, e registrar a diferença como nota no ADR-017.
 - Registrar a equity real e `BUYING_POWER` (lidos do broker, nunca usados) em `system_events`/`account_snapshots` a cada sessão — a equity de US$ 238k só existe num relatório.
@@ -494,6 +555,8 @@ Em um dia, um screener em SQL sobre os 136k candles reprovou 7 candidatos que as
 ### 5.8 Feed de produção e latência
 
 Pré-requisito de qualquer comparação live × backtest e de qualquer instância nova: enquanto o Gateway entregar barras com 3–10% do volume e 15–25% do range, o gate B não mede o que o backtest mede (§2.3, achado 7).
+
+> **Atualização de 08/09** (medição em `sql/stats/14-liquidez-por-barra-adr020.sql`): o dano é **muito mais disperso** do que "3–10%" — IWM guarda 3,2% do volume pré-Gateway, AVUV 7,1%, IWN 20%, IWV 32%, IJS 41%, VBR 51% e SLYV **89%**. E os pregões de agosto foram **reingeridos em 03/09 e voltaram com o mesmo volume baixo**: não é barra parcial do poll do live, é o que a fonte devolve. Consequência para o passo (1) desta lista: trocar a ingestão para o PC/TWS não basta para as barras futuras — **o histórico de 07/08 em diante precisa ser reingerido de outra fonte**, senão o banco fica com dois regimes de volume e qualquer estatística que use volume (o cap de liquidez do ADR-020 é a primeira) mistura os dois.
 
 Ordem: (1) `debug-candles` no Gateway do servidor e no TWS do PC para a **mesma barra** — volume/dia e range/barra contra o histórico; tipo de market data (Realtime/Delayed/Frozen) que o Gateway/IBC entrega; (2) medir o lag de todas as barras em produção sem depender de ordens: `market_contexts.created_at − (timestamp + 15 min)` por símbolo; (3) gravar `signal_bar_close_ts` e `submit_latency_ms` em `orders.metadata` no envio (a query com `signals.timestamp` não serve: é `Utc::now()` no sinal); (4) só então alinhar o poll ao fechamento (20 s, nunca < 15 s entre requisições idênticas; o adapter abre um Client TCP por fetch) ou usar `subscribe_realtime_bars` como gatilho de fetch; (5) compartilhar dados em tempo real com a paper **só se** o TWS/PC não resolver sozinho (a paper herda as assinaturas do live; bundle US$ 10/mês, isenção exige US$ 30 de comissões que o projeto paper não gera). Cenário pessimista no backtest: `entry_starts_next_candle` (ordem só a partir do 2º candle) para bracketar o efeito de latência sem dado intrabar. Reforça: nada disso é "custo de 2 bp" — |close−open| mediano de uma barra de 15m é 6–11 bp conforme o ativo (8,5 bp no pool; 5,9 bp em IWV e 10,5 bp em IWM), ~1/3 do stop.
 
@@ -690,9 +753,9 @@ Esforço total da Onda A: ~2–3 semanas de calendário com dedicação integral
 | `docs/strategies/opening-reversal-v2.md` | Fases 1–3: short-only na 1ª hora (Onda C — hipótese de regime; spec pronta, sem implementação) |
 | `docs/decisions/ADR-018-paridade-fim-de-sessao-backtest.md` **✅ IMPLEMENTADO** | flatten no engine, `ExitReason::EndOfDay`, releitura do gate A |
 | `docs/decisions/ADR-019-harness-de-validacao-e-gate-estatistico.md` **✅ IMPLEMENTADO, com exceções** | walkforward `--output/--slippage/--label/--holdout`, PF_R, concentração, `analyze` por par. **Vários itens não entraram** — lista e contagem na seção "Pendente" do próprio ADR; não replicar aqui |
-| `docs/decisions/ADR-020-dimensionamento-por-liquidez-e-fracao-de-capital.md` **(continua PROPOSTO — não implementado)** | cap por liquidez, `capital_fraction`, registro de equity, modos de sizing |
+| `docs/decisions/ADR-020-dimensionamento-por-liquidez-e-fracao-de-capital.md` **✅ IMPLEMENTADO (08/09)** | cap por liquidez (implementado e **desligado**), `max_notional_multiple`, `max_notional_usd`, `capital_fraction`, registro de equity e moeda em `account_snapshots`, trava de notional com a posição prospectiva, modos de sizing no harness. O banner do topo do ADR lista os três desvios do que estava especificado |
 | `sql/screens/` | template de screener com fill honesto, screens executados, README com regra de calibração |
-| `sql/stats/` | 13 consultas de estatística descritiva do banco (liquidez por barra e por hora, range diário e por barra, gaps, perfil intradiário) — base de §2.2, §2.4 e da ADR-020 §3 |
+| `sql/stats/` | 14 consultas de estatística descritiva do banco (liquidez por barra e por hora, range diário e por barra, gaps, perfil intradiário) — base de §2.2, §2.4 e da ADR-020 §3. A `14-liquidez-por-barra-adr020.sql` (08/09) calibra o cap de liquidez e mede o feed esparso nas duas janelas |
 | `docs/reports/estudo-politicas-de-saida-2026-09-07.md` | estudo pareado pré-registrado de políticas de saída (breakeven, trailing, stop além da barra, parcial): nenhuma supera alvo fixo + flatten com t > 2 em 2025 **e** 2026. Usa a comissão real da IBKR, por isso a política A dá avg R −0,037 / PF_R 0,94 / US$ 6.062 onde a ADR-018 publica −0,007 / +6.730 (a diferença é só o modelo de comissão) |
 | `docs/strategy-analysis-framework.md` | seção "Fase 0 — Screener" marcada como proposta |
 | `docs/HANDOFF.md` | entrada de 07/09 apontando para este plano, e as entradas da execução |
@@ -700,6 +763,8 @@ Esforço total da Onda A: ~2–3 semanas de calendário com dedicação integral
 | `trader-research/` **(novo, 08/09 — §5.3 implementado)** | pacote Python (uv, numpy, tzdata; 97 testes) que consome o `--output` do walkforward: PSR, DSR como faixa, IC95 do PF por bootstrap estacionário sobre o calendário completo de pregões, MC de drawdown por modo de sizing, concentração e P&L por ano. Falha fechado em seis situações — réguas diferentes, run experimental, divergência contra o `metrics.rs`, run sem calendário, arquivo repetido e `--por portfolio` sem `--capital` |
 | `docs/reports/estatistica-gate-a-2026-09-08.md` **(novo, 08/09)** | o critério "IC95 em blocos ≥ 1,0" medido pela primeira vez. Achado: **a unidade em que o gate é lido decide o veredito** — reprova nos oito pares, reprova nas três estratégias, passa no portfólio dos oito. Registra também que o esquema errado do bootstrap chegou a **virar um veredito** (balance·IJS), e a rodada adversarial de 63 achados que corrigiu o pacote antes da publicação |
 | `docs/reports/custo-real-2026-09-08.md` **(novo, 08/09 — §5.6 implementado)** | o custo do simulador trocado pelo real. Achados: a comissão antiga era **1/9,9** da real, e o **desconto no fill do alvo é maior que toda a comissão nova** (US$ 1.760 contra 1.489), respondendo por 56% do efeito; com o custo certo **nenhum recorte passa o gate** — o portfólio dos oito, que passava tudo, reprova no avg R. Traz o teste de paridade (`--legacy-cost` reproduz os números antigos dígito a dígito), a decomposição em três cenários e a §0 registrando os números que a primeira versão do próprio relatório errou |
+| `docs/reports/sizing-adr020-2026-09-08.md` **(novo, 08/09 — §5.5 implementado)** | o tamanho da posição deixa de ser acidente. Achados: com risco uniforme o PF em $ cai de 1,55 para 1,24 (colado no PF em R, 1,21) e **três dos oito pares viram negativos**; o cap de 1/3 da barra corta **37% dos trades** no notional de produção (SLYV −54%, IJS −35%); a fração de capital **não é neutra em R** (avg R 0,107 → 0,102, por causa do mínimo de US$ 1,00 da comissão); e sem fracionar a base do DD junto, o critério do gate A ficaria 2,9× mais leniente. Traz a regressão trade a trade contra os runs do §5.6 |
+| `trader-research/modos-sizing.ps1` **(novo, 08/09)** | reproduz os 64 runs dos modos de dimensionamento em `out/adr020/` — inclusive o modo A, que serve de regressão contra os `wf56_*` do §5.6 |
 | `sql/maintenance/0005-corrigir-tick-size.sql` **(novo, 08/09)** | corrige o `tick_size` gravado a partir de f64 nos 14 ativos. Efeito prático hoje é nulo (o motor lê o TOML), e o script diz isso |
 | `sql/maintenance/0006-rotular-runs-sem-label.sql` **(novo, 08/09)** | rotula os 586 runs sem `label` **pela data**, não por propósito inferido. A causa (o `backtest` gravava NULL sempre) foi corrigida no código |
 | `sql/maintenance/0004-reclassificar-flatten.sql` **(novo, 07/09)** | UPDATE opcional dos flattens gravados como `manual` antes do ADR-018 — depende de decisão do dono |

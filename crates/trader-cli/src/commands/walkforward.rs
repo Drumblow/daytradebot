@@ -49,6 +49,9 @@ pub struct Args {
     /// Desconto no fill do alvo, em pontos-base. Sobrepõe o padrão (2 bp) e o
     /// modo legado (0).
     pub limit_haircut_bps: Option<Decimal>,
+    /// Modo de dimensionamento (ADR-020 §6). Qualquer campo preenchido torna
+    /// o run experimental e exige `--label`.
+    pub sizing: super::SizingOverrides,
 }
 
 /// Bloco de saída do `--output`: o resultado do walk-forward mais o que
@@ -91,6 +94,11 @@ struct WalkForwardOutput<'a> {
     limit_fill_haircut_bps: String,
     label: &'a str,
     experimental: bool,
+    /// Dimensionamento do run (ADR-020): fração de capital, risco por trade e
+    /// tetos. O `capital_fraction` é a base do `max_drawdown_pct` — sem ele,
+    /// comparar o DD% de dois runs é comparar percentuais de bases
+    /// diferentes.
+    sizing: serde_json::Value,
     overrides: Vec<(String, String)>,
     strategy_source: &'a str,
     holdout_from: Option<DateTime<Utc>>,
@@ -126,6 +134,25 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         &args.set,
     )?;
     let strategy = crate::dispatch::load_strategy(&args.strategy, &resolvido.toml)?;
+
+    // Um run de modo de sizing é tão experimental quanto uma ablação de
+    // parâmetro: PF e avg R quase não mudam, mas P&L em $, DD e a fração
+    // presa no cap mudam — e o `latest_for` escolhe baseline por régua, não
+    // por bom senso.
+    let experimental = resolvido.is_experimental || !args.sizing.vazio();
+
+    if !args.sizing.vazio() {
+        if args.label.is_none() {
+            anyhow::bail!(
+                "--label é obrigatório com as flags de dimensionamento (ADR-020 §6): sem \
+                 ele este run entra no histórico indistinguível do run de produção."
+            );
+        }
+        println!("   ⚖️  Sizing (ADR-020):");
+        for (k, v) in args.sizing.descricao() {
+            println!("      {k} = {v}");
+        }
+    }
 
     if resolvido.is_experimental {
         // Sem rótulo, o `analyze` escolhe o baseline do gate B por
@@ -255,8 +282,23 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
              só para comparação. Não é veredito de gate A.\n"
         );
     }
-    let risk_config =
-        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
+    let risk_settings = args.sizing.aplica(&config.app_config.risk)?;
+    let mut risk_params = strategy.risk_params();
+    if args.sizing.risk_pct.is_some() && risk_params.risk_per_trade_pct.is_some() {
+        // A estratégia sobrescreve o risco por trade (o failure test pede
+        // 0,5%). Num modo de sizing quem manda é a flag — senão o modo B
+        // rodaria com o número da estratégia e a tabela mentiria.
+        println!(
+            "   ⚖️  --risk-pct sobrepõe o override da estratégia ({} → {})",
+            risk_params.risk_per_trade_pct.unwrap_or_default(),
+            args.sizing.risk_pct.unwrap_or_default()
+        );
+        risk_params.risk_per_trade_pct = None;
+    }
+    let risk_config = crate::risk_config::build_risk_config(&risk_settings, &risk_params)?;
+    if let Some(aviso) = crate::risk_config::aviso_de_fracao(&risk_settings) {
+        println!("   ⚠️  {aviso}");
+    }
 
     let result = run_walk_forward(
         &strategy,
@@ -384,7 +426,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             session_flatten: backtest_config
                 .session_flatten_et
                 .map(|(h, mi)| format!("{h:02}:{mi:02}")),
-            initial_capital: backtest_config.initial_capital,
+            initial_capital: risk_config.capital_efetivo(backtest_config.initial_capital),
             oos_sessions: oos_sessions.clone(),
             commission_model: super::commission_label(args.legacy_cost),
             limit_fill_haircut_bps: (backtest_config.limit_fill_haircut_pct
@@ -392,7 +434,8 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             .normalize()
             .to_string(),
             label: &label,
-            experimental: resolvido.is_experimental,
+            experimental,
+            sizing: super::sizing_json(&risk_config),
             overrides: resolvido.overrides.clone(),
             strategy_source: &resolvido.source,
             holdout_from: args.holdout_from,
@@ -424,7 +467,8 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
                 None => serde_json::Value::Null,
             },
         );
-        obj.insert("experimental".into(), resolvido.is_experimental.into());
+        obj.insert("experimental".into(), experimental.into());
+        obj.insert("sizing".into(), super::sizing_json(&risk_config));
         obj.insert(
             "commission_model".into(),
             super::commission_label(args.legacy_cost).into(),

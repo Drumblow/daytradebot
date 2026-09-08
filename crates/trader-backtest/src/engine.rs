@@ -81,6 +81,14 @@ pub struct BacktestRun {
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub initial_capital: Decimal,
+    /// Base do `max_drawdown_pct` — `initial_capital × capital_fraction`.
+    ///
+    /// Sem fracionar a base junto com o sizing, o critério de DD do gate A
+    /// afrouxa sozinho: com fração 1/3 o P&L cai 3× e a base não, então o DD%
+    /// fica 3× menor sem ninguém ter mudado o critério (ADR-020,
+    /// Consequências; plano §5.5, cuidado (a)). Com `capital_fraction = 1`
+    /// (o default) é igual ao `initial_capital`, e nenhum run antigo muda.
+    pub capital_base_metricas: Decimal,
     pub final_equity: Decimal,
     pub total_trades: usize,
     pub closed_trades: Vec<trader_domain::Trade>,
@@ -234,6 +242,10 @@ impl BacktestEngine {
                             Some(candle.close),
                             &self.risk_state,
                             capital,
+                            // O MESMO buffer que a estratégia analisou: a
+                            // mediana de liquidez do ADR-020 sai daqui, e é
+                            // assim que ela fica igual à do live.
+                            history,
                         )
                         .await;
 
@@ -293,6 +305,10 @@ impl BacktestEngine {
             start_time,
             end_time,
             initial_capital: self.config.initial_capital,
+            capital_base_metricas: self
+                .execution_engine
+                .risk_config()
+                .capital_efetivo(self.config.initial_capital),
             final_equity: summary.equity,
             total_trades: closed_trades.len(),
             closed_trades,
@@ -462,6 +478,10 @@ pub fn default_backtest_risk_config() -> RiskConfig {
         trading_start_time_et: (0, 0, 0),
         trading_end_time_et: (23, 59, 59),
         entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
+        // ADR-020: os campos de dimensionamento ficam no default (fração 1,
+        // multiplicador 1, sem teto absoluto e sem cap de liquidez). Quem
+        // varia é o harness, por flag e com `--label`.
+        ..RiskConfig::default()
     }
 }
 

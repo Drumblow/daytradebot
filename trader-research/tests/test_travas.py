@@ -12,12 +12,17 @@ import pytest
 
 from conftest import calendario_util, escreve_run, serie_utc, trade_json
 from trader_research.loader import (
+    ReguaDivergente,
     SemCalendario,
     exige_calendario,
+    exige_mesma_regua,
     load_run,
     load_runs,
     simbolos_repetidos,
 )
+
+MODO_A = {"risk_per_trade_pct": "1", "capital_fraction": "1", "max_notional_multiple": "1"}
+MODO_B = {"risk_per_trade_pct": "0.15", "capital_fraction": "1", "max_notional_multiple": "1"}
 
 CALENDARIO = calendario_util(120)
 
@@ -98,3 +103,49 @@ def test_sem_repeticao_o_mapa_sai_vazio(tmp_path):
         [_arquivo(tmp_path, "a.json", symbol="AAA"), _arquivo(tmp_path, "b.json", symbol="BBB")]
     )
     assert simbolos_repetidos(runs) == {}
+
+
+def test_modos_de_sizing_diferentes_nao_sao_somaveis(tmp_path):
+    """ADR-020: o eixo mais traicoeiro da regua.
+
+    Dois modos de dimensionamento produzem o MESMO PF em R e o MESMO avg R —
+    as metricas que o gate le — com P&L em $ completamente diferentes: nos
+    214 trades medidos, US$ 14.574 no modo A contra US$ 4.128 no modo B. Sem
+    esta trava, somar os dois daria um numero que nao descreve nenhum dos
+    dois, e nada no relatorio denunciaria.
+    """
+    a = _arquivo(tmp_path, "a.json", symbol="AAA", sizing=MODO_A)
+    b = _arquivo(tmp_path, "b.json", symbol="BBB", sizing=MODO_B)
+    with pytest.raises(ReguaDivergente, match="sizing"):
+        exige_mesma_regua(load_runs([a, b]))
+
+
+def test_mesmo_modo_de_sizing_soma(tmp_path):
+    a = _arquivo(tmp_path, "a.json", symbol="AAA", sizing=MODO_A)
+    b = _arquivo(tmp_path, "b.json", symbol="BBB", sizing=MODO_A)
+    assert exige_mesma_regua(load_runs([a, b]))
+
+
+def test_a_ordem_das_chaves_do_sizing_nao_conta(tmp_path):
+    invertido = dict(reversed(list(MODO_A.items())))
+    a = _arquivo(tmp_path, "a.json", symbol="AAA", sizing=MODO_A)
+    b = _arquivo(tmp_path, "b.json", symbol="BBB", sizing=invertido)
+    assert exige_mesma_regua(load_runs([a, b]))
+
+
+def test_runs_antigos_sem_sizing_continuam_somaveis(tmp_path):
+    """Todo run anterior a 08/09/2026 nao declara dimensionamento.
+
+    A regua tem de continuar fechando entre eles — senao a trava nova
+    invalidaria os 8 runs do §5.6 que ela nem deveria tocar.
+    """
+    a = _arquivo(tmp_path, "a.json", symbol="AAA")
+    b = _arquivo(tmp_path, "b.json", symbol="BBB")
+    assert exige_mesma_regua(load_runs([a, b]))
+
+
+def test_run_com_e_sem_sizing_nao_sao_somaveis(tmp_path):
+    a = _arquivo(tmp_path, "a.json", symbol="AAA", sizing=MODO_A)
+    b = _arquivo(tmp_path, "b.json", symbol="BBB")
+    with pytest.raises(ReguaDivergente, match="sizing"):
+        exige_mesma_regua(load_runs([a, b]))

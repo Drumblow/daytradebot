@@ -25,9 +25,10 @@ use trader_domain::{
 use trader_infra::{
     db::create_pool,
     repositories::{
-        SqlxAssetRepository, SqlxCandleRepository, SqlxFillRepository,
-        SqlxMarketContextRepository, SqlxOrderRepository, SqlxSignalRepository,
-        SqlxSystemEventRepository, SqlxTradeRepository,
+        AccountSnapshotRecord, SqlxAccountSnapshotRepository, SqlxAssetRepository,
+        SqlxCandleRepository, SqlxFillRepository, SqlxMarketContextRepository,
+        SqlxOrderRepository, SqlxSignalRepository, SqlxSystemEventRepository,
+        SqlxTradeRepository,
     },
 };
 
@@ -143,6 +144,13 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     // Compartilhado com o backtest para garantir paridade de validação.
     let risk_config =
         crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
+    // Fração de capital × posições simultâneas contra o teto de notional da
+    // conta (ADR-020 §4). Não é erro — é config que não faz o que quem a
+    // escreveu queria, e o lugar de dizer isso é a subida.
+    if let Some(aviso) = crate::risk_config::aviso_de_fracao(&config.app_config.risk) {
+        warn!(%aviso, "config de dimensionamento incoerente com o teto da conta");
+        println!("   ⚠️  {aviso}");
+    }
 
     let broker = SimulatedBroker::new(SimulatedBrokerConfig {
         account_id: Some("DU_SIM".to_string()),
@@ -446,8 +454,29 @@ async fn analyze_and_execute<B: Broker>(
     //
     // As duas fontes são autoritativas e não exigem tabela nova: o BROKER diz
     // a exposição real da conta, o BANCO diz o P&L realizado do dia.
-    if let Some(motivo) =
-        portfolio_limit_hit(&positions, summary.equity, repos, risk_settings).await
+    //
+    // A soma inclui a posição que ESTA instância abriria (ADR-020 §4): sem
+    // isso, com duas posições a 99,9% do capital cada, a terceira entrava e a
+    // conta ia a 300% de notional sem nenhuma trava disparar — o teto de 200%
+    // só era testado contra o que JÁ estava aberto. O que segurava a conta
+    // era a contagem de posições, não o notional.
+    let notional_prospectivo = engine
+        .risk_config()
+        // Sem a mediana de liquidez: aqui ainda não existe sinal nem barra
+        // analisada. O valor é o TETO da instância, então erra para o lado
+        // conservador — e com os stops medidos (12–30 bp) o cap de notional
+        // prende em quase todo trade, o que faz teto e tamanho real
+        // coincidirem na prática.
+        .teto_de_notional(summary.equity, None)
+        .0;
+    if let Some(motivo) = portfolio_limit_hit(
+        &positions,
+        summary.equity,
+        repos,
+        risk_settings,
+        notional_prospectivo,
+    )
+    .await
     {
         info!(%symbol, %motivo, "limite de portfólio atingido; sem novo sinal");
         record_event(
@@ -497,6 +526,11 @@ async fn analyze_and_execute<B: Broker>(
                     reference_price,
                     risk_state,
                     capital,
+                    // O mesmo buffer que a estratégia analisou (600 barras).
+                    // A mediana de liquidez do ADR-020 §3 sai daqui — e é o
+                    // motivo de o default do `liquidity_lookback_bars` ser
+                    // 600: é o N que o live serve.
+                    candles,
                 )
                 .await
             {
@@ -900,6 +934,11 @@ async fn run_live(
     .await;
     alerter.info(&format!("Live iniciado: {} @ {}", args.symbol, connection));
 
+    // O retrato da conta na subida (ADR-020 §5) — inclusive quando não há
+    // nenhum trade no dia, que é justamente quando não existiria outro
+    // registro de quanto a conta tinha.
+    registra_snapshot_da_conta(&broker, repos, "live_started").await;
+
     while !shutdown.load(Ordering::SeqCst) {
         // Espera interrompível: sem isto o encerramento gracioso depende de
         // cair no fim de um tick de 30s, e o SIGKILL do docker chega antes.
@@ -951,6 +990,10 @@ async fn run_live(
                 {
                     Ok(had_position) => {
                         flattened_on = Some(ny_day);
+                        // Segundo retrato do dia: a equity DEPOIS de tudo
+                        // fechado. É o par que o painel precisa para ter
+                        // variação diária sem depender de trade.
+                        registra_snapshot_da_conta(&broker, repos, "session_flatten").await;
                         if had_position {
                             println!("🔔 Flatten de fim de sessão: posição encerrada a mercado");
                         }
@@ -1453,6 +1496,68 @@ impl PendingBar {
     }
 }
 
+/// Grava o retrato da conta em `account_snapshots` (ADR-020 §5).
+///
+/// A equity que dimensiona TODA posição do projeto era lida do broker a cada
+/// sinal e descartada; o único registro dela era uma linha escrita à mão no
+/// `HANDOFF.md`. Sem isto não dá para responder "de que patrimônio o bot
+/// estava dimensionando naquele dia?" — nem para o painel mostrar a conta.
+///
+/// Best-effort de propósito: falha aqui **não** pode parar o live. É
+/// telemetria, não trava de risco.
+async fn registra_snapshot_da_conta<B: Broker>(
+    broker: &B,
+    repos: Option<&Repositories>,
+    momento: &str,
+) {
+    let Some(repos) = repos else { return };
+
+    let resumo = match broker.get_account_summary().await {
+        Ok(resumo) => resumo,
+        Err(e) => {
+            warn!(error = %e, momento, "falha ao ler o resumo da conta para o snapshot");
+            return;
+        }
+    };
+
+    let metadata = serde_json::json!({
+        "momento": momento,
+        // A moeda que o broker declarou. Vazio = ele não informou (o
+        // simulador nunca informa). O cap de notional trata a equity como
+        // DÓLARES; se um dia aparecer "CAD" aqui, o teto de 1× está ~1,37×
+        // errado e este campo é o que vai ter dito isso.
+        "moedas": resumo.currencies,
+    });
+
+    let registro = AccountSnapshotRecord {
+        broker: resumo.broker.clone(),
+        account_id: resumo.account_id.clone(),
+        timestamp: resumo.timestamp,
+        cash: resumo.cash,
+        equity: resumo.equity,
+        buying_power: resumo.buying_power,
+        daily_pnl: resumo.daily_pnl,
+        metadata,
+    };
+
+    if let Err(e) = repos.account_repo.save(&registro).await {
+        warn!(error = %e, momento, "falha ao gravar snapshot da conta");
+        return;
+    }
+
+    record_event(
+        Some(repos),
+        "info",
+        "account",
+        "account_snapshot",
+        &format!(
+            "{momento}: equity {:.2} | caixa {:.2} | poder de compra {:.2} | moedas {:?}",
+            resumo.equity, resumo.cash, resumo.buying_power, resumo.currencies
+        ),
+    )
+    .await;
+}
+
 /// Verifica os limites de risco da CONTA INTEIRA antes de abrir posição.
 ///
 /// Devolve `Some(motivo)` quando alguma trava está ativa. Três travas, todas
@@ -1469,6 +1574,7 @@ async fn portfolio_limit_hit(
     equity: Decimal,
     repos: Option<&Repositories>,
     risk: &trader_infra::config::RiskSettings,
+    notional_prospectivo: Decimal,
 ) -> Option<String> {
     // 1 e 2: exposição, medida no broker.
     if let Some(motivo) = exposure_limit_hit(
@@ -1476,6 +1582,7 @@ async fn portfolio_limit_hit(
         equity,
         risk.max_concurrent_positions,
         risk.max_portfolio_notional_pct,
+        notional_prospectivo,
     ) {
         return Some(motivo);
     }
@@ -1512,6 +1619,9 @@ fn exposure_limit_hit(
     equity: Decimal,
     max_positions: usize,
     max_notional_pct: f64,
+    // Quanto a posição que está para ser aberta pode ocupar. Zero significa
+    // "não sei" e reproduz o comportamento anterior ao ADR-020.
+    notional_prospectivo: Decimal,
 ) -> Option<String> {
     if positions.len() >= max_positions {
         return Some(format!(
@@ -1529,6 +1639,16 @@ fn exposure_limit_hit(
         if notional >= teto {
             return Some(format!(
                 "notional agregado {notional:.0} >= teto {teto:.0} ({max_notional_pct}% do capital)"
+            ));
+        }
+        // A checagem que faltava (ADR-020 §4). Duas posições a 99,9% do
+        // capital somam 199,8% < 200% e passavam pela linha de cima; a
+        // terceira entrava inteira e a conta ia a ~300%. O teto só vale se
+        // for testado contra a soma DEPOIS da entrada.
+        if notional + notional_prospectivo > teto {
+            return Some(format!(
+                "notional agregado {notional:.0} + posicao nova (ate {notional_prospectivo:.0}) \
+                 passa do teto {teto:.0} ({max_notional_pct}% do capital)"
             ));
         }
     }
@@ -2469,6 +2589,7 @@ struct Repositories {
     context_repo: SqlxMarketContextRepository,
     event_repo: SqlxSystemEventRepository,
     asset_repo: SqlxAssetRepository,
+    account_repo: SqlxAccountSnapshotRepository,
 }
 
 async fn setup_repositories(config: &CliConfig) -> Result<Repositories> {
@@ -2496,6 +2617,7 @@ async fn setup_repositories(config: &CliConfig) -> Result<Repositories> {
         context_repo: SqlxMarketContextRepository::new(pool.clone()),
         event_repo: SqlxSystemEventRepository::new(pool.clone()),
         asset_repo: SqlxAssetRepository::new(pool.clone()),
+        account_repo: SqlxAccountSnapshotRepository::new(pool.clone()),
     })
 }
 
@@ -2554,7 +2676,7 @@ mod tests {
         let equity = Decimal::from(250_000);
         let duas = vec![posicao("IWM", 300, 100), posicao("IWV", 400, 100)];
         assert!(
-            exposure_limit_hit(&duas, equity, 3, 200.0).is_none(),
+            exposure_limit_hit(&duas, equity, 3, 200.0, Decimal::ZERO).is_none(),
             "duas posições com teto de três deve passar"
         );
 
@@ -2563,7 +2685,7 @@ mod tests {
             posicao("IWV", 400, 100),
             posicao("IWO", 370, 100),
         ];
-        let motivo = exposure_limit_hit(&tres, equity, 3, 200.0).expect("deve travar");
+        let motivo = exposure_limit_hit(&tres, equity, 3, 200.0, Decimal::ZERO).expect("deve travar");
         assert!(motivo.contains("posicoes abertas"), "motivo: {motivo}");
     }
 
@@ -2572,11 +2694,11 @@ mod tests {
         let equity = Decimal::from(100_000);
         // Duas posições de 90k = 180k, contra teto de 150% (150k).
         let posicoes = vec![posicao("IWM", 900, 100), posicao("IWV", 900, 100)];
-        let motivo = exposure_limit_hit(&posicoes, equity, 10, 150.0).expect("deve travar");
+        let motivo = exposure_limit_hit(&posicoes, equity, 10, 150.0, Decimal::ZERO).expect("deve travar");
         assert!(motivo.contains("notional agregado"), "motivo: {motivo}");
 
         // Com teto de 200% (200k) a mesma exposição passa.
-        assert!(exposure_limit_hit(&posicoes, equity, 10, 200.0).is_none());
+        assert!(exposure_limit_hit(&posicoes, equity, 10, 200.0, Decimal::ZERO).is_none());
     }
 
     /// Só recusa que PARA a operação vira alerta. Recusa de rotina (não há
@@ -2607,7 +2729,82 @@ mod tests {
 
     #[test]
     fn conta_vazia_nao_trava() {
-        assert!(exposure_limit_hit(&[], Decimal::from(250_000), 3, 200.0).is_none());
+        assert!(exposure_limit_hit(&[], Decimal::from(250_000), 3, 200.0, Decimal::ZERO).is_none());
+    }
+
+    /// O caso 2 × 99,9% (ADR-020 §4).
+    ///
+    /// Com equity de 240k e teto de 200% (480k), duas posições de 239.900
+    /// somam 479.800 — **abaixo** do teto. A regra antiga testava só isso e
+    /// deixava a terceira entrar inteira, levando a conta a ~300% de
+    /// notional. O que segurava a conta era a CONTAGEM de posições, não o
+    /// teto: o número de 200% quase nunca mordia.
+    #[test]
+    fn a_terceira_posicao_trava_pelo_notional_e_nao_so_pela_contagem() {
+        let equity = Decimal::from(240_000);
+        let duas = vec![posicao("IJS", 2399, 100), posicao("SLYV", 2399, 100)];
+        let prospectiva = Decimal::from(240_000);
+
+        // A régua antiga (sem a posição nova) não vê problema nenhum.
+        assert!(
+            exposure_limit_hit(&duas, equity, 3, 200.0, Decimal::ZERO).is_none(),
+            "479.800 < 480.000: era assim que a terceira entrava"
+        );
+
+        // Com a posição prospectiva na soma, 719.800 > 480.000.
+        let motivo = exposure_limit_hit(&duas, equity, 3, 200.0, prospectiva)
+            .expect("a terceira posição tem de ser recusada pelo notional");
+        assert!(motivo.contains("posicao nova"), "motivo: {motivo}");
+
+        // E o limite de contagem (3) NÃO é o que travou: só há duas abertas.
+        assert!(!motivo.contains("posicoes abertas"), "motivo: {motivo}");
+    }
+
+    /// A trava não pode virar "nunca abre a última": se a soma COM a posição
+    /// nova cabe no teto, ela entra. É exatamente o caso que o
+    /// `capital_fraction` do ADR-020 constrói — 3 × 1/3 = 100% de notional.
+    #[test]
+    fn prospectiva_que_cabe_no_teto_nao_trava() {
+        let equity = Decimal::from(240_000);
+        // Duas posições de 80k (fração 1/3 da conta) e uma terceira igual.
+        let duas = vec![posicao("IJS", 800, 100), posicao("SLYV", 800, 100)];
+        assert!(
+            exposure_limit_hit(&duas, equity, 3, 200.0, Decimal::from(80_000)).is_none(),
+            "240.000 de notional cabe folgado no teto de 480.000"
+        );
+    }
+
+    /// O teto de 200% da conta é medido sobre a EQUITY, e a fração do
+    /// ADR-020 não muda isso: ela decide o tamanho de cada posição, não o
+    /// teto da conta. Um `capital_fraction` que ocupa mais que o teto é
+    /// config incoerente, e o aviso de subida existe para dizer isso.
+    #[test]
+    fn aviso_de_fracao_avisa_quando_o_cluster_nao_cabe() {
+        use trader_infra::config::RiskSettings;
+        let mut risk = RiskSettings {
+            profile: "conservative".to_string(),
+            risk_per_trade_pct: 1.0,
+            max_daily_loss_pct: 2.0,
+            max_trades_per_day: 3,
+            max_consecutive_losses: 3,
+            max_portfolio_daily_loss_pct: 4.0,
+            max_concurrent_positions: 3,
+            max_portfolio_notional_pct: 200.0,
+            entry_overshoot_tolerance: 0.25,
+            max_notional_multiple: 1.0,
+            max_notional_usd: None,
+            capital_fraction: 1.0,
+            max_pct_of_median_bar_notional: None,
+            liquidity_lookback_bars: 600,
+        };
+
+        // Config de HOJE: 3 posições × 100% = 300% contra teto de 200%.
+        let aviso = crate::risk_config::aviso_de_fracao(&risk).expect("deve avisar");
+        assert!(aviso.contains("300.0%"), "aviso: {aviso}");
+
+        // Com a fração do ADR-020, as três cabem em 100%.
+        risk.capital_fraction = 1.0 / 3.0;
+        assert!(crate::risk_config::aviso_de_fracao(&risk).is_none());
     }
 
     fn utc(s: &str) -> DateTime<Utc> {

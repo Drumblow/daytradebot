@@ -1,12 +1,60 @@
 # ADR-020 — Dimensionamento por liquidez e fração de capital
 
-**Status:** proposto / especificado — NÃO implementado (07/09/2026)
+**Status:** **IMPLEMENTADO em 08/09/2026** (os seis itens; o cap de liquidez
+entra DESLIGADO por default — ver "O que a implementação mudou desta ADR")
 **Data:** 2026-09-07
 **Fecha:** item 6 do ranking (Tier A) e §5.5 de `docs/cto-plano-lucratividade-2026-09.md`; achado 4 de §2.3 e §2.4
 **Contexto anterior:** ADR-017 (limite de risco da conta inteira — soma as posições; esta ADR trata do tamanho de **cada** posição e a complementa), ADR-018 (flatten no backtest) e ADR-019 (PF_R e corr no gate) — pré-requisitos dos modos de sizing (item 6); o cap, a fração e o registro de equity independem deles. A medição de slippage por fill que valida o cap depende do feed de produção íntegro (plano §5.8; sequenciamento §9, semana 2–3)
 **Números:** re-simulação dos críticos (06/09/2026) sobre os JSONs de backtest a 2 bp e os candles do banco dev (`validacao-quant-4`, `portfolio-regime-1/2`, `validacao-quant-6`), consolidados no plano-mestre. Nada aqui é backtest novo do motor
 
 ---
+
+> ## Implementado em 08/09/2026 — e o que mudou desta ADR
+>
+> Relatório com as medições: `docs/reports/sizing-adr020-2026-09-08.md`.
+> Runs em `out/adr020/` (`trader-research/modos-sizing.ps1`).
+>
+> **Regressão primeiro:** com os defaults (fração 1, multiplicador 1, sem teto
+> absoluto, sem cap de liquidez), o motor reproduz **trade a trade** os oito
+> runs do §5.6. Nada em produção mudou de número.
+>
+> **Cinco coisas que esta ADR não sabia:**
+>
+> 1. **O feed esparso do Gateway (achado 7 do §2.3 do plano) inviabiliza o
+>    cap de liquidez hoje.** O fato já era conhecido — "3–10% do volume" desde
+>    07/08/2026 — e agora está medido em todos os pares, sobre a população
+>    inteira de barras: IWM guarda 3,2% do volume anterior, AVUV 7,1%, IWN
+>    20%, IWV 32%, IJS 41%, VBR 51%, SLYV 89%. Duas coisas novas: a dispersão
+>    (SLYV quase intacto, IJS quase o dobro do estimado) e o fato de que os
+>    pregões de agosto, **reingeridos em 03/09, voltaram com o mesmo volume
+>    baixo** — reingerir do Gateway não repara. Consequência para esta ADR:
+>    **ligar o cap de liquidez hoje aplicaria um teto medido num volume que
+>    não existe** (no IWM, 12× menor). Por isso o cap entrou implementado,
+>    testado e **desligado**; enquanto o §5.8 não consertar o feed, o teto
+>    utilizável é o `max_notional_usd` estático.
+> 2. **A janela é de 600 barras, não de 60 pregões.** A ADR pedia 60 pregões
+>    E exigia que live e backtest medissem com o mesmo N. O live carrega 600
+>    barras (≈ 23 pregões) e cobrir 60 pregões triplicaria a busca de candles
+>    por poll — no feed que o item 1 mostra frágil. Entre os dois requisitos,
+>    o que não se negocia é a paridade. O N está em config.
+> 3. **O cap de 1/3 corta mais do que a ADR estimava, e no lugar certo.** Ao
+>    notional de produção (≈ 238k), ele reduz **79 dos 214 trades** (37%):
+>    SLYV em 54% na mediana, IJS em 35%, IWV em 20%, VBR em 0,2%. AVUV, IWM e
+>    IWN ficam intocados. Preço: US$ 3.089 de lucro nominal (−10,7%).
+> 4. **A fração de capital NÃO é neutra em R.** Com 1/3 do tamanho, o mínimo
+>    de US$ 1,00 por ordem passa a morder: a comissão por ação sobe de US$
+>    0,01000 para 0,01125 e o avg R cai de 0,107 para **0,102** (−4,7%). A
+>    ADR previu "centavos" — e centavos são 4,7% do edge quando o edge é
+>    0,107.
+> 5. **O modo B custa dinheiro, e o número está medido.** Risco uniforme leva
+>    o PF em $ de 1,55 para 1,24 (o PF em R fica em 1,21 nos dois), o net de
+>    US$ 14.574 para 4.128, e **três dos oito pares viram negativos** — os
+>    três com PF_R < 1. O modo B não corrige o resultado: ele revela que o
+>    lucro em $ desses pares era o sizing.
+>
+> **Fica de fora:** ligar o cap de liquidez e pôr `max_notional_usd` em SLYV
+> e IJS (os dois dependem do §5.8), e agregar as recusas por
+> `notional_above_liquidity_cap` em algum relatório.
 
 ## Contexto
 
@@ -259,7 +307,25 @@ o modo A "vence" por causa do overnight.
   (PF/avg R são invariantes ao tamanho), mas muda `$/mês` e o DD em $ dos
   relatórios — anotar a data da troca em `system_events` e no HANDOFF.
 
-## Como aplicar (quando aprovado)
+## Como foi aplicado (08/09/2026)
+
+O roteiro abaixo foi seguido na ordem, com três desvios, todos anotados no
+banner do topo: a janela de liquidez ficou em 600 barras (item 2 do banner),
+o cap de liquidez entrou desligado (item 1) e a trava de notional recebeu o
+**teto** da instância em vez do tamanho exato da posição prospectiva — o
+tamanho só existe depois do sinal, e a checagem da conta acontece antes. Com
+os stops medidos (12–30 bp) o cap prende em ~100% dos trades, então teto e
+tamanho real coincidem na prática; o teste
+`a_terceira_posicao_trava_pelo_notional_e_nao_so_pela_contagem` fixa o caso
+2 × 99,9%.
+
+Um efeito colateral da falha fechada do cap, medido e declarado: com o cap
+ligado, o backtest recusa todo sinal enquanto o buffer não tem as 600 barras
+— 11 de 199 trades in-sample somem (a amostra OOS fica intacta). No live não
+acontece: a janela chega cheia na primeira busca.
+
+### Roteiro original
+
 
 1. `crates/trader-core/src/risk/mod.rs`: campos `max_notional_multiple`,
    `max_notional_usd: Option<Decimal>`, `capital_fraction` e

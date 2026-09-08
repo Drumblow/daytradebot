@@ -321,7 +321,7 @@ def monta_relatorio(
     n_boot: int,
     capital: Decimal | None = None,
 ) -> str:
-    slippage, flatten, comissao, desconto = exige_mesma_regua(runs)
+    slippage, flatten, comissao, desconto, sizing = exige_mesma_regua(runs)
     exige_calendario(runs)
     unidades = agrupa(runs, por, capital)
     cab = [
@@ -331,6 +331,11 @@ def monta_relatorio(
         f"{comissao or 'NAO DECLARADA (run anterior ao 5.6)'} | desconto no "
         f"alvo {desconto if desconto is not None else 'NAO DECLARADO'} bp | "
         f"{len(runs)} runs | {n_boot:,} reamostras | seed {SEED}.",
+        "",
+        f"**Dimensionamento (ADR-020):** "
+        f"{sizing or 'NAO DECLARADO (run anterior a 08/09/2026)'}. "
+        "PF em R e avg R nao mudam com o tamanho; P&L em $, DD% e a fracao "
+        "presa no cap mudam — por isso o modo faz parte da regua.",
         "",
         "**Esquema do bootstrap:** estacionario (Politis-Romano) sobre o P&L "
         "diario de **todos os pregoes, zeros incluidos**, como o ADR-019 "

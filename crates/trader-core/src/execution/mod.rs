@@ -49,6 +49,16 @@ impl ExecutionEngine {
         Self { risk_manager }
     }
 
+    /// Config de risco em vigor.
+    ///
+    /// O live precisa dela FORA do `process_signal` para a trava de notional
+    /// da conta (ADR-017 + ADR-020 §4): o teto que esta instancia pode ocupar
+    /// sai de `capital_fraction` e `max_notional_multiple`, e a checagem da
+    /// conta acontece antes de existir sinal.
+    pub fn risk_config(&self) -> &crate::risk::RiskConfig {
+        self.risk_manager.config()
+    }
+
     /// Processa um sinal validado: aplica regras de risco e envia ordem ao broker.
     ///
     /// `reference_price` é o preço mais fresco que o chamador conhece no
@@ -65,6 +75,11 @@ impl ExecutionEngine {
         reference_price: Option<Decimal>,
         risk_state: &RiskState,
         capital: Decimal,
+        // Buffer analisado pela estratégia — vira a mediana de liquidez do
+        // ADR-020 §3 dentro do `RiskManager`. Vem de fora porque é o único
+        // jeito de live e backtest medirem a mesma coisa: cada um passa o
+        // buffer que de fato usou.
+        candles: &[trader_domain::Candle],
     ) -> ExecutionResult {
         // Invariante de segurança: nunca abrir posição se já houver uma no
         // mesmo ativo — garantido na engine, não depende do caller.
@@ -118,7 +133,7 @@ impl ExecutionEngine {
 
         match self
             .risk_manager
-            .validate(signal, ctx, quote, risk_state, capital)
+            .validate(signal, ctx, quote, risk_state, capital, candles)
         {
             RiskCheck::Approved {
                 position_size,
@@ -268,6 +283,7 @@ mod tests {
                 buying_power: Decimal::from(100_000),
                 daily_pnl: Decimal::ZERO,
                 timestamp: Utc::now(),
+                currencies: Vec::new(),
             })
         }
 
@@ -353,6 +369,7 @@ mod tests {
                 None,
                 &risk_state,
                 Decimal::from(100_000),
+                &[],
             )
             .await;
 
@@ -386,6 +403,7 @@ mod tests {
                 None,
                 &risk_state,
                 Decimal::from(100_000),
+                &[],
             )
             .await;
 
@@ -423,6 +441,7 @@ mod tests {
                 Some(Decimal::from(502)), // 2.0 além do gatilho > 1.25 tolerado
                 &risk_state,
                 Decimal::from(100_000),
+                &[],
             )
             .await;
 
@@ -461,6 +480,7 @@ mod tests {
                 Some(Decimal::from(501)), // 1.0 além do gatilho ≤ 1.25 tolerado
                 &risk_state,
                 Decimal::from(100_000),
+                &[],
             )
             .await;
 
@@ -498,6 +518,7 @@ mod tests {
                 Some(Decimal::from(498)), // 2.0 abaixo do gatilho > 1.25 tolerado
                 &risk_state,
                 Decimal::from(100_000),
+                &[],
             )
             .await;
 

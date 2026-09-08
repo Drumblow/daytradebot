@@ -85,6 +85,105 @@ pub fn commission_label(legacy: bool) -> &'static str {
     }
 }
 
+/// Overrides de dimensionamento para o harness (ADR-020 §6).
+///
+/// Os modos A/B/B'/C do plano §5.5 são combinações destes campos. Qualquer um
+/// deles preenchido torna o run **experimental**: PF e avg R são quase
+/// invariantes ao tamanho, mas P&L em $, DD e a fração de trades presos no
+/// cap não são — e um run de modo não pode virar baseline do gate B por
+/// ordem de chegada, que é o defeito que o ADR-019 §3 fechou para `--set` e
+/// o §5.6 teve de fechar de novo para o custo e o slippage.
+#[derive(Debug, Clone, Default)]
+pub struct SizingOverrides {
+    pub risk_pct: Option<rust_decimal::Decimal>,
+    pub capital_fraction: Option<rust_decimal::Decimal>,
+    pub notional_multiple: Option<rust_decimal::Decimal>,
+    pub notional_usd: Option<rust_decimal::Decimal>,
+    pub liquidity_pct: Option<rust_decimal::Decimal>,
+}
+
+impl SizingOverrides {
+    /// Nenhum override: o run usa o `[risk]` da config, como produção.
+    pub fn vazio(&self) -> bool {
+        self.risk_pct.is_none()
+            && self.capital_fraction.is_none()
+            && self.notional_multiple.is_none()
+            && self.notional_usd.is_none()
+            && self.liquidity_pct.is_none()
+    }
+
+    /// Aplica os overrides sobre o `[risk]` da aplicação.
+    ///
+    /// A validação de faixa NÃO acontece aqui: acontece no
+    /// `build_risk_config`, que é por onde live, backtest e walk-forward
+    /// passam. Duplicá-la abriria a porta para as duas divergirem.
+    pub fn aplica(
+        &self,
+        risk: &trader_infra::config::RiskSettings,
+    ) -> anyhow::Result<trader_infra::config::RiskSettings> {
+        use rust_decimal::prelude::ToPrimitive;
+
+        let f64_de = |nome: &str, v: rust_decimal::Decimal| -> anyhow::Result<f64> {
+            v.to_f64()
+                .ok_or_else(|| anyhow::anyhow!("--{nome} {v} não cabe em f64"))
+        };
+
+        let mut saida = risk.clone();
+        if let Some(v) = self.risk_pct {
+            saida.risk_per_trade_pct = f64_de("risk-pct", v)?;
+        }
+        if let Some(v) = self.capital_fraction {
+            saida.capital_fraction = f64_de("capital-fraction", v)?;
+        }
+        if let Some(v) = self.notional_multiple {
+            saida.max_notional_multiple = f64_de("notional-multiple", v)?;
+        }
+        if let Some(v) = self.notional_usd {
+            saida.max_notional_usd = Some(f64_de("notional-usd", v)?);
+        }
+        if let Some(v) = self.liquidity_pct {
+            saida.max_pct_of_median_bar_notional = Some(f64_de("liquidity-pct", v)?);
+        }
+        Ok(saida)
+    }
+
+    /// O que foi sobrescrito, para imprimir e para gravar no `metrics`.
+    pub fn descricao(&self) -> Vec<(String, String)> {
+        let mut saida = Vec::new();
+        let mut push = |k: &str, v: Option<rust_decimal::Decimal>| {
+            if let Some(v) = v {
+                saida.push((k.to_string(), v.normalize().to_string()));
+            }
+        };
+        push("risk_per_trade_pct", self.risk_pct);
+        push("capital_fraction", self.capital_fraction);
+        push("max_notional_multiple", self.notional_multiple);
+        push("max_notional_usd", self.notional_usd);
+        push("max_pct_of_median_bar_notional", self.liquidity_pct);
+        saida
+    }
+}
+
+/// O dimensionamento com que um run foi medido, para gravar em `metrics`.
+///
+/// Sem isto, dois runs de modos diferentes ficam indistinguíveis no banco —
+/// o mesmo defeito que o `commission_model` fechou para o custo. E o
+/// `capital_fraction` é obrigatório para ler o `max_drawdown_pct`: ele é a
+/// BASE do DD, e um run fracionado tem DD% comparável só contra outro que
+/// declare a mesma base.
+pub fn sizing_json(risk: &trader_core::risk::RiskConfig) -> serde_json::Value {
+    serde_json::json!({
+        "risk_per_trade_pct": risk.risk_per_trade_pct.normalize().to_string(),
+        "capital_fraction": risk.capital_fraction.normalize().to_string(),
+        "max_notional_multiple": risk.max_notional_multiple.normalize().to_string(),
+        "max_notional_usd": risk.max_notional_usd.map(|v| v.normalize().to_string()),
+        "max_pct_of_median_bar_notional": risk
+            .max_pct_of_median_bar_notional
+            .map(|v| v.normalize().to_string()),
+        "liquidity_lookback_bars": risk.liquidity_lookback_bars,
+    })
+}
+
 pub mod account;
 pub mod analyze;
 pub mod backtest;

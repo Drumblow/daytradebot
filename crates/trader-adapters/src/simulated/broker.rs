@@ -881,6 +881,9 @@ impl Broker for SimulatedBroker {
             buying_power: state.buying_power,
             daily_pnl: state.daily_pnl,
             timestamp: Utc::now(),
+            // O simulador não tem moeda: inventar "USD" aqui faria o snapshot
+            // do paper simulado afirmar algo que ninguém mediu.
+            currencies: Vec::new(),
         })
     }
 

@@ -1,5 +1,6 @@
 //! Implementações sqlx dos repositories de domínio.
 
+pub mod account_snapshot_repository;
 pub mod asset_repository;
 pub mod backtest_run_repository;
 pub mod candle_repository;
@@ -11,6 +12,7 @@ pub mod signal_repository;
 pub mod system_event_repository;
 pub mod trade_repository;
 
+pub use account_snapshot_repository::{AccountSnapshotRecord, SqlxAccountSnapshotRepository};
 pub use asset_repository::SqlxAssetRepository;
 pub use backtest_run_repository::{
     BacktestRunRecord, SqlxBacktestRunRepository, StoredBacktestRun,

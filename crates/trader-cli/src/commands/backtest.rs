@@ -57,6 +57,8 @@ pub struct Args {
     /// do banco dev não têm rótulo, e a maior parte veio daqui. O `--label` do
     /// `walkforward` existe desde o ADR-019; este comando ficou de fora.
     pub label: Option<String>,
+    /// Modo de dimensionamento (ADR-020 §6). Torna o run experimental.
+    pub sizing: super::SizingOverrides,
 }
 
 /// Executa um backtest da estratégia solicitada.
@@ -169,8 +171,26 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         (backtest_config.limit_fill_haircut_pct * Decimal::from(10_000)).normalize();
 
     // Paridade com o live: mesmos limites de risco e horário da estratégia.
-    let risk_config =
-        crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
+    let risk_settings = args.sizing.aplica(&config.app_config.risk)?;
+    let mut risk_params = strategy.risk_params();
+    if args.sizing.risk_pct.is_some() && risk_params.risk_per_trade_pct.is_some() {
+        println!(
+            "   ⚖️  --risk-pct sobrepõe o override da estratégia ({} → {})",
+            risk_params.risk_per_trade_pct.unwrap_or_default(),
+            args.sizing.risk_pct.unwrap_or_default()
+        );
+        risk_params.risk_per_trade_pct = None;
+    }
+    let risk_config = crate::risk_config::build_risk_config(&risk_settings, &risk_params)?;
+    if let Some(aviso) = crate::risk_config::aviso_de_fracao(&risk_settings) {
+        println!("   ⚠️  {aviso}");
+    }
+    if !args.sizing.vazio() {
+        println!("   ⚖️  Sizing (ADR-020):");
+        for (k, v) in args.sizing.descricao() {
+            println!("      {k} = {v}");
+        }
+    }
     let mut engine = BacktestEngine::new(backtest_config, risk_config);
 
     let run = engine.run(&strategy, &candles).await?;
@@ -203,9 +223,10 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
                     None => serde_json::Value::Null,
                 },
             );
-            // O `backtest` não tem `--set`: nunca é experimental. A chave
-            // existe para o `latest_for` não depender de `COALESCE`.
-            obj.insert("experimental".into(), false.into());
+            // O `backtest` não tem `--set`, mas TEM modo de sizing (ADR-020
+            // §6): um run de modo não pode virar baseline do gate B.
+            obj.insert("experimental".into(), (!args.sizing.vazio()).into());
+            obj.insert("sizing".into(), super::sizing_json(&risk_config));
             obj.insert("commission_model".into(), commission_run.into());
             obj.insert(
                 "limit_fill_haircut_bps".into(),
