@@ -119,7 +119,12 @@ jobs:
               docker exec daytradebot_scheduler_1 /usr/local/bin/scheduler.sh backup
 
               echo "== rodando $caminho =="
-              docker exec -i daytradebot_postgres_1                 psql -v ON_ERROR_STOP=1 -U trader -d trader_db < "$caminho"
+              # -p 5433: o Postgres de producao NAO escuta na 5432. Sem a
+              # porta, o psql procura o socket `.s.PGSQL.5432`, que nao
+              # existe, e falha depois do backup ja ter sido feito. O
+              # `host-check.yml` sempre usou 5433 — esta acao e que nasceu
+              # com a porta errada.
+              docker exec -i daytradebot_postgres_1                 psql -v ON_ERROR_STOP=1 -U trader -p 5433 -d trader_db < "$caminho"
               ;;
 
             logs-instancia)
