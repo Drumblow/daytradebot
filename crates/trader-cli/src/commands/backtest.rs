@@ -136,6 +136,11 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         );
     }
 
+    // Guardados antes do move para o engine: identificam a régua do run no
+    // `metrics` persistido (ADR-019 §3).
+    let slippage_bps_run = (backtest_config.slippage_pct * Decimal::from(10_000)).normalize();
+    let session_flatten_run = backtest_config.session_flatten_et;
+
     // Paridade com o live: mesmos limites de risco e horário da estratégia.
     let risk_config =
         crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
@@ -156,6 +161,26 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
 
     // Persiste o run no banco (melhor esforço: backtest já foi executado).
     if let Some(pool) = &pool {
+        // Mesmo enriquecimento do `walkforward` (ADR-019 §3). Sem ele, um run
+        // de `backtest` fica indistinguível de outro rodado a custo ou régua
+        // diferentes — e ele é elegível a baseline do gate B pelo `latest_for`
+        // tanto quanto um de walk-forward.
+        let mut metrics_json = serde_json::to_value(&report.metrics)
+            .unwrap_or(serde_json::Value::Object(Default::default()));
+        if let Some(obj) = metrics_json.as_object_mut() {
+            obj.insert("slippage_bps".into(), slippage_bps_run.to_string().into());
+            obj.insert(
+                "session_flatten".into(),
+                match session_flatten_run {
+                    Some((h, m)) => format!("{h:02}:{m:02}").into(),
+                    None => serde_json::Value::Null,
+                },
+            );
+            // O `backtest` não tem `--set`: nunca é experimental. A chave
+            // existe para o `latest_for` não depender de `COALESCE`.
+            obj.insert("experimental".into(), false.into());
+        }
+
         let record = BacktestRunRecord {
             symbol: args.symbol.clone(),
             strategy_id: strategy.id().id,
@@ -166,8 +191,7 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             period_end: report.end_time,
             initial_capital: report.initial_capital,
             final_equity: report.final_equity,
-            metrics: serde_json::to_value(&report.metrics)
-                .unwrap_or(serde_json::Value::Object(Default::default())),
+            metrics: metrics_json,
             label: None,
         };
         let repo = SqlxBacktestRunRepository::new(pool.clone());

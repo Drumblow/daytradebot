@@ -2226,10 +2226,16 @@ impl FlattenWindow {
 }
 
 /// `true` quando o relógio de Nova York está na janela de flatten.
+///
+/// A conversão passa por `trader_core::session::et_time`, que o módulo declara
+/// ser a ÚNICA implementação da regra de horário do projeto. Antes daqui havia
+/// um `with_timezone(&New_York)` próprio: duas implementações da mesma regra é
+/// exatamente o arranjo que produziu o A2 (janelas em UTC fixo) e o bug do veto
+/// de meio-dia da range-fade, os dois corrigidos por centralizar a conversão.
 fn in_flatten_window(now: chrono::DateTime<chrono::Utc>, window: FlattenWindow) -> bool {
     use chrono::Timelike;
-    let ny = now.with_timezone(&chrono_tz::America::New_York);
-    let minutes = ny.hour() * 60 + ny.minute();
+    let et = trader_core::session::et_time(now);
+    let minutes = et.hour() * 60 + et.minute();
     (window.start_minutes..window.end_minutes).contains(&minutes)
 }
 

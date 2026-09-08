@@ -419,6 +419,36 @@ Leituras:
 4. A openrev **inverte** (PF_R > PF$, corr negativa), como a re-simulação
    previa.
 
+### Uma regressão que a implementação criou e que a revisão pegou
+
+Os dez campos novos de `BacktestMetrics` (`profit_factor_r`, `t_stat_avg_r`,
+`corr_risk_result`, `trading_days`, os quatro de concentração,
+`months_total`/`months_positive` e `cost_total`) nasceram **sem**
+`#[serde(default)]`. Só os três mapas tinham.
+
+Isso quebra o histórico inteiro: o jsonb `metrics` de `backtest_runs` guarda
+essa struct serializada, e há **mais de 700 runs gravados antes deste ADR** sem
+nenhum desses campos. Ao cair num deles, o `analyze` aborta em
+`serde_json::from_value` com "métricas do run N inválidas" — antes de chegar em
+qualquer aviso. Ou seja: o gate B ficaria ilegível para tudo que foi medido até
+aqui, incluindo produção.
+
+Corrigido: `#[serde(default)]` nos dez, com teste de regressão
+(`metrics_de_run_antigo_ainda_desserializa`) construído sobre o JSON **real** do
+run 731 do banco dev. O teste foi verificado ao contrário — removendo o atributo
+de `cost_total` ele falha com `missing field 'cost_total'`.
+
+Detalhe que vale registrar para a próxima vez: campos `Option<T>` **não**
+precisam do atributo (serde já trata ausência como `None`), então
+`profit_factor_r` nunca foi o problema. Quem for acrescentar campo a esta struct
+tem de olhar os não-`Option`.
+
+Na mesma passada, `in_flatten_window` (`paper.rs`) deixou de fazer o próprio
+`with_timezone(&New_York)` e passou a chamar `trader_core::session::et_time`.
+O módulo `session` declara ser "a ÚNICA implementação da regra" de horário, e
+não era: duas implementações da mesma conversão é exatamente o arranjo que
+produziu o A2 e o bug do veto de meio-dia.
+
 ### Pendente
 
 - **Item 8 — relatório estatístico em Python (`trader-research/`).** PSR, DSR

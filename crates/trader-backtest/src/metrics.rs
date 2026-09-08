@@ -93,36 +93,52 @@ pub struct BacktestMetrics {
     pub by_entry_hour_et: BTreeMap<String, GroupMetrics>,
 
     // --- ADR-019 §4: dispersão e concentração ---
+    //
+    // TODOS com `#[serde(default)]`, sem exceção: o jsonb `metrics` de
+    // `backtest_runs` guarda esta struct serializada, e há 700+ runs gravados
+    // antes do ADR-019 que não têm nenhum destes campos. Sem o default, o
+    // `analyze` aborta com "métricas do run N inválidas" ao cair num deles —
+    // ou seja, o histórico inteiro do gate B fica ilegível.
     /// PF calculado em **R**, não em dólares.
     ///
     /// O sizing trava no cap de notional, então o dinheiro arriscado cresce
     /// com a distância do stop; como stop largo ganha, o PF em $ fica acima do
     /// PF em R (balance OOS: 2,09 contra 1,41). O gate lia só o primeiro.
+    #[serde(default)]
     pub profit_factor_r: Option<Decimal>,
     /// t-stat do avg R: `avg_R / (desvio_R / sqrt(n))`. Com n < 30 é
     /// indicativo, não teste — mas separa "PF 2 com 8 trades" de "PF 2 com 80".
+    #[serde(default)]
     pub t_stat_avg_r: f64,
     /// Correlação entre `risk_amount` e `result_in_r`.
     ///
     /// Mede o quanto o resultado depende do tamanho acidental da posição. Se
     /// for alta, o PF em $ é em boa parte artefato de sizing.
+    #[serde(default)]
     pub corr_risk_result: f64,
     /// Pregões distintos com trade.
+    #[serde(default)]
     pub trading_days: usize,
     /// Fração do net que veio do melhor dia (0–1). Concentração é o risco
     /// mais subestimado deste projeto: 64% do P&L de uma variante saiu de um
     /// único dia.
+    #[serde(default)]
     pub top_day_share: f64,
     /// Fração do net que veio dos 5 melhores dias.
+    #[serde(default)]
     pub top5_day_share: f64,
     /// Fração do net que veio dos 2 melhores meses (critério do gate
     /// proposto: ≤ 60%).
+    #[serde(default)]
     pub top2_month_share: f64,
     /// Meses com trade e meses com net positivo.
+    #[serde(default)]
     pub months_total: usize,
+    #[serde(default)]
     pub months_positive: usize,
     /// Comissão + taxas somadas. O slippage não entra: ele já está embutido
     /// nos preços de execução do simulador e não é recuperável do trade.
+    #[serde(default)]
     pub cost_total: Decimal,
 }
 
@@ -692,6 +708,49 @@ mod tests {
         assert_eq!(correlacao(&[1.0, 1.0, 1.0], &[1.0, 2.0, 3.0]), 0.0);
         assert!((correlacao(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0]) - 1.0).abs() < 1e-9);
         assert!((correlacao(&[1.0, 2.0, 3.0], &[3.0, 2.0, 1.0]) + 1.0).abs() < 1e-9);
+    }
+
+    /// Regressao: o jsonb `metrics` de `backtest_runs` guarda esta struct, e
+    /// ha 700+ runs gravados ANTES do ADR-019 sem nenhum dos campos novos. Se
+    /// algum deles perder o `#[serde(default)]`, o `analyze` passa a abortar
+    /// com "metricas do run N invalidas" e o historico inteiro do gate B fica
+    /// ilegivel -- em silencio, porque nada mais desserializa esta struct.
+    ///
+    /// O JSON abaixo e um recorte real do run 731 do banco dev (walk-forward
+    /// da opening-reversal-v1 em IWM, gravado antes do ADR-019).
+    #[test]
+    fn metrics_de_run_antigo_ainda_desserializa() {
+        let antigo = r#"{
+            "net_pnl": "3772.85",
+            "win_rate": "59.375",
+            "best_trade": "946.25",
+            "gross_loss": "5235.76",
+            "worst_trade": "-559.08",
+            "gross_profit": "9008.61",
+            "max_drawdown": "2088.86",
+            "sharpe_ratio": "0",
+            "total_trades": 32,
+            "losing_trades": 13,
+            "profit_factor": "1.72",
+            "winning_trades": 19,
+            "avg_r_per_trade": "0.45",
+            "max_drawdown_pct": "2.0",
+            "avg_pnl_per_trade": "117.9",
+            "max_consecutive_losses": 3
+        }"#;
+
+        let m: BacktestMetrics =
+            serde_json::from_str(antigo).expect("run anterior ao ADR-019 tem de desserializar");
+
+        assert_eq!(m.total_trades, 32);
+        assert_eq!(m.profit_factor, Some(Decimal::new(172, 2)));
+        // Os campos que nao existiam voltam zerados, nao quebram o parse.
+        assert_eq!(m.profit_factor_r, None);
+        assert_eq!(m.t_stat_avg_r, 0.0);
+        assert_eq!(m.cost_total, Decimal::ZERO);
+        assert!(m.by_exit_reason.is_empty());
+        assert!(m.by_direction.is_empty());
+        assert!(m.by_entry_hour_et.is_empty());
     }
 
     #[test]
