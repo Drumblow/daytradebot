@@ -178,7 +178,6 @@ async fn o_custo_legado_ainda_e_recuperavel_quando_pedido(pool: PgPool) {
     assert_eq!(legado.final_equity, Decimal::from(103_384));
 }
 
-
 #[sqlx::test(migrations = "src/db/migrations")]
 async fn run_de_sensibilidade_a_4bp_nao_vira_baseline(pool: PgPool) {
     // O ADR-018 manda rodar `--slippage-bps 4` em IJS e SLYV. Esse run entra

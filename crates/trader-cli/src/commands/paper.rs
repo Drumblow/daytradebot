@@ -26,9 +26,8 @@ use trader_infra::{
     db::create_pool,
     repositories::{
         AccountSnapshotRecord, SqlxAccountSnapshotRepository, SqlxAssetRepository,
-        SqlxCandleRepository, SqlxFillRepository, SqlxMarketContextRepository,
-        SqlxOrderRepository, SqlxSignalRepository, SqlxSystemEventRepository,
-        SqlxTradeRepository,
+        SqlxCandleRepository, SqlxFillRepository, SqlxMarketContextRepository, SqlxOrderRepository,
+        SqlxSignalRepository, SqlxSystemEventRepository, SqlxTradeRepository,
     },
 };
 
@@ -2685,7 +2684,8 @@ mod tests {
             posicao("IWV", 400, 100),
             posicao("IWO", 370, 100),
         ];
-        let motivo = exposure_limit_hit(&tres, equity, 3, 200.0, Decimal::ZERO).expect("deve travar");
+        let motivo =
+            exposure_limit_hit(&tres, equity, 3, 200.0, Decimal::ZERO).expect("deve travar");
         assert!(motivo.contains("posicoes abertas"), "motivo: {motivo}");
     }
 
@@ -2694,7 +2694,8 @@ mod tests {
         let equity = Decimal::from(100_000);
         // Duas posições de 90k = 180k, contra teto de 150% (150k).
         let posicoes = vec![posicao("IWM", 900, 100), posicao("IWV", 900, 100)];
-        let motivo = exposure_limit_hit(&posicoes, equity, 10, 150.0, Decimal::ZERO).expect("deve travar");
+        let motivo =
+            exposure_limit_hit(&posicoes, equity, 10, 150.0, Decimal::ZERO).expect("deve travar");
         assert!(motivo.contains("notional agregado"), "motivo: {motivo}");
 
         // Com teto de 200% (200k) a mesma exposição passa.

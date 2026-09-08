@@ -381,7 +381,10 @@ impl SimulatedBroker {
             } else {
                 let fill_price =
                     apply_slippage(fill_base, entry.direction, true, self.config.slippage_pct);
-                let commission = self.config.commission.for_execution(entry.quantity, fill_price);
+                let commission = self
+                    .config
+                    .commission
+                    .for_execution(entry.quantity, fill_price);
 
                 match Position::new(
                     symbol,
@@ -680,7 +683,10 @@ impl Broker for SimulatedBroker {
             Direction::Short => base_price / slippage_factor,
         };
 
-        let commission = self.config.commission.for_execution(order.quantity, fill_price);
+        let commission = self
+            .config
+            .commission
+            .for_execution(order.quantity, fill_price);
 
         match order.order_type {
             OrderType::Market | OrderType::Limit => {
@@ -1869,7 +1875,10 @@ mod tests {
     #[test]
     fn execucao_de_quantidade_zero_nao_paga_piso() {
         let m = CommissionModel::ibkr_fixed_us();
-        assert_eq!(m.for_execution(Decimal::ZERO, Decimal::from(100)), Decimal::ZERO);
+        assert_eq!(
+            m.for_execution(Decimal::ZERO, Decimal::from(100)),
+            Decimal::ZERO
+        );
     }
 
     #[test]
@@ -2027,7 +2036,10 @@ mod tests {
         // Vender long com desconto: preco MENOR que o alvo, sempre contra o
         // trader.
         assert!(com_desconto < sem_desconto);
-        assert_eq!(com_desconto, Decimal::from(102) / (Decimal::ONE + config_haircut()));
+        assert_eq!(
+            com_desconto,
+            Decimal::from(102) / (Decimal::ONE + config_haircut())
+        );
     }
 
     fn config_haircut() -> Decimal {

@@ -234,24 +234,25 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             );
         }
 
-        let record = BacktestRunRecord {
-            symbol: args.symbol.clone(),
-            strategy_id: strategy.id().id,
-            strategy_version: strategy.id().version,
-            config_hash: strategy.config_hash(),
-            timeframe: format!("{:?}", args.timeframe),
-            period_start: report.start_time,
-            period_end: report.end_time,
-            initial_capital: report.initial_capital,
-            final_equity: report.final_equity,
-            metrics: metrics_json,
-            // Sem `--label`, grava a data em vez de NULL: um run anônimo é
-            // impossível de atribuir depois, e era assim que 586 dos 745 runs
-            // do banco ficaram (§5.6 do plano).
-            label: Some(args.label.clone().unwrap_or_else(|| {
-                format!("backtest-{}", chrono::Utc::now().format("%Y-%m-%d"))
-            })),
-        };
+        let record =
+            BacktestRunRecord {
+                symbol: args.symbol.clone(),
+                strategy_id: strategy.id().id,
+                strategy_version: strategy.id().version,
+                config_hash: strategy.config_hash(),
+                timeframe: format!("{:?}", args.timeframe),
+                period_start: report.start_time,
+                period_end: report.end_time,
+                initial_capital: report.initial_capital,
+                final_equity: report.final_equity,
+                metrics: metrics_json,
+                // Sem `--label`, grava a data em vez de NULL: um run anônimo é
+                // impossível de atribuir depois, e era assim que 586 dos 745 runs
+                // do banco ficaram (§5.6 do plano).
+                label: Some(args.label.clone().unwrap_or_else(|| {
+                    format!("backtest-{}", chrono::Utc::now().format("%Y-%m-%d"))
+                })),
+            };
         let repo = SqlxBacktestRunRepository::new(pool.clone());
         match repo.save(&record).await {
             Ok(id) => println!("   Run persistido no banco (id={})", id),

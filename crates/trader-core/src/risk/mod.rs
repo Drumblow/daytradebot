@@ -8,8 +8,7 @@ use rust_decimal::Decimal;
 use tracing::{debug, warn};
 
 use trader_domain::{
-    Candle, Direction, MarketContext, Quote, RejectionReason, Signal, TradingMode,
-    VolatilityRegime,
+    Candle, Direction, MarketContext, Quote, RejectionReason, Signal, TradingMode, VolatilityRegime,
 };
 
 pub mod liquidity;
@@ -601,7 +600,11 @@ mod tests {
                 position_size,
                 risk_amount,
             } => {
-                assert_eq!(position_size, Decimal::from(800), "800 ações = 80.000 de notional");
+                assert_eq!(
+                    position_size,
+                    Decimal::from(800),
+                    "800 ações = 80.000 de notional"
+                );
                 // 0,22 × 800. O orçamento de risco era 800: o cap prendeu, e
                 // o risco real ficou em 176 — 0,073% da conta, não 1%.
                 assert_eq!(risk_amount, Decimal::new(17600, 2));

@@ -25,7 +25,9 @@ pub fn session_flatten_et(session: &SessionSettings, no_flatten: bool) -> Option
 pub fn commission_model(legacy: bool) -> trader_adapters::simulated::CommissionModel {
     use trader_adapters::simulated::CommissionModel;
     if legacy {
-        CommissionModel::PerTrade(rust_decimal::Decimal::from(35) / rust_decimal::Decimal::from(100))
+        CommissionModel::PerTrade(
+            rust_decimal::Decimal::from(35) / rust_decimal::Decimal::from(100),
+        )
     } else {
         CommissionModel::ibkr_fixed_us()
     }

@@ -241,9 +241,7 @@ pub fn build_risk_config(
             Some(v) => {
                 let d = pct("max_pct_of_median_bar_notional", v)?;
                 if d <= Decimal::ZERO || d > Decimal::from(100) {
-                    anyhow::bail!(
-                        "[risk].max_pct_of_median_bar_notional = {d}: fora de (0, 100]"
-                    );
+                    anyhow::bail!("[risk].max_pct_of_median_bar_notional = {d}: fora de (0, 100]");
                 }
                 Some(d)
             }
@@ -397,14 +395,26 @@ mod tests {
 
         assert!(caso(&|r| r.capital_fraction = 1.5).is_err(), "fração > 1");
         assert!(caso(&|r| r.capital_fraction = 0.0).is_err(), "fração zero");
-        assert!(caso(&|r| r.capital_fraction = -0.5).is_err(), "fração negativa");
-        assert!(caso(&|r| r.max_notional_multiple = 0.5).is_err(), "multiplicador < 1");
-        assert!(caso(&|r| r.max_notional_usd = Some(0.0)).is_err(), "teto zero");
+        assert!(
+            caso(&|r| r.capital_fraction = -0.5).is_err(),
+            "fração negativa"
+        );
+        assert!(
+            caso(&|r| r.max_notional_multiple = 0.5).is_err(),
+            "multiplicador < 1"
+        );
+        assert!(
+            caso(&|r| r.max_notional_usd = Some(0.0)).is_err(),
+            "teto zero"
+        );
         assert!(
             caso(&|r| r.max_pct_of_median_bar_notional = Some(101.0)).is_err(),
             "mais que a barra inteira"
         );
-        assert!(caso(&|r| r.liquidity_lookback_bars = 0).is_err(), "janela vazia");
+        assert!(
+            caso(&|r| r.liquidity_lookback_bars = 0).is_err(),
+            "janela vazia"
+        );
 
         // E o caminho feliz: a fração do ADR-020 e o cap de 1/3 da barra.
         let ok = caso(&|r| {

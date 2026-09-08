@@ -167,7 +167,10 @@ mod tests {
             Decimal::from(100_000),
             vec![trade(-1000), trade(-1000), trade(-1000)],
         ));
-        assert_eq!(cheio.metrics.max_drawdown_pct.round_dp(2), Decimal::new(300, 2));
+        assert_eq!(
+            cheio.metrics.max_drawdown_pct.round_dp(2),
+            Decimal::new(300, 2)
+        );
 
         // Um terço da conta com um terço do tamanho: mesmos 3%.
         let fracionado = BacktestReport::from_run(run(
