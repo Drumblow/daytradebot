@@ -89,6 +89,36 @@ jobs:
              ORDER BY t.exit_time" \
             || echo "banco inacessivel"
 
+      - name: Slippage de ENTRADA (planejado x executado)
+        run: |
+          # O numero que o §5.8 do plano pede e que nunca foi medido: quanto o
+          # fill da ENTRADA difere do preco que a estrategia planejou.
+          #
+          # A guarda de overshoot do ADR-015 compara o preco de REFERENCIA no
+          # momento do ENVIO. Ela nao olha o fill. Se o feed entrega preco
+          # atrasado — e o achado 7 do §2.3 diz que entrega —, a guarda aprova
+          # com base num preco que ja nao existe, e o fill sai muito pior.
+          #
+          # A coluna `overshoot_em_R` e a que importa: 1,0 significa que a
+          # entrada sozinha consumiu todo o risco planejado do trade.
+          docker exec daytradebot_postgres_1 psql -U trader -p 5433 -d trader_db -c \
+            "SELECT t.id, a.symbol, t.direction,
+                    round(s.entry_price, 4) AS planejado,
+                    round(t.entry_price, 4) AS executado,
+                    round((t.entry_price - s.entry_price) /
+                          nullif(s.entry_price, 0) * 10000, 1) AS dif_bp,
+                    round(abs(s.entry_price - s.stop_price), 4) AS risco_planejado,
+                    round(CASE WHEN t.direction = 'long'
+                               THEN (t.entry_price - s.entry_price)
+                               ELSE (s.entry_price - t.entry_price) END /
+                          nullif(abs(s.entry_price - s.stop_price), 0), 3) AS overshoot_em_R,
+                    round(t.result_in_r, 3) AS r_final
+             FROM trades t
+             JOIN assets a ON a.id = t.asset_id
+             JOIN signals s ON s.id = t.signal_id
+             ORDER BY t.entry_time" \
+            || echo "banco inacessivel"
+
       - name: Auditoria do painel (mesmas agregacoes do trader-web)
         run: |
           # Espelha as queries do painel (crates/trader-web/src/queries.rs) para
