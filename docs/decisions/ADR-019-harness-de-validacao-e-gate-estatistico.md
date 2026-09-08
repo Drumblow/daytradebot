@@ -1,7 +1,11 @@
 # ADR-019 — Harness de validação e gate A estatístico
 
-**Status:** **IMPLEMENTADO** em 07/09/2026, exceto o item 8 (relatório em
-Python, `trader-research/`) e o dedupe do item 3 — ver "Ajustes feitos na
+**Status:** **IMPLEMENTADO em parte** (07/09/2026). O núcleo entrou — flags do
+walkforward, `--set` com falha fechada, `analyze` por (par, hash), PF em R e
+concentração, journal do simulador. **Dez itens NÃO entraram**, entre eles o
+relatório em Python e o Sharpe diário: a lista canônica está em "Pendente" ao
+final — e é a **única** contagem válida. Nenhum outro documento deve enumerar
+nem contar essas pendências por conta própria; devem apontar para lá — ver "Ajustes feitos na
 implementação" ao final. Números em `docs/reports/gate-a-com-flatten-2026-09-07.md` §7.
 **Data:** 2026-09-07
 **Fecha:** itens §5.2 e §5.3 (e a nota de §2.6 sobre o walk-forward) de
@@ -247,7 +251,8 @@ da função e devolve estatística; nenhum valor monetário volta de f64.
   até virarem regra com fonte; só então ganham módulo `_v2` e doc próprio.
 - **Ablações contam no N.** Todo run com override entra em `n_trials` e o
   `print_acceptance` mostra o N e o DSR correspondente — o preço da varredura
-  barata.
+  barata. ⛔ **Não implementado** (item 3 da lista canônica): o N da família
+  continua sendo estimativa declarada em relatório.
 - **O gate B não é contaminado**: `analyze` só compara com o run do mesmo
   `(estratégia, par, config_hash)` e ignora experimentais; o baseline muda
   apenas quando o TOML da produção muda.
@@ -259,7 +264,10 @@ da função e devolve estatística; nenhum valor monetário volta de f64.
   e os números de flatten de §2.3 com Σ|diff| ≈ 0 contra a re-simulação dos
   críticos; `GROUP BY strategy_id, asset_id, config_hash, period_start,
   period_end, label HAVING count(*) > 1` (a chave do índice único) devolve
-  zero linhas após o dedupe.
+  zero linhas após o dedupe. ⛔ **A segunda metade caiu**: dedupe e índice
+  único foram recusados com número (item 2 da lista canônica). O aceite efetivo
+  do harness é só a primeira metade — reproduzir os buckets de §2.2 e os
+  números de flatten de §2.3, o que foi feito.
 - Métricas anteriores ao harness (Sharpe por candle, custo não registrado)
   deixam de ser comparáveis — precedente do ADR-015.
 
@@ -422,7 +430,7 @@ Leituras:
 ### Uma regressão que a implementação criou e que a revisão pegou
 
 Os dez campos novos de `BacktestMetrics` (`profit_factor_r`, `t_stat_avg_r`,
-`corr_risk_result`, `trading_days`, os quatro de concentração,
+`corr_risk_result`, `trading_days`, os três de concentração,
 `months_total`/`months_positive` e `cost_total`) nasceram **sem**
 `#[serde(default)]`. Só os três mapas tinham.
 
@@ -449,14 +457,38 @@ O módulo `session` declara ser "a ÚNICA implementação da regra" de horário,
 não era: duas implementações da mesma conversão é exatamente o arranjo que
 produziu o A2 e o bug do veto de meio-dia.
 
-### Pendente
+### Pendente — a lista canônica
 
-- **Item 8 — relatório estatístico em Python (`trader-research/`).** PSR, DSR
-  como faixa, IC95 por bootstrap estacionário em blocos, MC de drawdown. É o
-  §5.3 do plano e agora é possível, porque o `--output` do walk-forward passou
-  a existir. Sem ele, o critério "limite inferior do IC95 em blocos ≥ 1,0" do
-  §7 não tem como ser avaliado.
-- **`n_trials` / `trial_group`** não são gravados: o N da família continua
-  sendo estimativa declarada em relatório, como o próprio ADR admite.
-- **Custo por ativo** (comissão por ação, spread no alvo) é o §5.6 do plano e
-  não entrou aqui; todos os números acima usam US$ 0,35/perna.
+Duas revisões adversariais (07 e 08/09/2026) mostraram que as versões
+anteriores desta seção **subestimavam o que ficou de fora**: a primeira falava
+em "duas exceções", a segunda em sete. São **dez**. Esta é a lista completa; qualquer outro documento que enumere pendências
+deste ADR deve apontar para cá em vez de repetir uma lista própria.
+
+| # | O que não entrou | Onde estava no ADR |
+|---|---|---|
+| 1 | **Relatório estatístico em Python** (`trader-research/`): PSR, DSR como faixa, IC95 por bootstrap estacionário em blocos, MC de drawdown | item 8 |
+| 2 | **Dedupe e índice único** de `backtest_runs` — **recusados com número**, não esquecidos: no maior grupo "duplicado" (24 linhas) há sete valores distintos de `final_equity` | item 3 |
+| 3 | `n_trials` / `trial_group` | itens 3 e 6 |
+| 4 | `sharpe_r` e `avg_r_gross` | item 4 |
+| 5 | **Sharpe e Sortino sobre retornos DIÁRIOS** (o `sortino` não existe em nenhuma forma). O cálculo continua anualizando pelo intervalo mediano da série — por candle de 15 min, o anualizador é ≈ 187 e os runs full-period dão Sharpe −6 a −9 com PF > 1. É o defeito que o próprio ADR mandava corrigir, e ele segue lá (`metrics.rs`, `calculate_sharpe`) | item 4 |
+| 6 | `entries_triggered` / `entries_cancelled_overshoot` — o §6.7 do plano (entrada STP LMT) depende desse número para decidir | item 4 |
+| 7 | **P&L por ano civil.** O P&L por **bloco** do walk-forward existe (a tabela por janela do `walkforward` imprime trades IS/OOS, WR, PF, avg R e net por bloco); o corte por ano é que não | item 4 |
+| 8 | **PF em R nos mapas por grupo.** O §4 pede `(n, PF, PF_R, net, avg R)` por `exit_reason`, direção e hora; `GroupMetrics` traz tudo menos o PF_R — só existe o agregado | item 4 |
+| 9 | **WR por dia.** Entrou `trading_days` (contagem de datas) e os dois shares; win-rate diário não | item 4 |
+| 10 | **Custo em R.** O `print_acceptance` imprime `cost_total`, que é dólar; o §4 pedia o custo em R ao lado do avg R bruto | itens 4 e 6 |
+
+Consequências práticas:
+
+- O critério "limite inferior do IC95 em blocos ≥ 1,0" do §7 **não tem como ser
+  avaliado** enquanto o item 1 não existir. Dos cinco critérios propostos no
+  §7, o `walkforward` cobre **três**: PF_R e concentração saem impressos sob o
+  rótulo de proposta, e o **holdout travado** roda de fato (`--holdout-from`
+  reporta o bloco separado e passa o `print_acceptance` nele). Faltam o IC95 em
+  blocos (depende do item 1) e a sensibilidade a 4–5 bp, que hoje é rodar o
+  comando de novo à mão com outro `--slippage-bps`.
+- O Sharpe impresso continua sem significado no full-period. Quem ler a linha
+  de Sharpe de um run deste harness deve ignorá-la até o item 5.
+- O N da família continua sendo estimativa declarada em relatório, como o
+  próprio ADR já admitia.
+- **Custo por ativo** (comissão por ação, spread no alvo) é o §5.6 do plano,
+  não deste ADR; todos os números produzidos aqui usam US$ 0,35/perna.

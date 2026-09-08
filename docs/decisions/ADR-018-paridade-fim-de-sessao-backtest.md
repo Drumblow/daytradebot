@@ -1,7 +1,7 @@
 # ADR-018 — Paridade de fim de sessão no backtest (`ExitReason::EndOfDay`)
 
 **Status:** **IMPLEMENTADO** em 07/09/2026. Veredito e números do motor em
-`docs/reports/gate-a-com-flatten-2026-09-07.md` (runs OOS 725–732). Duas
+`docs/reports/gate-a-com-flatten-2026-09-07.md` (runs OOS 725–732). **Quatro**
 decisões de implementação divergem do texto original — ver
 "Ajustes feitos na implementação" ao final.
 **Data:** 2026-09-07
@@ -257,8 +257,11 @@ qualquer v2 e atualizar `docs/HANDOFF.md`.
 
 ## Ajustes feitos na implementação (07/09/2026)
 
-O ADR foi seguido à risca com três exceções, todas registradas aqui porque
-mudam comportamento observável.
+O ADR foi seguido à risca com **quatro** exceções. Três mudam comportamento
+observável; a terceira (cancelar a entrada colocada na própria última barra) é
+**inerte com as estratégias de hoje** — todas têm `trading_end_time` ≤ 15h30 e
+nunca geram sinal na barra 15h45 — e está registrada porque deixa de ser inerte
+no instante em que alguma estratégia estender a janela.
 
 ### 1. O gatilho do flatten é SÓ a mudança de data ET
 
@@ -304,6 +307,29 @@ ela atravessaria a noite e encheria na abertura do dia seguinte, num preço que
 o live nunca veria. São dois pontos de chamada no laço
 (`flatten_session` após `evaluate_time_exit`; `cancel_pending_entry` no fim da
 iteração), ambos comentados no código.
+
+**Nota de precisão (corrigida em 08/09/2026 por uma revisão adversarial).** Uma
+primeira versão desta seção afirmava que a entrada colocada na última barra
+"nunca pode encher" no motor, e que isso seria menos permissivo que o live. As
+duas metades estavam erradas:
+
+- A ordem de que o §5.1 do plano fala é a gerada pela barra que **fecha** às
+  15h45 (a barra 15h30). Ela é colocada no fim da iteração da 15h30 e ganha a
+  barra 15h45 inteira: `set_market_candle` roda **antes** do `flatten_session`
+  no laço, e é ele que avalia a entrada stop pendente contra o high/low. Ou
+  seja, ela **pode** encher — e tem 15 min de janela contra os ~10 min do live.
+  O motor é ligeiramente **mais** permissivo, não menos.
+- No live não existe ordem "colocada na barra 15h45": o loop só trata a barra
+  como fechada em `timestamp + timeframe`, então a barra 15h45 só seria
+  analisada às 16h00, depois do flatten. E as três estratégias ativas têm
+  `trading_end_time` ≤ 15h30, checado no timestamp de **abertura** da barra —
+  nenhuma gera sinal na barra 15h45.
+
+O `cancel_pending_entry` do fim da iteração mata apenas a ordem gerada **na
+própria** última barra, que hoje nenhuma estratégia produz. A assimetria real
+que resta é a de 15 vs 10 minutos de janela de fill, já da mesma família da
+assimetria de 10 min do fill de saída listada em "Consequências". Fechá-la
+exigiria dado intrabar, que o backtest não tem.
 
 ### 4. Reclassificação dos trades antigos: não feita na migração
 

@@ -1,6 +1,9 @@
 # Revalidação do gate A com o motor corrigido — 04/09/2026
 
-> ## ⚠️ SUBSTITUÍDO em 07/09/2026 — não use os números desta página
+> ## ⚠️ NÚMEROS SUBSTITUÍDOS em 07/09/2026 — não os use
+>
+> (A substituição **formal** do gate A é decisão do dono, ainda pendente — §10.2
+> do plano. O que está superado de fato são os números, porque a régua mudou.)
 >
 > Este relatório mediu o gate A com um backtest que **não fazia flatten de fim
 > de pregão**, enquanto o live encerra tudo a mercado às 15h55 ET. Comparou o

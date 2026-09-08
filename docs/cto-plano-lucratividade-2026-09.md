@@ -12,14 +12,15 @@
 > |---|---|
 > | 1 — flatten de fim de sessão (ADR-018) | ✅ **implementado** e verificado com dado real |
 > | 5 — hotfix ET do veto de meio-dia (§5.4) | ✅ **implementado** |
-> | 3 — harness de validação (ADR-019) | ✅ **implementado**, menos o item 8 (relatório em Python) e o dedupe |
+> | 3 — harness de validação (ADR-019) | ✅ **implementado em parte** — o núcleo entrou; o que ficou de fora está na seção "Pendente" do `ADR-019` (lista e contagem canônicas), e inclui o relatório em Python e o Sharpe diário |
 > | 4 — relatório estatístico (§5.3) | ⏳ pendente — sem ele o critério "IC95 em blocos ≥ 1,0" não é avaliável |
 > | 6 — ADR-020 (sizing/liquidez) | ⏳ **não implementado**, continua proposto |
 > | 7 — higiene e custo real (§5.6) | ⏳ pendente |
 > | 2, 8, 9, 9b — feed, screener, A9, sair de IWV | ⏳ pendentes (2, 9 e 9b dependem do servidor ou de decisão do dono) |
 >
-> `main` está em `e1f1266`. **Nada foi enviado com push** — ver o aviso de deploy
-> em `docs/HANDOFF.md`.
+> **Nada foi enviado com push** — ver o aviso de deploy em `docs/HANDOFF.md`.
+> O estado exato de `main` não é fixado aqui de propósito: um SHA envelheceria
+> a cada commit. Use `git log --oneline`.
 >
 > **Três coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
 >
@@ -107,7 +108,16 @@ Agravante de regime: agosto/2026 teve o menor range diário da amostra (0,78% m�
 
 ### 2.3 Sete achados que os relatórios do projeto ainda não registram
 
-**1. O backtest não faz flatten; o live faz.** `BacktestEngine::run` (`crates/trader-backtest/src/engine.rs:136-240`) não tem fim de sessão; o live fecha a mercado às 15h55–16h10 ET (`paper.rs:2189-2198`). Re-simulando o flatten no close da barra 15h45 ET com 2 bp (três críticos independentes chegaram aos mesmos números):
+**1. O backtest não fazia flatten; o live faz. ✅ CORRIGIDO em 07/09** (ADR-018).
+
+> O motor passou a encerrar na última barra do pregão. Ele **reproduziu a
+> estrutura** desta re-simulação — mesma contagem de trades (96/69/67) e
+> exatamente as mesmas saídas overnight (20/9/8, IWV em 0) — mas **os valores
+> em dólares da tabela abaixo estão superados**: o motor mediu +6.576 / +4.560 /
+> +8.085 contra os +6.730 / +4.578 / +8.072 publicados aqui. PF e avg R
+> coincidem. Valores válidos em `docs/reports/gate-a-com-flatten-2026-09-07.md`;
+> a descrição do estado do motor daqui em diante vale como histórico, não como
+> descrição do código de hoje. `BacktestEngine::run` (`crates/trader-backtest/src/engine.rs:136-240`) não tem fim de sessão; o live fecha a mercado às 15h55–16h10 ET (`paper.rs:2189-2198`). Re-simulando o flatten no close da barra 15h45 ET com 2 bp (três críticos independentes chegaram aos mesmos números):
 
 | Estratégia (pares vivos, 2 bp, in-sample) | Sem flatten | Com flatten | Overnight |
 |---|---|---|---|
@@ -120,7 +130,7 @@ Consequências: a balance-area **reprova o gate A pelo avg R** (> 0,15) com a r�
 
 **2. O edge da opening-reversal é do lado short e de 2025.** Somando 6 combinações a 2 bp: 125 shorts PF 1,59 (+13,4k) contra 71 longs PF 1,06. Mas por ano: shorts **2025 n=80 PF 2,33; 2026 n=45 PF 0,82**. O 2º trimestre de 2025 (crash e recuperação em V) responde por 88% do P&L short. Nos pares vivos o short é PF 1,24 (n=41), indistinguível de 1,0. É hipótese de regime, não edge estrutural — testável, mas só com pré-registro e controle.
 
-**3. A range-fade vive do lado long e da manhã.** Nos pares vivos: long PF 3,34 (n=33) vs short 1,00 (n=36); 10h–11h ET = 100% do P&L. O bloco 12h–14h tem PF 0,87–1,29 conforme a re-simulação (n=30, avgR ≈ 0, t ≈ 0) — ruído, não perda; vetá-lo cortaria 43% da amostra por nada. **Bug real:** o veto `midday_midrange` compara o horário em UTC fixo (`range_extreme_fade_v1/context.rs:220-238`; TOML 15:30–18:00 UTC) e desliza 1h no horário de inverno — cobre 10h30–13h ET em vez de 11h30–14h; ~24% do **tempo** da amostra do gate A (≈ 20–25 trades da fade) foi medido com o veto deslocado.
+**3. A range-fade vive do lado long e da manhã.** Nos pares vivos: long PF 3,34 (n=33) vs short 1,00 (n=36); 10h–11h ET = 100% do P&L. O bloco 12h–14h tem PF 0,87–1,29 conforme a re-simulação (n=30, avgR ≈ 0, t ≈ 0) — ruído, não perda; vetá-lo cortaria 43% da amostra por nada. **Bug real — ✅ CORRIGIDO em 07/09** (hotfix v1.0.1, §5.4; efeito medido e NEGATIVO, ver lá): o veto `midday_midrange` comparava o horário em UTC fixo (`range_extreme_fade_v1/context.rs:220-238`; TOML 15:30–18:00 UTC) e desliza 1h no horário de inverno — cobre 10h30–13h ET em vez de 11h30–14h; ~24% do **tempo** da amostra do gate A (≈ 20–25 trades da fade) foi medido com o veto deslocado.
 
 **4. O sizing trava no notional e o risco real por trade é 0,15–0,32%, não 1%.** `qty = min(orçamento/dist_stop, capital/entry)` com cap de 1× equity hardcoded (`risk/mod.rs:239-279`). Com stops de 0,1–0,3% o cap prende sempre. Efeitos: (a) o $ arriscado é proporcional à distância do stop, e como stop largo ganha (§2.2), o **PF em dólares supera o PF em R**: balance OOS PF$ 2,09 vs PF_R 1,41 (AVUV 1,07, VBR 1,27, IJS 2,37; corr(risk, R) = 0,31); (b) o P&L absoluto é pequeno (~US$ 100/trade); (c) "risco 1%" só existiria com stop ≥ 1% do preço. A opening-reversal inverte (PF_R 1,28 > PF$ 1,11).
 
@@ -170,8 +180,8 @@ Leituras: (1) o "últimos 10 meses ≈ 0" da régua antiga vira +8,6k com flatte
 | Estratégia stateless (`StrategyState` ignorado) | Sem cooldown, sem "uma tentativa por nível/dia" | O9 |
 | `is_tradeable` rígido (`context/mod.rs:79-81`) | Range mudo em 40% das barras | **§6.1** |
 | Cap de notional 1× hardcoded (`risk/mod.rs:253`) | Risco real ≪ 1%; sem cap por liquidez | **§5.5** |
-| TIF Day + flatten só no live | Sem swing; paridade quebrada no fim do dia | **§5.1** |
-| Walk-forward por contagem de candles, sem purge, sem holdout; sem DSR/PSR/IC | Viés de seleção das 42+ combinações não corrigido | **§5.2, §5.3** |
+| ~~TIF Day + flatten só no live~~ **resolvido em 07/09**: o motor faz flatten por mudança de data ET, com a janela vindo de `[session]`. Só o swing (hold multi-dia) continua fora | Sem swing | **§5.1** ✅ |
+| Walk-forward por contagem de candles, sem purge; ~~sem holdout~~ (**`--holdout-from` entrou em 07/09**: bloco travado, reportado à parte, com erro em vez de holdout desligado em silêncio); sem DSR/PSR/IC | Viés de seleção das 42+ combinações não corrigido — o que falta é o §5.3 | **§5.2** ✅ **, §5.3** |
 | Backtest single-symbol, capital fixo | Conta compartilhada (3 posições, 200%) não simulada | **§6.4** |
 | Entrada limit no simulador enche na hora sem olhar o mercado (`simulated/broker.rs:522-575`) | Nenhum número de entrada limit vale (ADR-009 incluído) | infra |
 
@@ -209,15 +219,18 @@ Limites de escala: 3 client_ids por instância contra 32 por sessão do gateway 
 
 Tiers: **A** = fazer já (2–3 semanas; corrige a régua, custo baixo, sem mudar regra); **B** = próxima onda (v2 com evidência, 4–8 semanas, cada uma com gate A/B do zero); **C** = condicional a resultados de B; **D** = arquivado com número (não reabrir sem fato novo).
 
+**✅ = entregue em 07/09/2026** (ver a caixa de estado no topo). O resto do
+ranking continua valendo como lista de trabalho.
+
 | # | Item | Tier | Esforço | Crítica (consenso) | Seção |
 |---|---|---|---|---|---|
-| 1 | Flatten de fim de sessão no backtest + `ExitReason::EndOfDay` + re-rodar gate A das 3 | **A** | S | manter (8/10) | §5.1 |
+| 1 ✅ | Flatten de fim de sessão no backtest + `ExitReason::EndOfDay` + re-rodar gate A das 3 | **A** | S | manter (8/10) | §5.1 |
 | 2 | Integridade do feed de produção (Gateway esparso vs TWS) + medição de lag por barra — pré-requisito do gate B e de qualquer instância nova | **A** | S/M | revisar (5–6); síntese: 2º lugar | §5.8 |
-| 3 | Harness de validação: `--output/--slippage-bps/--label/--holdout-from/--strategy-config` no walkforward; PF_R, corr(risk,R), métricas por exit_reason/direção/hora/dia; n_trials; dedupe; `analyze` por (símbolo, estratégia, hash); `strategy_id` nos trades de backtest | **A** | M | revisar→manter (6–7) | §5.2 |
+| 3 ✅ | Harness de validação: `--output/--slippage-bps/--label/--holdout-from/--strategy-config` no walkforward; PF_R, corr(risk,R), métricas por exit_reason/direção/hora/dia; `analyze` por (símbolo, estratégia, hash); `strategy_id` nos trades de backtest. **vários itens NÃO entraram** — entre eles `n_trials`, o Sharpe diário e o dedupe (recusado com número). Lista e contagem canônicas na seção "Pendente" do ADR-019 | **A** | M | revisar→manter (6–7) | §5.2 |
 | 4 | Relatório estatístico em Python: PSR, IC95 por bootstrap em blocos, MC de drawdown, concentração mensal | **A** | S | manter (6–7) | §5.3 |
-| 5 | Hotfix v1.0.1 da range-fade: veto de meio-dia em ET | **A** | S | consenso | §5.4 |
+| 5 ✅ | Hotfix v1.0.1 da range-fade: veto de meio-dia em ET | **A** | S | consenso | §5.4 |
 | 6 | Cap de notional por liquidez + `capital_fraction` + registro de equity/BUYING_POWER + trava de notional incluindo a posição prospectiva | **A** | S | revisar→manter | §5.5 |
-| 7 | Higiene e custo real: reingerir 6 símbolos parados (pelo PC/TWS); dedupe runs; rotular runs sem label; `tick_size` sem f64; comissão por ação no simulador; casamento do CommissionReport; slippage por faixa de liquidez | **A** | S | consenso | §5.6 |
+| 7 | Higiene e custo real: reingerir 6 símbolos parados (pelo PC/TWS); ~~dedupe runs~~ (**recusado**, ver §5.6); rotular runs sem label; `tick_size` sem f64; comissão por ação no simulador; casamento do CommissionReport; slippage por faixa de liquidez | **A** | S | consenso | §5.6 |
 | 8 | Fase 0 do framework: screener SQL com fill honesto (calibrado com controles) | **A** | S | manter (8) | §5.7 |
 | 9 | A9: rejeição/timeout de confirmação de ordem como estados próprios + checagem de shortable + teste operacional de short na paper (dono da correção) | **A** | S/M | citado como bloqueador em 5 propostas | §5.9 |
 | 9b | Retirar `range-extreme-fade-v1` de IWV | **A** | S | consenso | §5.10 |
@@ -255,6 +268,14 @@ Tiers: **A** = fazer já (2–3 semanas; corrige a régua, custo baixo, sem muda
 
 ### 5.1 Flatten de fim de sessão no backtest (ADR-018)
 
+> ✅ **ENTREGUE em 07/09/2026** (commit `cbc8be5`). O roteiro abaixo foi
+> executado; não o refaça. **Quatro** decisões de implementação divergiram do texto e
+> estão em "Ajustes feitos na implementação" no ADR-018: o gatilho é **só** a
+> mudança de data ET (o `ou hora ≥ 15:45` não entrou), e o **fim da série não é
+> sino** — senão o walk-forward, que roda cada janela sobre um prefixo, geraria
+> um `EndOfDay` fantasma em cada fronteira. Números do motor em
+> `docs/reports/gate-a-com-flatten-2026-09-07.md`.
+
 **Hipótese:** com o flatten replicado, a balance-area reprova o gate A pelo avg R, a range-fade continua passando e a opening-reversal melhora. **Já verificada por re-simulação** (§2.3) — a implementação é para o motor confirmar e para o gate B ter baseline coerente.
 
 **O que fazer**
@@ -279,6 +300,23 @@ Comparar com os runs 413–421 (label `walkforward-oos-6w`, 05/09; 414 é duplic
 
 ### 5.2 Harness de validação (ADR-019)
 
+> ✅ **ENTREGUE EM PARTE em 07/09/2026** (commit `e1f1266`). O núcleo entrou;
+> **boa parte do que este §5.2 pede não entrou** — a lista completa, com a
+> contagem, está na seção "Pendente" do ADR-019 e não é repetida aqui — entre eles `n_trials`, o Sharpe/
+> Sortino sobre retornos **diários** (o cálculo segue anualizando por candle de
+> 15 min, que é justamente o defeito que este parágrafo mandava corrigir),
+> `entries_triggered`/`entries_cancelled_overshoot`, e o índice único e o
+> dedupe, que foram **RECUSADOS com número** (ver a correção logo abaixo).
+> A lista canônica está na seção "Pendente" do
+> `docs/decisions/ADR-019-harness-de-validacao-e-gate-estatistico.md` — não
+> mantenha uma cópia dela aqui.
+>
+> O texto abaixo descreve `latest_by_strategy` recebendo filtros novos. Não foi
+> assim: entrou um método irmão, `latest_for(strategy_id, symbol, config_hash)`,
+> que também **ignora runs marcados `experimental`**; e o `analyze`, sem run
+> compatível, **avisa e sai** em vez de pegar outro. O método antigo continua
+> existindo para quem quiser "o último run, qualquer que seja".
+
 Sem isto, cada ablação das v2 exige um módulo novo e o gate B pode ser contaminado em silêncio.
 
 **O que fazer**
@@ -286,7 +324,16 @@ Sem isto, cada ablação das v2 exige um módulo novo e o gate B pode ser contam
 - `--set chave=valor` aplicado em `[strategy.parameters]` antes de `load_strategy` (o `config_hash` muda sozinho). **Obrigatório:** falhar se a chave não existir (`#[serde(deny_unknown_fields)]` em todos os `StrategyParameters`, ou abortar se o hash não mudar) — hoje uma chave errada é ignorada em silêncio.
 - Persistência: runs com override marcados `experimental = true` (ou `strategy_id` sufixado) e `backtest_run_repository::latest_by_strategy` passa a filtrar por `(strategy_id, asset, config_hash da estratégia carregada)` — hoje `analyze` pega o run mais recente da estratégia em qualquer símbolo (`analyze.rs:75-78`), então a primeira ablação vira baseline do gate B.
 - `metrics.rs`: `profit_factor_r`, `sharpe_r`, `corr_risk_result`; mapas por `exit_reason`, direção e hora ET; **P&L por dia ET** (n de datas, WR por dia, share do top-1 e top-5 dias), por bloco e por ano; Sharpe/Sortino sobre retornos **diários** (hoje anualiza por candle 15m e dá −6 a −9 com PF > 1); custo total e avg R bruto por trade; `entries_triggered` / `entries_cancelled_overshoot`.
-- `metrics` jsonb ganha `slippage_bps`, `overrides`, `session_flatten`, `n_trials`; índice único em `(strategy_id, asset_id, config_hash, period, label)`; script de dedupe (413/414 e, pela mesma chave, 109 grupos com 279 linhas duplicadas em 687 runs — medido na auditoria de 07/09).
+- `metrics` jsonb ganha `slippage_bps`, `overrides`, `session_flatten` (feito;
+  mais `experimental`, `windows`, `holdout_from` e `holdout_metrics`) — mas
+  **`n_trials` não entrou**. ⛔ **O índice único e o dedupe foram recusados na
+  implementação, com número:** dentro do maior grupo "duplicado" (24 linhas) há
+  **sete valores distintos de `final_equity`**. Não são cópias — o `config_hash`
+  cobre só o TOML da estratégia, não a versão do motor, o slippage nem a régua
+  de fim de sessão. Deduplicar por essa chave apagaria resultados diferentes
+  entre si. A migração `0005` cria **apenas** o índice de busca
+  `idx_backtest_runs_baseline`. O texto original abaixo fica como registro da
+  proposta: índice único em `(strategy_id, asset_id, config_hash, period, label)`; script de dedupe (413/414 e, pela mesma chave, 109 grupos com 279 linhas duplicadas em 687 runs — medido na auditoria de 07/09).
 - `simulated/broker.rs:851-893`: preencher `strategy_id`/`config_hash` e o `market_snapshot` no `journal` do trade (hoje `unknown` e `{}`) — via `Order.metadata` → `Position.metadata`.
 - `print_acceptance`: PF_R ao lado de PF$, t-stat do avg R, share do melhor dia e dos 2 melhores meses, N da família.
 
@@ -306,7 +353,16 @@ Pesquisa em Python (uv, numpy/pandas) consumindo `--output`; o que virar critér
 
 ### 5.4 Hotfix v1.0.1 da range-extreme-fade (veto de meio-dia em ET)
 
-`is_midday_midrange` (`range_extreme_fade_v1/context.rs:220-238`) compara `last.timestamp.time()` em UTC com `midday_start/end_time` fixos (15:30–18:00 UTC). Converter para America/New_York (mesmo `chrono_tz` já importado no arquivo), TOML `midday_start_time = "11:30:00"` / `midday_end_time = "14:00:00"` com comentário "ET", teste unitário com timestamp de janeiro e de julho. Restaura a regra documentada (`range-extreme-fade-v1.md` §4/§8: 11:30–14:00 ET); precedente A2 (`e4231f3`). O `config_hash` muda: nota formal de correção (não bump de versão) e re-rodar o walk-forward junto com §5.1 para atualizar o baseline do gate B. Efeito em P&L: imensurável (subamostra EST ≈ 20 trades) — é correção, não melhoria.
+`is_midday_midrange` (`range_extreme_fade_v1/context.rs:220-238`) compara `last.timestamp.time()` em UTC com `midday_start/end_time` fixos (15:30–18:00 UTC). Converter para America/New_York (mesmo `chrono_tz` já importado no arquivo), TOML `midday_start_time = "11:30:00"` / `midday_end_time = "14:00:00"` com comentário "ET", teste unitário com timestamp de janeiro e de julho. Restaura a regra documentada (`range-extreme-fade-v1.md` §4/§8: 11:30–14:00 ET); precedente A2 (`e4231f3`). O `config_hash` muda: nota formal de correção (não bump de versão) e re-rodar o walk-forward junto com §5.1 para atualizar o baseline do gate B. Efeito em P&L: ~~imensurável (subamostra EST ≈ 20 trades)~~ — **errado, e a
+correção foi medida em 07/09**: in-sample, com flatten, a fade cai de
+PF 1,74 / avg R 0,218 / +4.560 para **PF 1,57 / 0,182 / +3.618** (−21% no net),
+com a **mesma** contagem de trades — a correção troca *quais* sinais passam.
+Tudo concentrado em AVUV (PF 1,55 → 1,24); no OOS, AVUV cai de avg R 0,256 para
+**0,159**, passando por 0,009 acima do limiar. **O bug estava ajudando.** Isso
+não é argumento para mantê-lo — uma janela que anda uma hora duas vezes por ano
+é acidente, não regra —, mas registra que o edge da fade é mais fino do que o
+gate A de 04/09 mostrava. Detalhe em `docs/strategies/range-extreme-fade-v1.md`
+§17. Continua sendo correção, não melhoria.
 
 ### 5.5 Dimensionamento por liquidez e fração de capital (ADR-020)
 
@@ -318,7 +374,13 @@ Pesquisa em Python (uv, numpy/pandas) consumindo `--output`; o que virar critér
 ### 5.6 Higiene de dados e custo
 
 - Reingerir IJR, MDY, QQQ, SCHA, SPY, VB (parados em 06/08/2026) no servidor via workflow `ops` (1 símbolo por vez, pacing).
-- Deduplicar `backtest_runs` (413/414; pela chave do índice proposto na ADR-019 há **109 grupos e 279 linhas** duplicadas em 687 runs; 566 sem label) e rotular os runs de 06–07/09 sem label (529–572 = backtests da pesquisa e pré-teste de futuros; 660–676 = 9 runs já rotulados `research-exit-policy-2026-09-07` (estudo de saídas) + 8 sem label do replay do roadmap: 660, 664, 666, 668, 671, 673, 674, 676).
+- ⛔ **NÃO deduplicar `backtest_runs`** — instrução revogada em 07/09/2026 pela
+  própria implementação do ADR-019 (migração `0005`). Medido: no maior grupo
+  "duplicado" há **sete valores distintos de `final_equity`**; não são cópias, e
+  o dedupe apagaria resultados diferentes entre si. O que a linha original pedia
+  fica como registro: deduplicar (413/414; pela chave do índice proposto na
+  ADR-019 há **109 grupos e 279 linhas** duplicadas em 687 runs; 566 sem label).
+  O que **vale** fazer é rotular os runs de 06–07/09 sem label (529–572 = backtests da pesquisa e pré-teste de futuros; 660–676 = 9 runs já rotulados `research-exit-policy-2026-09-07` (estudo de saídas) + 8 sem label do replay do roadmap: 660, 664, 666, 668, 671, 673, 674, 676).
 - `ensure_asset` grava `tick_size` via `Decimal::from_f64_retain(0.01)` → `0.0100000000000000002…` em todos os 14 ativos: corrigir para `Decimal::new(1, 2)` e limpar o banco (viola "Decimal nunca f64").
 - Simulador: comissão por ação (US$ 0,005, mín. US$ 1,00, IBKR Canada) em vez de US$ 0,35 fixo; `spread_bps` por ativo cobrado nos dois lados **inclusive no fill do alvo limit** (hoje o alvo não paga nada — `simulated/broker.rs:751-775`), separado do slippage de mercado. Teste de paridade: com STK/USD/2 bp os runs 413–421 reproduzem.
 - `ibkr/broker.rs:366-399`: casar o `CommissionReport` que chega em poll posterior ao fill (hoje só no mesmo lote).
@@ -451,9 +513,9 @@ As variantes de alvo compartilham as **mesmas entradas**: calcular por trade a d
 
 | Semana | Entregas | Depende de |
 |---|---|---|
-| 1 | §5.1 flatten + ADR-018; §5.8 diagnóstico do feed (Gateway vs TWS, mesma barra); §5.4 hotfix ET; §5.6 dedupe/rótulos/tick_size; §5.7 `sql/screens` no repo | — |
-| 1–2 | §5.2 harness (walkforward `--output/--slippage/--label/--holdout`, PF_R, métricas por dia, `strategy_id` nos trades, `analyze` por par); §5.6 comissão por ação + spread no alvo | §5.1 |
-| 2 | Re-rodar gate A das 3 estratégias com flatten + hotfix; §5.3 relatório estatístico; decisão do dono sobre o gate B da balance-area | §5.1, §5.2 |
+| 1 | ✅ §5.1 flatten + ADR-018; §5.8 diagnóstico do feed (Gateway vs TWS, mesma barra); ✅ §5.4 hotfix ET; §5.6 ~~dedupe~~ (**⛔ revogado**, ver §5.6)/rótulos/tick_size; §5.7 `sql/screens` já está no repo desde a pesquisa, mas a **calibração** que o próprio §5.7 exige antes de usá-lo como Fase 0 não foi feita | — |
+| 1–2 | ✅ §5.2 harness (walkforward `--output/--slippage/--label/--holdout`, PF_R, métricas por dia, `strategy_id` nos trades, `analyze` por par) — **parcial**, ver ADR-019 "Pendente"; §5.6 comissão por ação + spread no alvo | §5.1 |
+| 2 | ✅ Re-rodar gate A das 3 estratégias com flatten + hotfix (`docs/reports/gate-a-com-flatten-2026-09-07.md`); §5.3 relatório estatístico; decisão do dono sobre o gate B da balance-area | §5.1, §5.2 |
 | 2–3 | §5.5 cap de liquidez + `capital_fraction` + registro de equity (ADR-020); §5.9 A9 (confirmação de ordem e short) com smoke test; §5.10 sair de IWV; §5.8 correção do feed (poll alinhado / realtime como gatilho) conforme o diagnóstico | §5.8 |
 | 3–4 | §6.1 passo 1 (medir o delta Neutral) — **a medição de maior valor esperado do plano**; §6.4 replay de portfólio | §5.1, §5.2 |
 | 4–6 | §6.1 passo 2 (v2) se passar; §6.2 como v2 pré-registrada em símbolos onde a v1 não roda; §6.9 piso de stop medido no harness; §6.10 janelas e §6.11 alvo pareado como variantes pré-registradas; §6.6 instrumentação | §6.1, §6.4 |
@@ -480,6 +542,35 @@ Esforço total da Onda A: ~2–3 semanas de calendário com dedicação integral
 
 - Todo o histórico (24/02/2025 → 02/09/2026) é um regime só, com um episódio de volatilidade extrema (abr/2025) e um de compressão (ago/2026). O P&L está concentrado em jun–out/2025. Nenhum walk-forward do repo é OOS em relação ao desenho das regras; o único OOS verdadeiro é o paper forward, que tem 0 trades das aprovadas desde 18/08.
 - Os números deste plano são re-simulações em Python sobre JSONs do binário de 06/09 e candles do banco dev; reproduzem o motor ao centavo no baseline, mas o flatten "no close da barra 15:45" difere do MKT às 15:55 do live em 10 min e no tipo de fill. O motor com §5.1 é a fonte de verdade.
+- **O motor já rodou (07/09) e a fonte de verdade agora existe.** Ele confirmou
+  a re-simulação: mesma contagem de trades (96/69/67) e exatamente as mesmas
+  saídas overnight (20/9/8, IWV em 0). PF e avg R batem em 2–3 casas; o net em
+  dólares tem resíduo de **0,2% a 2,3% em módulo** — e não é sempre para baixo:
+  a balance-area ficou −2,3%, a fade −0,4% e a opening-reversal **+0,2%**. A
+  A causa **não foi isolada**, e as explicações fáceis não servem: a comissão do
+  simulador é fixa por trade (US$ 0,35/perna) e a contagem de trades é a mesma
+  dos dois lados, então não há comissão a mais; e slippage e comissão são ambos
+  custo, logo nenhum dos dois produziria o **+0,2%** da opening-reversal. A
+  hipótese mais provável — **interpretação nossa, não verificada** — é o
+  caminho da equity: fechar no sino muda a curva, e o sizing depende dela, de
+  modo que as posições seguintes saem com tamanho diferente mesmo com o mesmo
+  número de trades. Onde os dois divergirem, vale o motor.
+- **⚠️ Todo número da `range-extreme-fade-v1` neste plano é anterior ao hotfix
+  ET do §5.4.** Medido **na régua com flatten**, o agregado dela cai de
+  PF 1,74 / avg R 0,218 / +4.560 para **PF 1,57 / 0,182 / +3.618** — ou seja,
+  −9,8% no PF, −16,5% no avg R e −21% no net. **O −21% é do net agregado, não
+  um desconto que se aplique a qualquer número.** E o efeito é 100% AVUV:
+  SLYV (2,75) e IWV (1,15) ficam idênticos — esses três são **in-sample** e
+  estão em `docs/strategies/range-extreme-fade-v1.md` §17; os equivalentes OOS
+  (2,64 e 1,31) estão no §3b do relatório. Além disso, os números da fade em
+  §2.1 e §2.3 são **sem flatten**, régua na qual o delta do hotfix nunca foi
+  medido — não existe fator de correção para eles. Os valores válidos, com as
+  duas correções aplicadas, estão em
+  `docs/reports/gate-a-com-flatten-2026-09-07.md` §3b.
+- **O PF em R, previsto no achado 4 do §2.3, é pior do que o plano estimava.**
+  Medido: balance-area com **PF_R 0,74 em AVUV e 0,97 em VBR** — abaixo de 1,
+  ou seja, sem edge em unidades de risco. Nenhum t-stat do conjunto chega a 2, e
+  só a fade em SLYV passa no critério de concentração de 60%.
 - O banco dev tem 3 trades e 26 fills de live (04/08, pullback); tudo sobre fills, comissão real e latência em produção precisa do dump do servidor ou de uma ação `sql` read-only no workflow `ops`.
 - 6 dos 14 símbolos param em 06/08/2026 no banco dev (§5.6).
 - A conta paper enche a NBBO sem fila nem impacto: qualquer custo medido nela é piso, e em SLYV/IJS o piso está longe do teto.
@@ -498,11 +589,13 @@ Esforço total da Onda A: ~2–3 semanas de calendário com dedicação integral
 | `docs/strategies/range-extreme-fade-v2.md` | Fases 1–3 do framework: política de contexto `allow_neutral` (+ hotfix v1.0.1) |
 | `docs/strategies/balance-area-breakout-v2.md` | Fases 1–3: filtro de convicção do rompimento |
 | `docs/strategies/opening-reversal-v2.md` | Fases 1–3: short-only na 1ª hora (Onda C — hipótese de regime; spec pronta, sem implementação) |
-| `docs/decisions/ADR-018-paridade-fim-de-sessao-backtest.md` (proposto) | flatten no engine, `ExitReason::EndOfDay`, releitura do gate A |
-| `docs/decisions/ADR-019-harness-de-validacao-e-gate-estatistico.md` (proposto) | walkforward `--output/--slippage/--label/--holdout`, PF_R, concentração, n_trials, dedupe, `analyze` por par, custo por ativo |
-| `docs/decisions/ADR-020-dimensionamento-por-liquidez-e-fracao-de-capital.md` (proposto) | cap por liquidez, `capital_fraction`, registro de equity, modos de sizing |
+| `docs/decisions/ADR-018-paridade-fim-de-sessao-backtest.md` **✅ IMPLEMENTADO** | flatten no engine, `ExitReason::EndOfDay`, releitura do gate A |
+| `docs/decisions/ADR-019-harness-de-validacao-e-gate-estatistico.md` **✅ IMPLEMENTADO, com exceções** | walkforward `--output/--slippage/--label/--holdout`, PF_R, concentração, `analyze` por par. **Vários itens não entraram** — lista e contagem na seção "Pendente" do próprio ADR; não replicar aqui |
+| `docs/decisions/ADR-020-dimensionamento-por-liquidez-e-fracao-de-capital.md` **(continua PROPOSTO — não implementado)** | cap por liquidez, `capital_fraction`, registro de equity, modos de sizing |
 | `sql/screens/` | template de screener com fill honesto, screens executados, README com regra de calibração |
 | `sql/stats/` | 13 consultas de estatística descritiva do banco (liquidez por barra e por hora, range diário e por barra, gaps, perfil intradiário) — base de §2.2, §2.4 e da ADR-020 §3 |
 | `docs/reports/estudo-politicas-de-saida-2026-09-07.md` | estudo pareado pré-registrado de políticas de saída (breakeven, trailing, stop além da barra, parcial): nenhuma supera alvo fixo + flatten com t > 2 em 2025 **e** 2026. Usa a comissão real da IBKR, por isso a política A dá avg R −0,037 / PF_R 0,94 / US$ 6.062 onde a ADR-018 publica −0,007 / +6.730 (a diferença é só o modelo de comissão) |
 | `docs/strategy-analysis-framework.md` | seção "Fase 0 — Screener" marcada como proposta |
-| `docs/HANDOFF.md` | entrada de 07/09 apontando para este plano |
+| `docs/HANDOFF.md` | entrada de 07/09 apontando para este plano, e as entradas da execução |
+| `docs/reports/gate-a-com-flatten-2026-09-07.md` **(novo, 07/09)** | o gate A re-rodado pelo MOTOR com flatten, hotfix ET e as métricas do ADR-019. **Os números dele substituem os de `gate-a-revalidacao-2026-09-04.md`** — nenhum run sem flatten é comparável (precedente ADR-015 §4). A substituição **formal** do gate A continua sendo a decisão 2 do dono (§10). Ressalva do próprio relatório (§6): o período inclui o feed degradado do Gateway a partir de 07/08/2026, então o **nível** do último bloco está contaminado; o delta com/sem flatten não está |
+| `sql/maintenance/0004-reclassificar-flatten.sql` **(novo, 07/09)** | UPDATE opcional dos flattens gravados como `manual` antes do ADR-018 — depende de decisão do dono |

@@ -1,9 +1,13 @@
 # Gate A re-rodado com a régua do live (flatten de fim de pregão) — 07/09/2026
 
 **O que é:** a re-rodada que o ADR-018 exige, feita pelo **motor** (não por
-re-simulação em Python). Substitui formalmente
-`docs/reports/gate-a-revalidacao-2026-09-04.md`, pelo mesmo precedente do
-ADR-015 §4: nenhum run anterior ao flatten é comparável com estes.
+re-simulação em Python). **Os números aqui substituem os de**
+`docs/reports/gate-a-revalidacao-2026-09-04.md` — nenhum run anterior ao flatten
+é comparável com estes, mesmo precedente do ADR-015 §4.
+
+Substituir **formalmente** o gate A de 04/09 é ato do dono (decisão 2 do §10 do
+plano) e ainda não foi feito. Esta página produz a evidência; §5 registra o que
+ela não decide.
 
 **Comando:** `trader-cli walkforward --symbol <S> --strategy <E> --from 2025-02-24 --to 2026-09-03 -w 6`
 (flatten ligado por padrão) e `trader-cli backtest ... --slippage-bps 2` com e
@@ -40,12 +44,19 @@ de saídas `end_of_day` bate exatamente com a contagem de trades overnight da
 re-simulação: **20 / 9 / 8**, com IWV em **0** — o motor identificou os mesmos
 trades, um a um.
 
-O resíduo de 0,2–2,3% no net em dólares é a diferença de modelo de saída já
-registrada no ADR: a re-simulação fechava no close da barra 15h45 com 2 bp; o
-motor fecha por `close_position_at_market`, que aplica slippage **e** comissão
-pelo mesmo caminho de qualquer saída a mercado. PF e avg R, que são o que o
-gate lê, coincidem em 2–3 casas. Como o ADR-018 já dizia, **o motor é a fonte
-de verdade**; os números desta tabela substituem os da re-simulação.
+O resíduo de 0,2–2,3% no net em dólares **não é sempre para baixo**: a
+balance-area ficou −2,3%, a fade −0,4% e a opening-reversal **+0,2%**. A causa
+não foi isolada, e as explicações fáceis não servem — a comissão do simulador é
+fixa por trade e a contagem de trades é idêntica dos dois lados, então não há
+comissão a mais; e slippage e comissão são ambos custo, logo nenhum produziria
+um resíduo positivo. A hipótese mais provável, **interpretação nossa e não
+verificada**, é o caminho da equity: fechar no sino muda a curva, e o sizing
+depende dela, então as posições seguintes saem com tamanho diferente mesmo com
+o mesmo número de trades.
+
+PF e avg R, que são o que o gate lê, coincidem em 2–3 casas. Como o ADR-018 já
+dizia, **o motor é a fonte de verdade**; os números desta tabela substituem os
+da re-simulação.
 
 ## 3. Veredito do gate A (OOS do walk-forward, 6 janelas, com flatten)
 
@@ -119,9 +130,13 @@ janela nova.
   bloqueada para dinheiro real, lida contra o backtest **com** flatten.
 - **Substituição formal do gate A de 04/09.** É a decisão 2 do dono. Este
   documento produz a evidência; a substituição é ato dele.
-- **IC em blocos, PF_R, holdout e concentração** (ADR-019) ainda não existem:
-  o veredito acima usa só os seis critérios do ADR-010. Quando o harness
-  entrar, esta tabela é re-rodada.
+- **O IC95 em blocos ainda não existe** — depende do relatório em Python
+  (`trader-research/`, item 8 do ADR-019), que não foi implementado. **PF_R e
+  concentração passaram a existir e estão na §7 desta página.** O **holdout
+  travado** também existe como ferramenta (`--holdout-from`), mas **os runs
+  desta página não foram rodados com ele** — nenhum número de holdout aparece
+  aqui. O veredito da §3 usa só os seis critérios do ADR-010, que continuam
+  sendo o gate vigente.
 - **Custo real.** Tudo a 2 bp e com comissão de US$ 0,35/perna. A comissão por
   ação da IBKR Canada (§5.6) e a sensibilidade a 4–5 bp entram depois e
   empurram todos os números para baixo.
