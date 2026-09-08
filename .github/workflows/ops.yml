@@ -27,6 +27,7 @@ on:
           - logs-instancia
           - flatten
           - cancelar-ordens
+          - sql-manutencao
       simbolo:
         description: 'Simbolo para flatten (ex.: IWM)'
         required: false
@@ -42,12 +43,25 @@ on:
         required: false
         type: string
         default: 'iwm-pullback'
+      script:
+        description: 'sql-manutencao: nome do arquivo em sql/maintenance (ex.: 0006-rotular-runs-sem-label.sql)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   ops:
     runs-on: [self-hosted, linux, x64, home]
     steps:
+      # Só a `sql-manutencao` precisa do repo (os scripts de `sql/maintenance`
+      # vêm de lá, e não de uma caixa de texto do workflow).
+      - uses: actions/checkout@v4
+        if: inputs.acao == 'sql-manutencao'
+
       - name: ${{ inputs.acao }}
+        env:
+          SCRIPT: ${{ inputs.script }}
+          CONFIRMAR: ${{ inputs.confirmar }}
         run: |
           set -uo pipefail
           case "${{ inputs.acao }}" in
@@ -66,6 +80,46 @@ jobs:
 
             logs-gateway)
               docker logs daytradebot_gateway_1 --tail 60
+              ;;
+
+            sql-manutencao)
+              # Roda UM script de `sql/maintenance` no banco de producao.
+              #
+              # Tres travas, porque isto escreve no unico banco que guarda a
+              # amostra do gate B:
+              #   1. so arquivos de `sql/maintenance` do repo, escolhidos pelo
+              #      NOME — nao existe caixa para digitar SQL;
+              #   2. `confirmar` obrigatorio, como no flatten;
+              #   3. BACKUP antes, pelo mesmo caminho que o cron usa.
+              #
+              # Os scripts sao idempotentes, abrem BEGIN/COMMIT por conta
+              # propria e nenhum apaga linha. O nome vem por variavel de
+              # ambiente (nao interpolado no shell) para nao existir caminho
+              # de injecao a partir da caixa do workflow.
+              if [ -z "$SCRIPT" ]; then
+                echo "::error::informe o nome do script no campo 'script'"
+                ls sql/maintenance/
+                exit 1
+              fi
+              if [ "$CONFIRMAR" != "true" ]; then
+                echo "::error::marque 'confirmar' para escrever no banco de producao"
+                exit 1
+              fi
+              case "$SCRIPT" in
+                */*|.*|"") echo "::error::nome invalido: $SCRIPT"; exit 1 ;;
+              esac
+              caminho="sql/maintenance/$SCRIPT"
+              if [ ! -f "$caminho" ]; then
+                echo "::error::$caminho nao existe neste commit"
+                ls sql/maintenance/
+                exit 1
+              fi
+
+              echo "== backup antes de escrever =="
+              docker exec daytradebot_scheduler_1 /usr/local/bin/scheduler.sh backup
+
+              echo "== rodando $caminho =="
+              docker exec -i daytradebot_postgres_1                 psql -v ON_ERROR_STOP=1 -U trader -d trader_db < "$caminho"
               ;;
 
             logs-instancia)

@@ -690,6 +690,50 @@ Esforço total da Onda A: ~2–3 semanas de calendário com dedicação integral
 
 ## 10. O que só o dono decide
 
+> ### Decisões tomadas em 08/09/2026 (delegadas pelo dono)
+>
+> O dono delegou os itens 1, 2, 4 e a leitura do gate B ("tome as decisões que
+> você achar mais correta"). Ficam registradas aqui, com o motivo, para
+> poderem ser revertidas por quem discordar.
+>
+> **1. O gate B é lido POR ESTRATÉGIA, não por portfólio.** O §5.3 mostrou
+> que a unidade decide o veredito: os mesmos 214 trades reprovam nos oito
+> pares, reprovam nas três estratégias e passam tudo como portfólio. Escolher
+> a unidade permissiva **depois** de ver qual passa é escolher a resposta. O
+> número do portfólio continua sendo reportado ao lado, como informação.
+> Custo aceito: 4 a 5,5 meses de amostra em vez de 7 semanas.
+>
+> **2. O gate A de 04/09 é formalmente substituído** pelo de 07–08/09
+> (`gate-a-com-flatten-2026-09-07.md` + custo real). O de 04/09 foi medido
+> com um motor que segurava posição pela noite — coisa que o live nunca faz.
+> Manter os dois seria manter um número oficial que descreve um mundo que não
+> existe.
+>
+> **3. As 3 instâncias da balance-area CONTINUAM em paper, como controle** —
+> não como candidatas. Em R elas perdem (avg R −0,035; −2,5 R/ano). Ficam
+> porque desligar apaga a única medição contínua de live × backtest da
+> estratégia. **Com data para revisar:** elas ocupam vagas do teto de 3
+> posições simultâneas da conta e podem bloquear entradas da
+> `opening-reversal`, que é a única com edge medido (avg R 0,332; +14,7
+> R/ano). Quanto isso custa só o replay de portfólio (§6.4) responde — e
+> enquanto ele não existir, a decisão de manter é provisória.
+>
+> **4. A `range-extreme-fade` sai de IWV — no MESMO deploy do hotfix.** O
+> hotfix do veto de meio-dia já muda o `config_hash` da fade e, por §3.8,
+> já reinicia o relógio de 4 semanas dela. Tirar IWV junto custa zero a mais;
+> tirar depois custaria outro reinício.
+>
+> **5. O modo de dimensionamento continua o A (produção).** Trocar o sizing
+> agora mudaria a régua no meio de um gate B que já vai reiniciar, e a
+> escolha certa depende de dois números que só o dono tem (capital real e
+> tolerância a drawdown). Registrado que o A é o menos honesto dos modos: o
+> lucro em $ dele vem da covariância entre tamanho e resultado (§5.5).
+>
+> **6. Short com dinheiro real: não se decide agora.** Nenhuma estratégia
+> chegou ao gate C, então a pergunta não está no caminho crítico. O que
+> **está** é o teste de 3 sell stops na paper (§5.9) — depende do servidor.
+
+
 1. **Gate B da balance-area-v1** continua como está, sabendo que o backtest que a aprovou não tem flatten? (Recomendação: continuar em paper, mas ler o gate B contra o backtest **com** flatten e não contar overnight como edge.)
 2. **Gate A passa a ser lido com flatten, PF_R, IC em blocos, holdout e concentração** (ADR-019) — substitui formalmente a revalidação de 04/09.
 3. **Client Portal:** conferir permissão de cripto (para corrigir a premissa nos docs), pedir "Complex or Leveraged ETPs" (se quiser IBIT/ETHA no screening), verificar assinaturas de market data do usuário live e a moeda-base da conta paper (`trader-cli account --provider ibkr`) — se for CAD, o cap de notional já está ~1,37× errado.
