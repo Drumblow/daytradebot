@@ -23,6 +23,23 @@ client_id = 1
 paper = true
 account_id = ""
 
+[session]
+# Fim de pregão em horário de NOVA YORK (ADR-018). O live e o backtest leem
+# daqui — paridade por config, não por coincidência.
+#
+# O live varre a janela [flatten_start, flatten_end) a cada tick e encerra
+# tudo a mercado: as pernas do bracket vão com TIF Day e expiram no sino, de
+# modo que posição que atravessa a noite fica SEM STOP (C1 da auditoria de
+# 30/08/2026).
+flatten_start = "15:55:00"
+flatten_end = "16:10:00"
+# Última barra de 15 min do RTH. O backtest encerra no fechamento dela.
+# NÃO é o gatilho: a última barra do pregão é detectada por mudança de data
+# ET (nos pregões de meio expediente o dia acaba às 12h45). Este valor é a
+# checagem de sanidade — se o pregão terminar depois dele, os candles não são
+# RTH-only e o log avisa.
+last_bar = "15:45:00"
+
 [risk]
 profile = "conservative"
 # Limites diários e por trade (percentuais do capital).

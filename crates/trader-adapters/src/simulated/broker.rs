@@ -466,6 +466,26 @@ impl SimulatedBroker {
         true
     }
 
+    /// Id da ordem de entrada stop pendente no símbolo, se houver.
+    ///
+    /// Existe para o flatten de fim de pregão (ADR-018): o motor precisa
+    /// cancelar a entrada que ainda não encheu, e o cancelamento tem de passar
+    /// pelo `Broker::cancel_order` — o mesmo caminho do live — para a ordem
+    /// terminar com `status = Cancelled` e `cancelled_at` preenchido, em vez
+    /// de sumir do estado sem rastro.
+    pub fn pending_entry_order_id(&self, symbol: &str) -> Option<OrderId> {
+        match self.state.lock() {
+            Ok(state) => state
+                .pending_entries
+                .get(symbol)
+                .map(|e| e.order_id.clone()),
+            Err(e) => {
+                warn!(error = %e, "falha ao ler entrada pendente");
+                None
+            }
+        }
+    }
+
     /// Retorna as operações fechadas até o momento.
     pub fn get_closed_trades(&self) -> Vec<Trade> {
         match self.state.lock() {

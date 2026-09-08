@@ -23,6 +23,11 @@ pub struct Args {
     pub timeframe: TimeFrame,
     /// Número de janelas out-of-sample.
     pub windows: usize,
+    /// Desliga o flatten de fim de pregão (ADR-018).
+    ///
+    /// Só para reproduzir os runs 413–421 e medir o delta por par. Nenhum
+    /// veredito de gate A sai de um run com esta flag.
+    pub no_flatten: bool,
 }
 
 /// Executa análise walk-forward (anchored) sobre dados reais do banco.
@@ -87,8 +92,15 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         symbol: args.symbol.clone(),
         entry_validity_candles: strategy.entry_validity_candles() as u32,
         time_exit: strategy.time_exit(),
+        session_flatten_et: super::session_flatten_et(&config.app_config.session, args.no_flatten),
         ..BacktestConfig::default()
     };
+    if args.no_flatten {
+        println!(
+            "   ⚠️  Flatten:   DESLIGADO (--no-flatten) — régua anterior ao ADR-018, \
+             só para comparação. Não é veredito de gate A.\n"
+        );
+    }
     let risk_config =
         crate::risk_config::build_risk_config(&config.app_config.risk, &strategy.risk_params())?;
 

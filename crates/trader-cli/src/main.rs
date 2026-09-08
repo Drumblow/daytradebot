@@ -119,6 +119,11 @@ enum Commands {
         /// Slippage por execução em pontos-base (1 bp = 0,01%). Padrão: 10 bp.
         #[arg(long)]
         slippage_bps: Option<u32>,
+        /// Desliga o flatten de fim de pregão (ADR-018). Só para reproduzir
+        /// runs antigos: o resultado carrega posição pela noite, o que o live
+        /// nunca faz.
+        #[arg(long)]
+        no_flatten: bool,
     },
     /// Validação walk-forward out-of-sample sobre dados reais do banco.
     Walkforward {
@@ -140,6 +145,10 @@ enum Commands {
         /// Número de janelas out-of-sample.
         #[arg(short, long, default_value_t = 4)]
         windows: usize,
+        /// Desliga o flatten de fim de pregão (ADR-018). Só para reproduzir
+        /// os runs 413–421 e medir o delta; não vale como gate A.
+        #[arg(long)]
+        no_flatten: bool,
     },
     /// Analisa resultados do live/paper e compara com o backtest mais recente.
     Analyze {
@@ -295,6 +304,7 @@ async fn main() -> Result<()> {
             allow_synthetic,
             output,
             slippage_bps,
+            no_flatten,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -314,6 +324,7 @@ async fn main() -> Result<()> {
                     allow_synthetic,
                     output,
                     slippage_bps,
+                    no_flatten,
                 },
             )
             .await
@@ -349,6 +360,7 @@ async fn main() -> Result<()> {
             to,
             timeframe,
             windows,
+            no_flatten,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -366,6 +378,7 @@ async fn main() -> Result<()> {
                     to,
                     timeframe: timeframe.into(),
                     windows,
+                    no_flatten,
                 },
             )
             .await

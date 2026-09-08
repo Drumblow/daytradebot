@@ -22,13 +22,9 @@ impl SqlxTradeRepository {
             Direction::Long => "long",
             Direction::Short => "short",
         };
-        let exit_reason = match trade.exit_reason {
-            trader_domain::ExitReason::Target => "target",
-            trader_domain::ExitReason::Stop => "stop",
-            trader_domain::ExitReason::Time => "time",
-            trader_domain::ExitReason::Manual => "manual",
-            trader_domain::ExitReason::RiskManager => "risk_manager",
-        };
+        // Tabela única em `ExitReason::as_str` (ADR-018): o texto aqui é o
+        // mesmo do serde e do CHECK de `trades.exit_reason`.
+        let exit_reason = trade.exit_reason.as_str();
         let correlation_id = uuid::Uuid::parse_str(&trade.correlation_id)
             .map_err(|e| RepositoryError::InvalidData(format!("correlation_id inválido: {e}")))?;
 
@@ -114,7 +110,7 @@ impl SqlxTradeRepository {
         .await
         .map_err(|e| RepositoryError::Query(e.to_string()))?;
 
-        Ok(row.map(Into::into))
+        row.map(Trade::try_from).transpose()
     }
 
     /// Lista trades recentes de um ativo.
@@ -164,7 +160,7 @@ impl SqlxTradeRepository {
         .await
         .map_err(|e| RepositoryError::Query(e.to_string()))?;
 
-        Ok(rows.into_iter().map(Into::into).collect())
+        rows.into_iter().map(Trade::try_from).collect()
     }
 
     /// Lista trades de hoje.
@@ -218,7 +214,7 @@ impl SqlxTradeRepository {
         .await
         .map_err(|e| RepositoryError::Query(e.to_string()))?;
 
-        Ok(rows.into_iter().map(Into::into).collect())
+        rows.into_iter().map(Trade::try_from).collect()
     }
 
     pub async fn list_today(&self, symbol: &str) -> Result<Vec<Trade>, RepositoryError> {
@@ -265,7 +261,7 @@ impl SqlxTradeRepository {
         .await
         .map_err(|e| RepositoryError::Query(e.to_string()))?;
 
-        Ok(rows.into_iter().map(Into::into).collect())
+        rows.into_iter().map(Trade::try_from).collect()
     }
 }
 
@@ -297,9 +293,33 @@ struct TradeRow {
     correlation_id: uuid::Uuid,
 }
 
-impl From<TradeRow> for Trade {
-    fn from(row: TradeRow) -> Self {
-        Self {
+/// Converte o texto do banco para `ExitReason`.
+///
+/// Falha FECHADO, seguindo o precedente de `parse_source` neste mesmo módulo.
+/// Antes do ADR-018 este caminho tinha um `_ => Target`: um texto que o Rust
+/// não conhecesse (um motivo novo gravado por outra versão do binário, ou uma
+/// migração aplicada só de um lado) virava "alvo" nas métricas do gate, em
+/// silêncio. O CHECK de `trades.exit_reason` já impede escrita inválida; este
+/// erro é a rede de segurança para quando o CHECK e o enum divergirem.
+fn parse_exit_reason(value: &str) -> Result<trader_domain::ExitReason, RepositoryError> {
+    match value {
+        "target" => Ok(trader_domain::ExitReason::Target),
+        "stop" => Ok(trader_domain::ExitReason::Stop),
+        "time" => Ok(trader_domain::ExitReason::Time),
+        "manual" => Ok(trader_domain::ExitReason::Manual),
+        "risk_manager" => Ok(trader_domain::ExitReason::RiskManager),
+        "end_of_day" => Ok(trader_domain::ExitReason::EndOfDay),
+        _ => Err(RepositoryError::Query(format!(
+            "exit_reason inválido no banco: {value}"
+        ))),
+    }
+}
+
+impl TryFrom<TradeRow> for Trade {
+    type Error = RepositoryError;
+
+    fn try_from(row: TradeRow) -> Result<Self, Self::Error> {
+        Ok(Self {
             id: Some(row.id),
             symbol: row.symbol,
             signal_id: row.signal_id,
@@ -322,18 +342,12 @@ impl From<TradeRow> for Trade {
             net_pnl: row.net_pnl,
             risk_amount: row.risk_amount,
             result_in_r: row.result_in_r,
-            exit_reason: match row.exit_reason.as_str() {
-                "stop" => trader_domain::ExitReason::Stop,
-                "time" => trader_domain::ExitReason::Time,
-                "manual" => trader_domain::ExitReason::Manual,
-                "risk_manager" => trader_domain::ExitReason::RiskManager,
-                _ => trader_domain::ExitReason::Target,
-            },
+            exit_reason: parse_exit_reason(&row.exit_reason)?,
             strategy_id: row.strategy_id,
             strategy_version: row.strategy_version,
             config_hash: row.config_hash,
             journal: row.journal,
             correlation_id: row.correlation_id.to_string(),
-        }
+        })
     }
 }

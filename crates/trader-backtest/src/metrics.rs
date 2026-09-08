@@ -1,10 +1,56 @@
 //! Métricas de performance de backtest.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use rust_decimal::{Decimal, MathematicalOps};
 use serde::{Deserialize, Serialize};
 
 use trader_domain::Trade;
+
+/// Recorte de métricas sobre um subconjunto de trades.
+///
+/// Serve a qualquer agrupamento (motivo de saída, direção, hora). O primeiro
+/// consumidor é o `end_of_day` do ADR-018: sem ele não dá para responder
+/// "quanto do P&L vinha de posição que atravessava a noite?" sem sair do
+/// motor para um script.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GroupMetrics {
+    pub trades: usize,
+    pub wins: usize,
+    pub net_pnl: Decimal,
+    pub gross_profit: Decimal,
+    pub gross_loss: Decimal,
+    /// `None` quando não houve perdas no grupo (PF infinito) ou sem trades.
+    pub profit_factor: Option<Decimal>,
+    pub avg_r: Decimal,
+}
+
+impl GroupMetrics {
+    fn push(&mut self, trade: &Trade) {
+        self.trades += 1;
+        self.net_pnl += trade.net_pnl;
+        if trade.net_pnl > Decimal::ZERO {
+            self.wins += 1;
+            self.gross_profit += trade.net_pnl;
+        } else {
+            self.gross_loss += trade.net_pnl.abs();
+        }
+        self.avg_r += trade.result_in_r;
+    }
+
+    /// Fecha os acumuladores: `avg_r` vira média e o PF é calculado.
+    fn finish(&mut self) {
+        if self.trades > 0 {
+            self.avg_r /= Decimal::from(self.trades as i64);
+        }
+        self.profit_factor = if self.gross_loss.is_zero() {
+            None
+        } else {
+            Some(self.gross_profit / self.gross_loss)
+        };
+    }
+}
 
 /// Métricas calculadas a partir de uma série de trades.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +73,14 @@ pub struct BacktestMetrics {
     pub best_trade: Decimal,
     pub worst_trade: Decimal,
     pub sharpe_ratio: Decimal,
+    /// Quebra por motivo de saída (ADR-018), chaveada pelo texto canônico de
+    /// `ExitReason::as_str`. Vazio quando não há trades.
+    ///
+    /// Usa `Trade::effective_exit_reason`, então trades gravados antes do
+    /// ADR-018 (flatten como `manual` + marca no journal) entram na linha
+    /// `end_of_day`, como devem.
+    #[serde(default)]
+    pub by_exit_reason: BTreeMap<String, GroupMetrics>,
 }
 
 impl BacktestMetrics {
@@ -68,10 +122,16 @@ impl BacktestMetrics {
         let mut best_trade = Decimal::MIN;
         let mut worst_trade = Decimal::MAX;
         let mut total_r = Decimal::ZERO;
+        let mut by_exit_reason: BTreeMap<String, GroupMetrics> = BTreeMap::new();
 
         for trade in trades {
             let pnl = trade.net_pnl;
             current_equity += pnl;
+
+            by_exit_reason
+                .entry(trade.effective_exit_reason().as_str().to_string())
+                .or_default()
+                .push(trade);
 
             if pnl > Decimal::ZERO {
                 winning_trades += 1;
@@ -114,6 +174,9 @@ impl BacktestMetrics {
         let avg_pnl_per_trade = net_pnl / Decimal::from(total_trades as i64);
         let avg_r_per_trade = total_r / Decimal::from(total_trades as i64);
         let sharpe_ratio = daily_equity.map(calculate_sharpe).unwrap_or(Decimal::ZERO);
+        for group in by_exit_reason.values_mut() {
+            group.finish();
+        }
 
         Self {
             total_trades,
@@ -132,6 +195,7 @@ impl BacktestMetrics {
             best_trade,
             worst_trade,
             sharpe_ratio,
+            by_exit_reason,
         }
     }
 
@@ -153,6 +217,7 @@ impl BacktestMetrics {
             best_trade: Decimal::ZERO,
             worst_trade: Decimal::ZERO,
             sharpe_ratio: Decimal::ZERO,
+            by_exit_reason: BTreeMap::new(),
         }
     }
 
@@ -264,6 +329,68 @@ mod tests {
             journal: serde_json::Value::Object(Default::default()),
             correlation_id: "corr".to_string(),
         }
+    }
+
+    fn com_saida(net_pnl: i64, result_in_r: &str, reason: ExitReason) -> Trade {
+        Trade {
+            exit_reason: reason,
+            ..trade(net_pnl, result_in_r)
+        }
+    }
+
+    /// ADR-018: sem a quebra por motivo de saída não dá para responder quanto
+    /// do resultado vinha de posição encerrada no sino em vez de stop/alvo —
+    /// a pergunta que separa o edge da estratégia do "ganhar dormindo".
+    #[test]
+    fn quebra_por_motivo_de_saida() {
+        let trades = vec![
+            com_saida(300, "3", ExitReason::Target),
+            com_saida(-100, "-1", ExitReason::Stop),
+            com_saida(200, "2", ExitReason::EndOfDay),
+            com_saida(-50, "-0.5", ExitReason::EndOfDay),
+        ];
+        let m = BacktestMetrics::from_trades(&trades, Decimal::from(100_000));
+
+        let eod = m
+            .by_exit_reason
+            .get("end_of_day")
+            .expect("linha end_of_day");
+        assert_eq!(eod.trades, 2);
+        assert_eq!(eod.wins, 1);
+        assert_eq!(eod.net_pnl, Decimal::from(150));
+        assert_eq!(eod.profit_factor, Some(Decimal::from(4))); // 200 / 50
+        assert_eq!(eod.avg_r, Decimal::new(75, 2)); // (2 − 0,5) / 2
+
+        // Sem perdas no grupo, o PF é infinito e não zero.
+        let alvo = m.by_exit_reason.get("target").expect("linha target");
+        assert_eq!(alvo.trades, 1);
+        assert_eq!(alvo.profit_factor, None);
+
+        // Os grupos somam o total.
+        assert_eq!(
+            m.by_exit_reason.values().map(|g| g.trades).sum::<usize>(),
+            m.total_trades
+        );
+        assert_eq!(
+            m.by_exit_reason
+                .values()
+                .map(|g| g.net_pnl)
+                .sum::<Decimal>(),
+            m.net_pnl
+        );
+    }
+
+    /// Trades gravados antes do ADR-018 marcavam o flatten como `manual` com
+    /// a assinatura no journal — têm de cair na linha `end_of_day`, senão o
+    /// `analyze` compara live e backtest em categorias diferentes.
+    #[test]
+    fn flatten_anterior_ao_adr_entra_como_end_of_day() {
+        let mut antigo = com_saida(120, "1.2", ExitReason::Manual);
+        antigo.journal = serde_json::json!({ "forced_exit": "session_flatten" });
+        let m = BacktestMetrics::from_trades(&[antigo], Decimal::from(100_000));
+
+        assert!(m.by_exit_reason.contains_key("end_of_day"));
+        assert!(!m.by_exit_reason.contains_key("manual"));
     }
 
     #[test]

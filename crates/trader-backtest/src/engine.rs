@@ -1,6 +1,6 @@
 //! Engine de backtest determinístico.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use rust_decimal::Decimal;
 use tracing::{debug, info, warn};
 
@@ -10,6 +10,7 @@ use trader_core::{
     execution::time_exit::{TimeExitConfig, TimeExitTracker},
     execution::{ExecutionEngine, ExecutionResult},
     risk::{RiskConfig, RiskManager, RiskState},
+    session::{et_date, et_time},
 };
 use trader_domain::{Broker, Candle, ExitReason, SignalResult, Strategy, TradingMode};
 
@@ -29,6 +30,16 @@ pub struct BacktestConfig {
     /// Saída ativa por tempo (validação pós-entrada em R), quando a
     /// estratégia a habilita. Mesma lógica do live (paridade).
     pub time_exit: Option<TimeExitConfig>,
+    /// Flatten de fim de pregão (ADR-018): `Some((hora, minuto))` em horário
+    /// de NY habilita o encerramento na última barra do pregão; `None`
+    /// (flag `--no-flatten`) reproduz os runs anteriores ao ADR.
+    ///
+    /// O par NÃO é o gatilho: a última barra é detectada por **mudança de
+    /// data ET**, único critério que funciona nos pregões de meio expediente
+    /// (4 dias da amostra terminam às 12h45 ET). O horário aqui é a barra de
+    /// fechamento esperada e serve de checagem de sanidade — se o pregão
+    /// terminar depois dela, os candles não são RTH-only e o log avisa.
+    pub session_flatten_et: Option<(u32, u32)>,
 }
 
 impl Default for BacktestConfig {
@@ -47,6 +58,10 @@ impl Default for BacktestConfig {
             slippage_pct: Decimal::from(2) / Decimal::from(10_000),
             entry_validity_candles: 1,
             time_exit: None,
+            // 15h45 ET: a última barra de 15 min do RTH. O live encerra a
+            // mercado às 15h55 (ADR-018); a diferença de 10 min e de tipo de
+            // fill está registrada no ADR como assimetria conhecida.
+            session_flatten_et: Some((15, 45)),
         }
     }
 }
@@ -151,6 +166,14 @@ impl BacktestEngine {
             // fechado aqui entra no sync logo abaixo, junto com stop/alvo.
             self.evaluate_time_exit(&symbol, candle).await;
 
+            // Flatten de fim de pregão (ADR-018): o live cancela a entrada
+            // pendente e fecha a posição a mercado no sino, porque as pernas
+            // do bracket vão com TIF Day. Sem isto o backtest carrega posição
+            // pela noite — edge que o live, por construção, nunca captura.
+            if self.is_last_bar_of_session(candles, idx) {
+                self.flatten_session(&symbol, candle).await;
+            }
+
             // Registra equity no fechamento de cada candle para série diária.
             if let Ok(summary) = self.broker.get_account_summary().await {
                 self.daily_equity.push((candle.timestamp, summary.equity));
@@ -237,6 +260,15 @@ impl BacktestEngine {
                 }
                 _ => {}
             }
+
+            // A entrada que o sinal DESTA barra acabou de colocar não pode
+            // atravessar a noite: no live ela vai com TIF Day e morre no sino
+            // (o `flatten_session` das 15h55 a cancela). O sinal não é
+            // bloqueado — ele é gerado, logado e contado; o que morre é a
+            // ordem, como no live.
+            if self.is_last_bar_of_session(candles, idx) {
+                self.cancel_pending_entry(&symbol).await;
+            }
         }
 
         // Sincroniza trades fechados no último candle.
@@ -270,6 +302,98 @@ impl BacktestEngine {
             .sync_risk_state(&mut self.risk_state, &pnls);
         self.broker.clear_closed_trades();
         trades
+    }
+
+    /// `true` quando o candle de índice `idx` é a última barra do pregão —
+    /// o instante em que o live faz o flatten (ADR-018).
+    ///
+    /// O critério é **mudança de data ET**, não o relógio. Nos pregões de
+    /// meio expediente (03/07/2025, 28/11/2025, 24/12/2025, 07/08/2026 na
+    /// amostra) o dia termina às 12h45 ET, e um critério por horário deixaria
+    /// a posição atravessar a noite exatamente nos dias em que o live a
+    /// fecha. O horário de `session_flatten_et` entra só como checagem de
+    /// sanidade: se o pregão terminar depois dele, os candles não são
+    /// RTH-only e o flatten está caindo na barra errada.
+    ///
+    /// O **fim da série NÃO conta** como fim de pregão. O motor não tem como
+    /// saber se a série acabou porque o pregão acabou ou porque alguém a
+    /// cortou: o walk-forward roda cada janela sobre um prefixo
+    /// (`&candles[..test_range.end]`, `walkforward.rs`) que termina num índice
+    /// arbitrário, quase sempre no meio de um pregão. Tratar isso como sino
+    /// criaria um `EndOfDay` fantasma na fronteira de cada janela — um trade
+    /// que não existe no run completo e que entraria nas métricas do gate.
+    ///
+    /// O preço dessa escolha é que uma posição ainda aberta na última barra
+    /// da série nunca fecha e não entra em `closed_trades`. É exatamente o
+    /// que a re-simulação dos críticos faz (só fecha posição cuja saída cai
+    /// em outra data ET), então os números continuam comparáveis.
+    fn is_last_bar_of_session(&self, candles: &[Candle], idx: usize) -> bool {
+        let Some((hour, minute)) = self.config.session_flatten_et else {
+            return false;
+        };
+
+        let current = candles[idx].timestamp;
+        let last_of_day = match candles.get(idx + 1) {
+            Some(next) => et_date(next.timestamp) != et_date(current),
+            None => false,
+        };
+
+        if last_of_day {
+            let et = et_time(current);
+            if (et.hour(), et.minute()) > (hour, minute) {
+                warn!(
+                    bar = %current,
+                    et = %et,
+                    esperado = %format!("{hour:02}:{minute:02}"),
+                    "última barra do pregão depois do fechamento esperado: \
+                     a série não parece RTH-only e o flatten pode estar na barra errada"
+                );
+            }
+        }
+
+        last_of_day
+    }
+
+    /// Encerramento de fim de pregão: cancela a entrada pendente e fecha a
+    /// posição a mercado no fechamento da barra (ADR-018).
+    ///
+    /// Espelha `flatten_session` do live (`paper.rs`), que existe porque as
+    /// pernas do bracket vão com TIF Day e expiram no sino — posição que
+    /// atravessa a noite fica sem stop.
+    async fn flatten_session(&mut self, symbol: &str, candle: &Candle) {
+        self.cancel_pending_entry(symbol).await;
+
+        // `close_position_at_market` aplica o slippage de execução a mercado
+        // contra o trader, modelando o MKT das 15h55.
+        if self
+            .broker
+            .close_position_at_market(symbol, candle.close, ExitReason::EndOfDay)
+        {
+            info!(
+                bar = %candle.timestamp,
+                close = %candle.close,
+                "flatten de fim de pregão: posição encerrada a mercado"
+            );
+            // A saída por tempo acompanha a posição; sem reset ela seguiria
+            // rastreando um trade que não existe mais.
+            if let Some(tracker) = self.time_exit.as_mut() {
+                tracker.reset();
+            }
+        }
+    }
+
+    /// Cancela a entrada stop pendente do símbolo, se houver.
+    ///
+    /// Passa pelo `Broker::cancel_order` — o mesmo caminho do live — para a
+    /// ordem terminar como `Cancelled` em vez de sumir do estado.
+    async fn cancel_pending_entry(&mut self, symbol: &str) {
+        let Some(order_id) = self.broker.pending_entry_order_id(symbol) else {
+            return;
+        };
+        match self.broker.cancel_order(&order_id).await {
+            Ok(()) => debug!(%order_id, "entrada pendente cancelada no fim do pregão"),
+            Err(e) => warn!(%order_id, error = %e, "falha ao cancelar entrada pendente"),
+        }
     }
 
     /// Avalia a saída por tempo no fechamento do candle atual.
@@ -563,6 +687,258 @@ mod tests {
         assert_eq!(
             trades_d2, 1,
             "dia 2 deve operar de novo: limites resetam na virada do dia"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // ADR-018 — flatten de fim de pregão
+    // ---------------------------------------------------------------------
+
+    /// Série RTH realista: `days` pregões de 26 barras de 15 min, 09h30 →
+    /// 15h45 ET (13h30 → 19h45 UTC no horário de verão).
+    ///
+    /// Os preços sobem devagar (contexto de alta, para o sinal passar) e a
+    /// mínima nunca alcança o stop nem a máxima o alvo: a posição que abrir
+    /// **fica aberta** até alguém fechá-la. Sem flatten ela atravessa a noite;
+    /// é exatamente o trade que inflava o backtest antes do ADR-018.
+    fn rth_hold_series(symbol: &str, days: i64) -> Vec<Candle> {
+        let mut candles = Vec::new();
+        for day in 0..days {
+            let base = Utc
+                .with_ymd_and_hms(2026, 7, 6, 13, 30, 0)
+                .single()
+                .unwrap()
+                + chrono::Duration::days(day);
+            for i in 0..26i64 {
+                let n = day * 26 + i;
+                let price = Decimal::from(500) + Decimal::new(5 * n, 2);
+                candles.push(candle(
+                    symbol,
+                    base + chrono::Duration::minutes(i * 15),
+                    price,
+                    price + Decimal::ONE, // máxima cobre o gatilho (close + 0,5)
+                    price - Decimal::new(1, 1), // mínima longe do stop (entrada − 2)
+                    price,
+                ));
+            }
+        }
+        candles
+    }
+
+    /// O trade que ficaria aberto na virada do dia é encerrado na última barra
+    /// do pregão, com motivo próprio. É o achado 1 de §2.3 do plano: sem isto
+    /// o backtest ganha dinheiro dormindo posicionado e o gate A mede outra
+    /// coisa que não o live.
+    #[tokio::test]
+    async fn posicao_aberta_no_fim_do_pregao_fecha_como_end_of_day() {
+        let candles = rth_hold_series("SPY", 2);
+        let mut engine =
+            BacktestEngine::new(BacktestConfig::default(), default_backtest_risk_config());
+
+        let run = engine.run(&AlwaysSignal, &candles).await.unwrap();
+
+        let eod: Vec<_> = run
+            .closed_trades
+            .iter()
+            .filter(|t| t.exit_reason == ExitReason::EndOfDay)
+            .collect();
+        assert!(
+            !eod.is_empty(),
+            "esperado ao menos um encerramento de fim de pregão; saídas: {:?}",
+            run.closed_trades
+                .iter()
+                .map(|t| t.exit_reason)
+                .collect::<Vec<_>>()
+        );
+
+        // Nenhum trade atravessa a noite: entrada e saída no mesmo pregão.
+        for trade in &run.closed_trades {
+            assert_eq!(
+                et_date(trade.entry_time),
+                et_date(trade.exit_time),
+                "trade de {} a {} atravessou a noite com o flatten ligado",
+                trade.entry_time,
+                trade.exit_time
+            );
+        }
+    }
+
+    /// `--no-flatten` reproduz a régua antiga — é o que permite medir o delta
+    /// por par contra os runs 413–421 (ADR-018, "Como aplicar").
+    #[tokio::test]
+    async fn sem_flatten_a_posicao_atravessa_a_noite() {
+        let candles = rth_hold_series("SPY", 2);
+        let config = BacktestConfig {
+            session_flatten_et: None,
+            ..BacktestConfig::default()
+        };
+        let mut engine = BacktestEngine::new(config, default_backtest_risk_config());
+
+        let run = engine.run(&AlwaysSignal, &candles).await.unwrap();
+
+        assert!(
+            run.closed_trades
+                .iter()
+                .all(|t| t.exit_reason != ExitReason::EndOfDay),
+            "sem flatten não pode existir saída end_of_day"
+        );
+        // A posição do dia 1 segue aberta na virada e nunca fecha: a régua
+        // antiga simplesmente não registra o trade.
+        assert!(
+            run.closed_trades.is_empty(),
+            "esperado nenhum trade fechado sem flatten, veio {}",
+            run.closed_trades.len()
+        );
+    }
+
+    /// Meio expediente: o pregão acaba às 13h00 ET (última barra 12h45). Um
+    /// critério por horário (\">= 15h45\") deixaria a posição atravessar a
+    /// noite justamente nos 4 dias em que o live a fecha — por isso o gatilho
+    /// é a mudança de data ET.
+    #[tokio::test]
+    async fn meio_expediente_tambem_faz_flatten() {
+        let mut candles = rth_hold_series("SPY", 1);
+        // Segundo dia com apenas 14 barras: 09h30 → 12h45 ET.
+        let base = Utc
+            .with_ymd_and_hms(2026, 7, 7, 13, 30, 0)
+            .single()
+            .unwrap();
+        for i in 0..14i64 {
+            let price = Decimal::from(500) + Decimal::new(5 * (26 + i), 2);
+            candles.push(candle(
+                "SPY",
+                base + chrono::Duration::minutes(i * 15),
+                price,
+                price + Decimal::ONE,
+                price - Decimal::new(1, 1),
+                price,
+            ));
+        }
+        // Um terceiro pregão normal: o flatten do dia curto é disparado pela
+        // MUDANÇA DE DATA ET, e o fim da série não conta como sino.
+        let dia3 = Utc
+            .with_ymd_and_hms(2026, 7, 8, 13, 30, 0)
+            .single()
+            .unwrap();
+        for i in 0..26i64 {
+            let price = Decimal::from(500) + Decimal::new(5 * (40 + i), 2);
+            candles.push(candle(
+                "SPY",
+                dia3 + chrono::Duration::minutes(i * 15),
+                price,
+                price + Decimal::ONE,
+                price - Decimal::new(1, 1),
+                price,
+            ));
+        }
+
+        let mut engine =
+            BacktestEngine::new(BacktestConfig::default(), default_backtest_risk_config());
+        let run = engine.run(&AlwaysSignal, &candles).await.unwrap();
+
+        let dia_curto = chrono::NaiveDate::from_ymd_opt(2026, 7, 7).unwrap();
+        assert!(
+            run.closed_trades.iter().any(|t| {
+                t.exit_reason == ExitReason::EndOfDay && et_date(t.exit_time) == dia_curto
+            }),
+            "o pregão de meio expediente também tem de flattenar; saídas: {:?}",
+            run.closed_trades
+                .iter()
+                .map(|t| (et_date(t.exit_time), t.exit_reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Regressão do artefato de walk-forward: cada janela roda sobre um
+    /// PREFIXO da série, que termina num índice arbitrário. Se o fim da série
+    /// contasse como sino, a fronteira de cada janela geraria um `EndOfDay`
+    /// fantasma — um trade a mais nas métricas do gate, ausente no run
+    /// completo.
+    #[tokio::test]
+    async fn fim_da_serie_no_meio_do_pregao_nao_e_sino() {
+        let candles = rth_hold_series("SPY", 2);
+        // Corta no meio do 2º pregão, como faz `run_walk_forward`.
+        let prefixo = &candles[..26 + 13];
+        assert_ne!(
+            et_time(prefixo.last().unwrap().timestamp),
+            et_time(candles[25].timestamp),
+            "o corte tem de cair no meio do pregão para o teste valer"
+        );
+
+        let mut engine =
+            BacktestEngine::new(BacktestConfig::default(), default_backtest_risk_config());
+        let run = engine.run(&AlwaysSignal, prefixo).await.unwrap();
+
+        // O único flatten legítimo é o do dia 1 (mudança de data ET).
+        let eod = run
+            .closed_trades
+            .iter()
+            .filter(|t| t.exit_reason == ExitReason::EndOfDay)
+            .count();
+        assert_eq!(
+            eod,
+            1,
+            "esperado só o flatten do dia 1; saídas: {:?}",
+            run.closed_trades
+                .iter()
+                .map(|t| (et_date(t.exit_time), t.exit_reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A entrada stop que não encheu até o sino é cancelada — no live ela vai
+    /// com TIF Day e morre lá. Se sobrevivesse, encheria na abertura do dia
+    /// seguinte, num preço que o live nunca veria.
+    #[tokio::test]
+    async fn entrada_pendente_e_cancelada_no_fim_do_pregao() {
+        // Série em QUEDA lenta: dá contexto operável (tendência definida, o
+        // que `is_tradeable` exige) e garante que a máxima nunca alcança o
+        // gatilho de um stop de compra colocado acima — a entrada fica
+        // pendente o dia inteiro, que é o caso que o flatten tem de tratar.
+        let mut candles = Vec::new();
+        let base = Utc
+            .with_ymd_and_hms(2026, 7, 6, 13, 30, 0)
+            .single()
+            .unwrap();
+        for day in 0..2i64 {
+            for i in 0..26i64 {
+                let n = day * 26 + i;
+                let price = Decimal::from(500) - Decimal::new(5 * n, 2);
+                candles.push(candle(
+                    "SPY",
+                    base + chrono::Duration::days(day) + chrono::Duration::minutes(i * 15),
+                    price,
+                    price + Decimal::new(2, 1), // < gatilho (close + 0,5)
+                    price - Decimal::new(3, 1),
+                    price,
+                ));
+            }
+        }
+
+        let config = BacktestConfig {
+            // Validade longa: sem isto a entrada expira por contagem de
+            // candles e o teste mediria a expiração, não o flatten.
+            entry_validity_candles: 100,
+            ..BacktestConfig::default()
+        };
+        let mut engine = BacktestEngine::new(config, default_backtest_risk_config());
+        // Prefixo até a 1ª barra do dia 2: a fronteira de data ET no meio.
+        engine.run(&AlwaysSignal, &candles[..27]).await.unwrap();
+
+        // O simulado rejeita nova entrada enquanto houver uma pendente no
+        // mesmo símbolo, e numera as ordens em sequência a partir de zero
+        // (`sim-<nanos>-<n>`). A entrada do dia 1 é a PRIMEIRA ordem do run,
+        // `-0`. Se ela tivesse sobrevivido ao sino, o sinal do dia 2 teria
+        // sido recusado e a pendente ainda seria a `-0`.
+        let pendente = engine
+            .broker
+            .pending_entry_order_id("SPY")
+            .expect("o dia 2 tem de conseguir colocar a própria entrada")
+            .to_string();
+        assert!(
+            !pendente.ends_with("-0"),
+            "a entrada pendente ainda é a primeira ordem do run ({pendente}): \
+             a entrada do dia 1 atravessou a noite em vez de morrer no sino"
         );
     }
 }

@@ -11,12 +11,22 @@
 //! implementação da regra: o `RiskManager` e as janelas próprias das
 //! estratégias chamam as mesmas funções.
 
-use chrono::{DateTime, NaiveTime, Timelike, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc};
 use chrono_tz::America::New_York;
 
 /// Hora local de Nova York do instante informado.
 pub fn et_time(ts: DateTime<Utc>) -> NaiveTime {
     ts.with_timezone(&New_York).time()
+}
+
+/// Data local de Nova York do instante informado.
+///
+/// É o **pregão** a que a barra pertence. A data UTC coincide com esta no
+/// horário RTH (09h30–16h00 ET = 13h30–20h00 UTC no verão, 14h30–21h00 no
+/// inverno), mas depender dessa coincidência quebraria em qualquer barra
+/// fora do RTH — daí a conversão explícita (ADR-018).
+pub fn et_date(ts: DateTime<Utc>) -> NaiveDate {
+    ts.with_timezone(&New_York).date_naive()
 }
 
 /// Faz parse de `"HH:MM:SS"` (horário de NY) para `NaiveTime`.
@@ -126,6 +136,28 @@ mod tests {
             start,
             end
         ));
+    }
+
+    /// O pregão de uma barra é a data de NY, não a de UTC. As duas divergem
+    /// para qualquer instante a partir das 19h ET (00h UTC do dia seguinte) —
+    /// fora do RTH hoje, mas o flatten do ADR-018 depende desta função.
+    #[test]
+    fn data_do_pregao_e_a_de_ny() {
+        // 15h45 ET no verão = 19h45 UTC, mesma data.
+        assert_eq!(
+            et_date(utc("2026-08-31T19:45:00Z")),
+            NaiveDate::from_ymd_opt(2026, 8, 31).unwrap()
+        );
+        // 15h45 ET no inverno = 20h45 UTC, mesma data.
+        assert_eq!(
+            et_date(utc("2026-11-02T20:45:00Z")),
+            NaiveDate::from_ymd_opt(2026, 11, 2).unwrap()
+        );
+        // 20h ET = 00h UTC do dia seguinte: a data UTC já virou, a de NY não.
+        assert_eq!(
+            et_date(utc("2026-09-02T00:30:00Z")),
+            NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()
+        );
     }
 
     #[test]

@@ -14,6 +14,52 @@ pub struct AppConfig {
     pub logging: LoggingSettings,
     #[serde(default)]
     pub alerts: AlertsSettings,
+    #[serde(default)]
+    pub session: SessionSettings,
+}
+
+/// Fim de pregão em horário de Nova York (ADR-018).
+///
+/// Uma única fonte para o live e para o backtest. Antes disto o live tinha
+/// duas constantes em `paper.rs` e o backtest não tinha fim de sessão nenhum
+/// — a divergência que fazia o gate A comparar o live com um backtest que
+/// ganha dinheiro dormindo posicionado.
+///
+/// Os campos são texto `"HH:MM:SS"` e passam por
+/// `trader_core::session::parse_et_time`, o mesmo parser das janelas das
+/// estratégias.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionSettings {
+    /// Início da janela de encerramento a mercado do live.
+    #[serde(default = "default_flatten_start")]
+    pub flatten_start: String,
+    /// Fim da janela (exclusivo).
+    #[serde(default = "default_flatten_end")]
+    pub flatten_end: String,
+    /// Última barra de 15 min do RTH. Checagem de sanidade do backtest — o
+    /// gatilho do flatten é a mudança de data ET, não este horário.
+    #[serde(default = "default_last_bar")]
+    pub last_bar: String,
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self {
+            flatten_start: default_flatten_start(),
+            flatten_end: default_flatten_end(),
+            last_bar: default_last_bar(),
+        }
+    }
+}
+
+fn default_flatten_start() -> String {
+    "15:55:00".to_string()
+}
+fn default_flatten_end() -> String {
+    "16:10:00".to_string()
+}
+fn default_last_bar() -> String {
+    "15:45:00".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

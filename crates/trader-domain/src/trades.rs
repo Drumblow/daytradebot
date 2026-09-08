@@ -109,6 +109,32 @@ pub enum ExitReason {
     Time,
     Manual,
     RiskManager,
+    /// Encerramento no fim do pregão (ADR-018).
+    ///
+    /// O live fecha tudo a mercado entre 15h55 e 16h10 ET porque as pernas do
+    /// bracket vão com TIF Day e expiram no sino — uma posição que atravessa a
+    /// noite fica sem stop. O backtest replica isso na última barra RTH do dia.
+    /// Antes desta variante o live gravava `Manual` com
+    /// `journal.forced_exit = "session_flatten"`, e o backtest não fechava nada.
+    EndOfDay,
+}
+
+impl ExitReason {
+    /// Texto canônico da variante — o mesmo do serde, do CHECK de
+    /// `trades.exit_reason` e das chaves de métrica.
+    ///
+    /// Existe para haver UM lugar com essa tabela: antes ela estava duplicada
+    /// no repositório (escrita e leitura) e reaparecia em cada relatório.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExitReason::Target => "target",
+            ExitReason::Stop => "stop",
+            ExitReason::Time => "time",
+            ExitReason::Manual => "manual",
+            ExitReason::RiskManager => "risk_manager",
+            ExitReason::EndOfDay => "end_of_day",
+        }
+    }
 }
 
 impl Trade {
@@ -120,6 +146,132 @@ impl Trade {
             .get("latency_artifact")
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
+    }
+
+    /// Motivo de saída para efeito de métrica, reconhecendo o flatten de fim
+    /// de pregão gravado antes do ADR-018.
+    ///
+    /// Até o ADR-018 não existia `ExitReason::EndOfDay`: o live marcava o
+    /// encerramento das 15h55 como `Manual` e deixava a assinatura no journal
+    /// (`forced_exit = "session_flatten"`). Quem agrupa por motivo de saída
+    /// tem de usar este método, senão os trades anteriores ao ADR entram como
+    /// saída discricionária e o gate B mistura categorias.
+    ///
+    /// A reclassificação das linhas no banco é decisão do dono
+    /// (`sql/maintenance/0004-reclassificar-flatten.sql`); com ou sem ela,
+    /// este método devolve a mesma resposta.
+    pub fn effective_exit_reason(&self) -> ExitReason {
+        if self.exit_reason == ExitReason::Manual
+            && self.journal.get("forced_exit").and_then(|v| v.as_str()) == Some("session_flatten")
+        {
+            return ExitReason::EndOfDay;
+        }
+        self.exit_reason
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// O texto serde de cada variante é o mesmo do CHECK de
+    /// `trades.exit_reason` no banco (migração 0004 para `end_of_day`). Se
+    /// alguém renomear uma variante sem migrar, este teste quebra antes do
+    /// INSERT falhar em produção.
+    #[test]
+    fn exit_reason_serializa_em_snake_case() {
+        let casos = [
+            (ExitReason::Target, "\"target\""),
+            (ExitReason::Stop, "\"stop\""),
+            (ExitReason::Time, "\"time\""),
+            (ExitReason::Manual, "\"manual\""),
+            (ExitReason::RiskManager, "\"risk_manager\""),
+            (ExitReason::EndOfDay, "\"end_of_day\""),
+        ];
+        for (reason, esperado) in casos {
+            let json = serde_json::to_string(&reason).expect("serializa");
+            assert_eq!(json, esperado, "serde de {reason:?}");
+            let volta: ExitReason = serde_json::from_str(&json).expect("desserializa");
+            assert_eq!(volta, reason, "round-trip de {reason:?}");
+            // `as_str` é a mesma tabela — se divergir, o banco e as métricas
+            // passam a falar línguas diferentes.
+            assert_eq!(
+                format!("\"{}\"", reason.as_str()),
+                esperado,
+                "as_str de {reason:?}"
+            );
+        }
+    }
+
+    fn trade(exit_reason: ExitReason, journal: serde_json::Value) -> Trade {
+        Trade {
+            id: None,
+            symbol: "IJS".to_string(),
+            signal_id: 1,
+            position_id: None,
+            direction: Direction::Long,
+            entry_price: Decimal::from(100),
+            exit_price: Decimal::from(101),
+            quantity: Decimal::from(10),
+            entry_time: Utc::now(),
+            exit_time: Utc::now(),
+            stop_price: Decimal::from(99),
+            target_price: None,
+            gross_pnl: Decimal::from(10),
+            commissions: Decimal::ZERO,
+            fees: Decimal::ZERO,
+            net_pnl: Decimal::from(10),
+            risk_amount: Decimal::from(10),
+            result_in_r: Decimal::ONE,
+            exit_reason,
+            strategy_id: "s".to_string(),
+            strategy_version: "1.0.0".to_string(),
+            config_hash: "h".to_string(),
+            journal,
+            correlation_id: "c".to_string(),
+        }
+    }
+
+    /// Trades gravados antes do ADR-018 marcavam o flatten como `Manual` com
+    /// a assinatura no journal. Agrupar por `exit_reason` cru os contaria como
+    /// saída discricionária.
+    #[test]
+    fn flatten_antigo_e_reconhecido_pelo_journal() {
+        let antigo = trade(
+            ExitReason::Manual,
+            serde_json::json!({ "forced_exit": "session_flatten" }),
+        );
+        assert_eq!(antigo.effective_exit_reason(), ExitReason::EndOfDay);
+
+        // Saída discricionária de verdade continua `Manual`.
+        let manual = trade(ExitReason::Manual, serde_json::json!({}));
+        assert_eq!(manual.effective_exit_reason(), ExitReason::Manual);
+
+        // Outro `forced_exit` não vira fim de pregão.
+        let outro = trade(
+            ExitReason::Manual,
+            serde_json::json!({ "forced_exit": "circuit_breaker" }),
+        );
+        assert_eq!(outro.effective_exit_reason(), ExitReason::Manual);
+
+        // Motivos próprios passam intactos.
+        for reason in [
+            ExitReason::Target,
+            ExitReason::Stop,
+            ExitReason::Time,
+            ExitReason::RiskManager,
+            ExitReason::EndOfDay,
+        ] {
+            assert_eq!(
+                trade(
+                    reason,
+                    serde_json::json!({ "forced_exit": "session_flatten" })
+                )
+                .effective_exit_reason(),
+                reason,
+                "{reason:?} não deve ser reinterpretado"
+            );
+        }
     }
 }
 

@@ -66,6 +66,36 @@ impl std::fmt::Display for BacktestReport {
         writeln!(f, "   Avg R/trade:     {}", self.metrics.avg_r_per_trade)?;
         writeln!(f, "   Best trade:      {}", self.metrics.best_trade)?;
         writeln!(f, "   Worst trade:     {}", self.metrics.worst_trade)?;
+
+        // Quebra por motivo de saída (ADR-018). A linha `end_of_day` responde
+        // à pergunta que a régua antiga escondia: quanto do resultado vinha de
+        // posição encerrada no sino em vez de stop/alvo.
+        if !self.metrics.by_exit_reason.is_empty() {
+            writeln!(f, "\n   Saídas por motivo:")?;
+            writeln!(
+                f,
+                "   {:<14} {:>7} {:>7} {:>8} {:>12}",
+                "motivo", "trades", "win%", "PF", "net P&L"
+            )?;
+            for (reason, g) in &self.metrics.by_exit_reason {
+                let win_pct = if g.trades > 0 {
+                    Decimal::from(g.wins as i64) / Decimal::from(g.trades as i64)
+                        * Decimal::from(100)
+                } else {
+                    Decimal::ZERO
+                };
+                let pf = match g.profit_factor {
+                    Some(pf) => format!("{pf:.2}"),
+                    None if g.trades > 0 => "∞".to_string(),
+                    None => "N/A".to_string(),
+                };
+                writeln!(
+                    f,
+                    "   {:<14} {:>7} {:>6.1}% {:>8} {:>12.2}",
+                    reason, g.trades, win_pct, pf, g.net_pnl
+                )?;
+            }
+        }
         Ok(())
     }
 }

@@ -778,6 +778,18 @@ async fn run_live(
 ) -> Result<()> {
     let ibkr_config = config.ibkr_config()?;
 
+    // Janela de flatten vinda do `[session]` da config — a mesma seção que o
+    // backtest lê para o fim de pregão (ADR-018).
+    let flatten_window = FlattenWindow::from_settings(&config.app_config.session);
+    if flatten_window.start_minutes >= flatten_window.end_minutes {
+        anyhow::bail!(
+            "[session] flatten_start ({}) deve ser anterior a flatten_end ({}) — \
+             com a janela vazia nenhuma posição seria encerrada no sino",
+            config.app_config.session.flatten_start,
+            config.app_config.session.flatten_end
+        );
+    }
+
     // Guardas de segurança contra operar conta real "por engano": além do
     // check de `app.mode`, exigimos ibkr.paper=true e uma porta de paper.
     if !ibkr_config.paper {
@@ -922,7 +934,7 @@ async fn run_live(
         // fechamento sem proteção. Roda POR TICK, não por candle novo: depois
         // das 16h ET não chega mais candle fechado para disparar nada.
         let now_utc = chrono::Utc::now();
-        if in_flatten_window(now_utc) {
+        if in_flatten_window(now_utc, flatten_window) {
             let ny_day = now_utc
                 .with_timezone(&chrono_tz::America::New_York)
                 .date_naive();
@@ -1781,10 +1793,12 @@ async fn finalize_live_trade(
     let exit_reason = if state.time_exit_triggered {
         trader_domain::ExitReason::Time
     } else if was_flatten {
-        // O domínio não tem variante EndOfDay; o flatten é uma saída ativa,
-        // como qualquer fechamento a mercado fora de stop/alvo. O journal
-        // guarda a origem exata.
-        trader_domain::ExitReason::Manual
+        // ADR-018: o encerramento de fim de pregão tem variante própria. Até
+        // aqui ia como `Manual` e só o journal distinguia — o que fazia o
+        // `analyze` do gate B contar flatten como saída discricionária. O
+        // journal continua marcando `forced_exit` (é o que permite reconhecer
+        // os trades gravados antes deste ADR).
+        trader_domain::ExitReason::EndOfDay
     } else {
         classify_exit_reason(
             closed.direction,
@@ -2181,20 +2195,42 @@ async fn cancel_protection_legs<B: Broker>(
     }
 }
 
-/// Janela (ET) do encerramento forçado da sessão.
+/// Janela (ET) do encerramento forçado da sessão, em minutos desde a
+/// meia-noite de Nova York.
 ///
 /// O pregão fecha às 16h00 ET e os timers do host param os containers às
 /// 16h10 ET; 15h55 dá cinco minutos de folga para o fechamento a mercado
 /// resolver, com retentativas nos ticks seguintes dentro da janela.
-const FLATTEN_START_MINUTES: u32 = 15 * 60 + 55;
-const FLATTEN_END_MINUTES: u32 = 16 * 60 + 10;
+///
+/// Os valores vêm do `[session]` da config (ADR-018) — a MESMA seção que o
+/// backtest lê. Antes eram duas constantes aqui e nada no motor: a paridade
+/// dependia de alguém lembrar dos dois lados.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlattenWindow {
+    start_minutes: u32,
+    end_minutes: u32,
+}
+
+impl FlattenWindow {
+    fn from_settings(session: &trader_infra::config::SessionSettings) -> Self {
+        let minutes = |raw: &str| {
+            let t = trader_core::session::parse_et_time(raw);
+            use chrono::Timelike;
+            t.hour() * 60 + t.minute()
+        };
+        Self {
+            start_minutes: minutes(&session.flatten_start),
+            end_minutes: minutes(&session.flatten_end),
+        }
+    }
+}
 
 /// `true` quando o relógio de Nova York está na janela de flatten.
-fn in_flatten_window(now: chrono::DateTime<chrono::Utc>) -> bool {
+fn in_flatten_window(now: chrono::DateTime<chrono::Utc>, window: FlattenWindow) -> bool {
     use chrono::Timelike;
     let ny = now.with_timezone(&chrono_tz::America::New_York);
     let minutes = ny.hour() * 60 + ny.minute();
-    (FLATTEN_START_MINUTES..FLATTEN_END_MINUTES).contains(&minutes)
+    (window.start_minutes..window.end_minutes).contains(&minutes)
 }
 
 /// Encerra a sessão: cancela entrada pendente e fecha a posição aberta a
@@ -2533,23 +2569,52 @@ mod tests {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
     }
 
+    /// A janela do live sai do `[session]` da config (ADR-018), com os
+    /// mesmos defaults das constantes que ela substituiu.
+    fn janela_padrao() -> super::FlattenWindow {
+        super::FlattenWindow::from_settings(&trader_infra::config::SessionSettings::default())
+    }
+
     /// A janela é definida em horário de NY, não em UTC fixo: no horário de
     /// verão (EDT, UTC-4) 15h55 ET é 19h55 UTC.
     #[test]
     fn janela_de_flatten_no_horario_de_verao() {
-        assert!(!in_flatten_window(utc("2026-08-31T19:54:00Z")));
-        assert!(in_flatten_window(utc("2026-08-31T19:55:00Z")));
-        assert!(in_flatten_window(utc("2026-08-31T20:09:00Z")));
-        assert!(!in_flatten_window(utc("2026-08-31T20:10:00Z")));
+        let w = janela_padrao();
+        assert!(!in_flatten_window(utc("2026-08-31T19:54:00Z"), w));
+        assert!(in_flatten_window(utc("2026-08-31T19:55:00Z"), w));
+        assert!(in_flatten_window(utc("2026-08-31T20:09:00Z"), w));
+        assert!(!in_flatten_window(utc("2026-08-31T20:10:00Z"), w));
     }
 
     /// Depois da virada do DST (EST, UTC-5) a mesma janela é 20h55–21h10 UTC.
     /// É exatamente o deslocamento que o A2 aponta nas janelas de negociação.
     #[test]
     fn janela_de_flatten_apos_a_virada_do_dst() {
-        assert!(!in_flatten_window(utc("2026-11-02T19:55:00Z")));
-        assert!(in_flatten_window(utc("2026-11-02T20:55:00Z")));
-        assert!(in_flatten_window(utc("2026-11-02T21:09:00Z")));
-        assert!(!in_flatten_window(utc("2026-11-02T21:10:00Z")));
+        let w = janela_padrao();
+        assert!(!in_flatten_window(utc("2026-11-02T19:55:00Z"), w));
+        assert!(in_flatten_window(utc("2026-11-02T20:55:00Z"), w));
+        assert!(in_flatten_window(utc("2026-11-02T21:09:00Z"), w));
+        assert!(!in_flatten_window(utc("2026-11-02T21:10:00Z"), w));
+    }
+
+    /// Os defaults do `[session]` reproduzem exatamente as constantes
+    /// anteriores ao ADR-018 — a config não muda o comportamento do live.
+    #[test]
+    fn defaults_da_secao_session_reproduzem_a_janela_antiga() {
+        let w = janela_padrao();
+        assert_eq!(w.start_minutes, 15 * 60 + 55);
+        assert_eq!(w.end_minutes, 16 * 60 + 10);
+    }
+
+    /// `last_bar` do `[session]` é o que o motor de backtest usa como
+    /// checagem de sanidade do fim de pregão; `--no-flatten` a desliga.
+    #[test]
+    fn session_flatten_et_vem_da_config_e_no_flatten_desliga() {
+        let session = trader_infra::config::SessionSettings::default();
+        assert_eq!(
+            crate::commands::session_flatten_et(&session, false),
+            Some((15, 45))
+        );
+        assert_eq!(crate::commands::session_flatten_et(&session, true), None);
     }
 }

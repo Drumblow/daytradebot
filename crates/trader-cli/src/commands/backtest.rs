@@ -34,6 +34,13 @@ pub struct Args {
     /// ~0,13% do preço), então o resultado é muito sensível a ele. Varie e
     /// veja onde o PF cruza 1 antes de acreditar em qualquer backtest.
     pub slippage_bps: Option<u32>,
+    /// Desliga o flatten de fim de pregão (ADR-018).
+    ///
+    /// Só para reproduzir runs anteriores ao ADR e medir o delta por par. Um
+    /// backtest com `--no-flatten` carrega posição pela noite — coisa que o
+    /// live, cujas pernas de bracket vão com TIF Day, nunca faz. Não use o
+    /// número dele para julgar estratégia.
+    pub no_flatten: bool,
 }
 
 /// Executa um backtest da estratégia solicitada.
@@ -119,7 +126,15 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         },
         entry_validity_candles: strategy.entry_validity_candles() as u32,
         time_exit: strategy.time_exit(),
+        session_flatten_et: super::session_flatten_et(&config.app_config.session, args.no_flatten),
     };
+
+    if args.no_flatten {
+        println!(
+            "   ⚠️  Flatten:   DESLIGADO (--no-flatten) — posições atravessam a noite, \
+             o que o live não faz. Número só serve de comparação."
+        );
+    }
 
     // Paridade com o live: mesmos limites de risco e horário da estratégia.
     let risk_config =
