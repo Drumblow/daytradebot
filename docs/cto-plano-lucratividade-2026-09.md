@@ -554,6 +554,55 @@ Em um dia, um screener em SQL sobre os 136k candles reprovou 7 candidatos que as
 
 ### 5.8 Feed de produção e latência
 
+> ### 🔴 08/09/2026 — o custo do feed degradado está medido, e ele é o problema nº 1 do projeto
+>
+> Comparando, no banco de **produção**, o preço que a estratégia planejou
+> (`signals.entry_price`) com o preço em que a ordem encheu
+> (`trades.entry_price`), nos 7 trades reais:
+>
+> | trade | planejado | executado | desvio | **overshoot em R** | R final |
+> |---|---:|---:|---:|---:|---:|
+> | SPY (id 7) | 766,42 | 767,20 | +10,2 bp | **5,20** | −0,003 |
+> | SPY (id 8) | 770,46 | 771,34 | +11,4 bp | **2,84** | −0,002 |
+> | IWM (id 9) | 302,09 | 302,19 | +3,3 bp | 0,19 | −0,208 |
+> | IWV (id 10) | 440,41 | 440,57 | +3,6 bp | **1,06** | +0,028 |
+> | IWO (id 11) | 393,55 | 394,22 | +17,1 bp | **3,95** | −0,033 |
+> | AVUV (id 12) | 125,78 | 125,40 | −30,2 bp | **1,09** | −0,609 |
+> | SLYV (id 13) | 108,70 | 108,79 | +8,3 bp | **2,25** | −0,811 |
+>
+> **Seis dos sete trades entraram com overshoot maior que a distância inteira
+> do stop planejado.** O trade nasce perdido: antes de o mercado se mexer, o
+> risco planejado já foi consumido pela própria entrada.
+>
+> Em pontos-base o desvio parece pequeno (3 a 17 bp). O que o torna fatal é
+> que **os stops do live são minúsculos**: 0,04 no SLYV a 108,70 é **3,7 bp**,
+> contra os 12–30 bp que o backtest mede. É a cadeia causal do achado 7
+> fechando: barra com 15–25% do range real → stop calculado sobre uma barra
+> minúscula → stop 3–8× menor do que deveria → qualquer fill normal atravessa
+> o risco inteiro.
+>
+> **Sintoma visível:** dois trades saem marcados como "alvo" **com prejuízo**
+> (ids 11 e 13), porque a entrada encheu acima do próprio alvo e o trade fecha
+> no alvo no instante seguinte, no vermelho. Nos 214 trades do backtest isso
+> acontece **zero** vezes.
+>
+> **Por que a guarda do ADR-015 não pegou:** ela compara o preço de
+> REFERÊNCIA no envio — que vem do mesmo feed degradado — contra o gatilho,
+> com tolerância de 25% da distância do stop. Ela nunca olha o **fill**. Aqui
+> os overshoots vão de 106% a 520%.
+>
+> **Três correções, em ordem de custo:**
+> 1. **Guarda no fill** — ao encher a entrada, recalcular risco/retorno com o
+>    preço real; se o trade já nasceu fora do plano, encerrar a mercado na
+>    hora. Muda o caminho ao vivo: precisa do smoke test do §5.9.
+> 2. **Piso de stop absoluto (§6.9)** — um sinal com stop de 3,7 bp não
+>    deveria existir. É a guarda mais barata e não depende do servidor.
+> 3. **O feed (esta seção)** — a causa raiz.
+>
+> **Isto reordena o projeto:** não adianta melhorar seleção de trade enquanto
+> a entrada entrega preço fora do plano. As consultas que mediram isto estão
+> no `host-check.yml`, só leitura.
+
 Pré-requisito de qualquer comparação live × backtest e de qualquer instância nova: enquanto o Gateway entregar barras com 3–10% do volume e 15–25% do range, o gate B não mede o que o backtest mede (§2.3, achado 7).
 
 > **Atualização de 08/09** (medição em `sql/stats/14-liquidez-por-barra-adr020.sql`): o dano é **muito mais disperso** do que "3–10%" — IWM guarda 3,2% do volume pré-Gateway, AVUV 7,1%, IWN 20%, IWV 32%, IJS 41%, VBR 51% e SLYV **89%**. E os pregões de agosto foram **reingeridos em 03/09 e voltaram com o mesmo volume baixo**: não é barra parcial do poll do live, é o que a fonte devolve. Consequência para o passo (1) desta lista: trocar a ingestão para o PC/TWS não basta para as barras futuras — **o histórico de 07/08 em diante precisa ser reingerido de outra fonte**, senão o banco fica com dois regimes de volume e qualquer estatística que use volume (o cap de liquidez do ADR-020 é a primeira) mistura os dois.
