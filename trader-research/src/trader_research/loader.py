@@ -79,6 +79,8 @@ class Run:
     config_hash: str
     slippage_bps: str
     session_flatten: str | None
+    commission_model: str | None
+    limit_fill_haircut_bps: str | None
     label: str
     experimental: bool
     overrides: list[tuple[str, str]]
@@ -99,9 +101,20 @@ class Run:
         return f"{self.strategy_id}·{self.symbol}"
 
     @property
-    def regua(self) -> tuple[str, str | None]:
-        """O que precisa ser igual para dois runs serem somaveis."""
-        return (self.slippage_bps, self.session_flatten)
+    def regua(self) -> tuple:
+        """O que precisa ser igual para dois runs serem somaveis.
+
+        O modelo de comissao entrou em 08/09 com o §5.6: a IBKR cobra por
+        ACAO, e nos tamanhos operados isso e US$ 12 por trade contra os US$
+        0,70 do modelo fixo antigo. Somar um run de cada e a mesma classe de
+        erro que somar com e sem flatten.
+        """
+        return (
+            self.slippage_bps,
+            self.session_flatten,
+            self.commission_model,
+            self.limit_fill_haircut_bps,
+        )
 
 
 def load_run(caminho: str | Path) -> Run:
@@ -123,6 +136,12 @@ def load_run(caminho: str | Path) -> Run:
         config_hash=bruto["config_hash"],
         slippage_bps=str(bruto["slippage_bps"]),
         session_flatten=bruto.get("session_flatten"),
+        commission_model=bruto.get("commission_model"),
+        limit_fill_haircut_bps=(
+            str(bruto["limit_fill_haircut_bps"])
+            if bruto.get("limit_fill_haircut_bps") is not None
+            else None
+        ),
         label=bruto.get("label") or "",
         experimental=bool(bruto.get("experimental", False)),
         overrides=[tuple(o) for o in bruto.get("overrides", [])],
@@ -228,7 +247,9 @@ def exige_mesma_regua(runs: Sequence[Run]) -> tuple[str, str | None]:
     reguas = {r.regua for r in runs}
     if len(reguas) > 1:
         detalhe = "; ".join(
-            f"{r.caminho.name}: slippage={r.slippage_bps} bp, flatten={r.session_flatten}"
+            f"{r.caminho.name}: slippage={r.slippage_bps} bp, "
+            f"flatten={r.session_flatten}, comissao={r.commission_model}, "
+            f"desconto no alvo={r.limit_fill_haircut_bps} bp"
             for r in runs
         )
         raise ReguaDivergente(

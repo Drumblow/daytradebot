@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use trader_adapters::ibkr::{IbkrBrokerAdapter, IbkrMarketDataProvider};
 use trader_adapters::simulated::{SimulatedBroker, SimulatedBrokerConfig};
@@ -25,8 +25,9 @@ use trader_domain::{
 use trader_infra::{
     db::create_pool,
     repositories::{
-        SqlxCandleRepository, SqlxFillRepository, SqlxMarketContextRepository, SqlxOrderRepository,
-        SqlxSignalRepository, SqlxSystemEventRepository, SqlxTradeRepository,
+        SqlxAssetRepository, SqlxCandleRepository, SqlxFillRepository,
+        SqlxMarketContextRepository, SqlxOrderRepository, SqlxSignalRepository,
+        SqlxSystemEventRepository, SqlxTradeRepository,
     },
 };
 
@@ -130,6 +131,10 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         }
     };
 
+    if let Some(repos) = repos.as_ref() {
+        avisa_divergencia_de_tick_size(repos, &args.symbol, strategy.tick_size()).await;
+    }
+
     let alerter = crate::alerts::Alerter::new(&config.app_config.alerts.webhook_url);
 
     // Limites de risco vêm de config/default.toml ([risk]); os filtros de
@@ -142,11 +147,14 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     let broker = SimulatedBroker::new(SimulatedBrokerConfig {
         account_id: Some("DU_SIM".to_string()),
         initial_cash: Decimal::from(100_000),
-        commission_per_trade: Decimal::from(35) / Decimal::from(100),
-        slippage_pct: Decimal::from(1) / Decimal::from(1000),
+        // O comentário acima diz "paridade com o backtest" desde sempre, e o
+        // slippage aqui era 10 bp contra 2 bp do backtest — cinco vezes mais
+        // caro, no caminho que existe justamente para comparar com ele.
+        // Agora os dois vêm do mesmo `Default` (§5.6).
         entry_validity_candles: strategy.entry_validity_candles() as u32,
         // Paridade com live/backtest: mesma tolerância de overshoot (ADR-015).
         entry_overshoot_tolerance: risk_config.entry_overshoot_tolerance,
+        ..SimulatedBrokerConfig::default()
     });
 
     let risk_manager = RiskManager::new(risk_config);
@@ -2460,6 +2468,7 @@ struct Repositories {
     trade_repo: SqlxTradeRepository,
     context_repo: SqlxMarketContextRepository,
     event_repo: SqlxSystemEventRepository,
+    asset_repo: SqlxAssetRepository,
 }
 
 async fn setup_repositories(config: &CliConfig) -> Result<Repositories> {
@@ -2486,7 +2495,37 @@ async fn setup_repositories(config: &CliConfig) -> Result<Repositories> {
         trade_repo: SqlxTradeRepository::new(pool.clone()),
         context_repo: SqlxMarketContextRepository::new(pool.clone()),
         event_repo: SqlxSystemEventRepository::new(pool.clone()),
+        asset_repo: SqlxAssetRepository::new(pool.clone()),
     })
+}
+
+/// Avisa se o `tick_size` da tabela `assets` divergir do TOML da estratégia.
+///
+/// A regra v1 é que o tique vem do TOML — e continua sendo. O que faltava era
+/// alguém NOTAR quando os dois discordam: até 08/09/2026 a coluna guardava
+/// 0,0100000000000000002081668171… em todos os 14 ativos, gravada a partir de
+/// um f64 por `ensure_asset`, e ninguém percebeu porque ninguém a lia. Um
+/// aviso na largada é barato e transforma "ninguém lê" em "alguém olha uma
+/// vez por dia" (§5.6 do plano).
+async fn avisa_divergencia_de_tick_size(
+    repos: &Repositories,
+    symbol: &str,
+    tick_da_estrategia: Decimal,
+) {
+    match repos.asset_repo.get_by_symbol(symbol).await {
+        Ok(Some(asset)) => {
+            if asset.tick_size != tick_da_estrategia {
+                warn!(
+                    %symbol,
+                    tick_no_banco = %asset.tick_size,
+                    tick_na_estrategia = %tick_da_estrategia,
+                    "tick_size divergente entre `assets` e o TOML da estratégia.                      O motor usa o do TOML (regra v1); o banco está errado ou                      desatualizado — ver sql/maintenance/0005-corrigir-tick-size.sql"
+                );
+            }
+        }
+        Ok(None) => debug!(%symbol, "ativo ainda não existe em `assets`"),
+        Err(e) => warn!(error = %e, %symbol, "falha ao ler tick_size do ativo"),
+    }
 }
 
 #[cfg(test)]

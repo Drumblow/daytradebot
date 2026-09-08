@@ -97,19 +97,44 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     print_signal_breakdown(&signals);
 
     // --- Backtest mais recente ---
+    // A régua de custo do LIVE de hoje — comissão, slippage e desconto no
+    // alvo. O baseline do gate B tem de ter sido medido com ela: um backtest
+    // com o custo antigo (US$ 0,35 fixos por perna) cobra ~1/10 da comissão
+    // real nos tamanhos operados, e um de sensibilidade a 4 bp cobra quase o
+    // dobro do slippage. Nos dois casos o paper apareceria melhor ou pior por
+    // um motivo que não é a estratégia (§5.6).
+    let (commission_model, slippage_bps, haircut_bps) = super::regua_de_producao();
+
     let latest = runs_repo
-        .latest_for(&args.strategy, &args.symbol, &config_hash)
+        .latest_for(
+            &args.strategy,
+            &args.symbol,
+            &config_hash,
+            commission_model,
+            &slippage_bps,
+            &haircut_bps,
+        )
         .await
         .map_err(|e| anyhow::anyhow!("falha ao consultar backtest_runs: {e}"))?;
 
     let Some(run) = latest else {
         // Avisa em vez de pegar outro run: comparar o live contra o backtest
-        // de outro par ou de outra config é pior do que não comparar.
+        // de outro par, de outra config ou de outra régua de custo é pior do
+        // que não comparar.
         println!(
-            "\n⚠️  Nenhum run de backtest para ({}, {}, config_hash {}). \
+            "\n⚠️  Nenhum run de backtest para ({}, {}, config_hash {}) com a régua \
+             de produção (comissão {}, slippage {} bp, desconto no alvo {} bp). \
              Rode 'trader-cli walkforward --symbol {} --strategy {}' com a config \
-             de produção antes de ler o gate B.",
-            args.strategy, args.symbol, config_hash, args.symbol, args.strategy
+             de produção antes de ler o gate B. Run anterior a 08/09/2026 não \
+             declara o modelo de custo e por isso não serve de baseline.",
+            args.strategy,
+            args.symbol,
+            config_hash,
+            commission_model,
+            slippage_bps,
+            haircut_bps,
+            args.symbol,
+            args.strategy
         );
         return Ok(());
     };

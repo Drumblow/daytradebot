@@ -15,14 +15,14 @@
 > | 3 — harness de validação (ADR-019) | ✅ **implementado em parte** — o núcleo entrou; o que ficou de fora está na seção "Pendente" do `ADR-019` (lista e contagem canônicas), e inclui o Sharpe diário |
 > | 4 — relatório estatístico (§5.3) | ✅ **implementado** em 08/09 (`trader-research/`). O critério "IC95 em blocos ≥ 1,0" passou a ser avaliável — números em `docs/reports/estatistica-gate-a-2026-09-08.md` |
 > | 6 — ADR-020 (sizing/liquidez) | ⏳ **não implementado**, continua proposto |
-> | 7 — higiene e custo real (§5.6) | ⏳ pendente |
+> | 7 — higiene e custo real (§5.6) | ✅ **implementado** em 08/09 — comissão por ação da IBKR, desconto no fill do alvo, `tick_size` sem f64, runs rotulados. Falta reingerir os 6 símbolos parados (depende do servidor) e o casamento do `CommissionReport` em poll posterior (parcial: mede e loga, não fecha). Números em `docs/reports/custo-real-2026-09-08.md` |
 > | 2, 8, 9, 9b — feed, screener, A9, sair de IWV | ⏳ pendentes (2, 9 e 9b dependem do servidor ou de decisão do dono) |
 >
 > **Nada foi enviado com push** — ver o aviso de deploy em `docs/HANDOFF.md`.
 > O estado exato de `main` não é fixado aqui de propósito: um SHA envelheceria
 > a cada commit. Use `git log --oneline`.
 >
-> **Cinco coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
+> **Sete coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
 >
 > 1. **§5.4 diz que o efeito do hotfix ET seria "imensurável". Não é.** Medido:
 >    a fade cai de PF 1,74 / avg R 0,218 / +4.560 para **PF 1,57 / 0,182 /
@@ -51,8 +51,27 @@
 >    circular degenera. Foi erro meu na primeira implementação, pego na revisão
 >    adversarial.
 >
+> 6. **O simulador cobrava 1/10 da comissão real — e o segundo custo é maior
+>    que a comissão.** US$ 0,35 fixos por perna contra os US$ 0,005 **por
+>    ação** da IBKR: nos 214 trades OOS (234 a 1.311 ações, mediana 619), a
+>    comissão vai de US$ 149,80 para US$ 1.489,36, **9,9×**. Mas o desconto no
+>    fill do alvo — que o alvo não pagava — soma **US$ 1.760**, mais que a
+>    comissão inteira: ele explica **56%** da queda de P&L, e a comissão, 43%.
+>    Com o custo certo, **nenhum recorte passa o gate** — nem por par, nem por
+>    estratégia, nem o portfólio dos oito, que reprova no avg R (0,107 contra
+>    0,15). A `fade` em AVUV e em IWV passam a reprovar o profit factor; a
+>    `balance-area` agregada fica com **PF em R 0,94 e avg R negativo**. Duas
+>    das três estratégias ficam **negativas em 2026**. O veredito de manchete
+>    **não depende** do desconto (com ele zerado o avg R do portfólio é 0,147,
+>    ainda abaixo de 0,15); o do PF da fade em AVUV depende inteiramente.
+> 7. **O `paper` simulado media com régua 5× mais cara que o backtest** —
+>    10 bp de slippage contra 2 bp —, embaixo de um comentário que diz
+>    "compartilhado com o backtest para garantir paridade de validação".
+>    Corrigido: os dois vêm do mesmo `Default`.
+>
 > Veredito do gate A em `docs/reports/gate-a-com-flatten-2026-09-07.md`;
-> estatística em `docs/reports/estatistica-gate-a-2026-09-08.md`.
+> estatística em `docs/reports/estatistica-gate-a-2026-09-08.md`; custo real em
+> `docs/reports/custo-real-2026-09-08.md`.
 
 **Regra de leitura:** nada aqui altera as **regras** das estratégias v1 em produção; as duas exceções são o hotfix do veto de meio-dia (§5.4, correção de bug com nota, precedente A2) e o piso de stop transversal (§6.9), se o dono aprová-lo. Toda mudança de regra é v2 validada do zero (framework §4); toda mudança de motor tem ADR proposto. Números de backtest são a 2 bp/lado e, salvo indicação, **sem** o flatten de fim de sessão que o live faz — ver §2.3, que é o achado central.
 
@@ -411,6 +430,48 @@ gate A de 04/09 mostrava. Detalhe em `docs/strategies/range-extreme-fade-v1.md`
 
 ### 5.6 Higiene de dados e custo
 
+> ✅ **IMPLEMENTADO em 08/09/2026**, menos dois itens (abaixo). Relatório em
+> `docs/reports/custo-real-2026-09-08.md`. Quatro coisas que o texto abaixo
+> não sabia:
+>
+> 1. **O efeito é maior do que "custo real" sugere, e vem em duas partes.**
+>    Comissão: de US$ 149,80 para US$ 1.489,36 nos 214 trades (9,9×). Desconto
+>    no fill do alvo: US$ 1.760 — **maior que a comissão inteira**. Juntos,
+>    **nenhum recorte passa o gate**: nem por par, nem por estratégia, nem o
+>    portfólio dos oito, que reprova no avg R (0,107 contra 0,15) depois de
+>    passar em tudo com a régua anterior. A `fade` em AVUV e em IWV passam a
+>    reprovar o PF; a `balance-area` agregada fica com **PF em R 0,94 e avg R
+>    −0,035**; duas das três estratégias ficam **negativas em 2026**.
+> 2. **"Spread cobrado no fill do alvo" descreve mal o mecanismo.** Uma ordem
+>    limite parada no book é o lado **passivo** e não paga spread. O que o
+>    desconto corrige é que **tocar não é encher**: o high do candle no seu
+>    preço quase sempre significa que poucos lotes negociaram ali. O campo se
+>    chama `limit_fill_haircut_pct` por isso, e é um valor único de 2 bp — a
+>    calibração por ativo continua não feita.
+> 3. **A causa dos runs sem label era o próprio comando `backtest`**, que
+>    gravava `label = NULL` sempre (o `--label` só existia no `walkforward`).
+>    Rotular os runs de 06–07/09 tratava o sintoma. A causa foi corrigida, e os
+>    586 runs sem rótulo do banco dev foram marcados **pela data**, não por um
+>    propósito que eu não poderia verificar run a run (`sql/maintenance/0006`).
+> 4. **Achado fora do escopo:** o `paper` simulado usava 10 bp de slippage
+>    contra os 2 bp do backtest, embaixo do comentário "compartilhado com o
+>    backtest para garantir paridade de validação". Corrigido.
+> 5. **A mudança criou, e fechou, um defeito próprio.** Com os dois custos no
+>    banco, o `latest_for` do `analyze` passaria a escolher como baseline do
+>    gate B o run mais recente — que era um `--legacy-cost` de paridade. O gate
+>    compararia um paper que paga comissão real contra um backtest que paga
+>    um décimo dela. `latest_for` passou a exigir os **três** eixos da régua —
+>    comissão, slippage e desconto no alvo —, e run que não declara um deles
+>    não casa com nada. O eixo do slippage já estava aberto desde antes: o
+>    `--slippage-bps` nunca marcou o run como experimental, e o ADR-018 manda
+>    rodar `--slippage-bps 4` em IJS e SLYV.
+>
+> **Fica de fora:** reingerir os 6 símbolos parados (depende do servidor) e o
+> casamento do `CommissionReport` que chega em poll posterior — este último
+> **parcialmente**: o adapter agora conta e loga as execuções que ficaram sem
+> relatório, mas fechar o buraco exige adiar a emissão do fill, o que muda o
+> caminho ao vivo e precisa do smoke test de 2 pregões que o §5.9 exige.
+
 - Reingerir IJR, MDY, QQQ, SCHA, SPY, VB (parados em 06/08/2026) no servidor via workflow `ops` (1 símbolo por vez, pacing).
 - ⛔ **NÃO deduplicar `backtest_runs`** — instrução revogada em 07/09/2026 pela
   própria implementação do ADR-019 (migração `0005`). Medido: no maior grupo
@@ -419,10 +480,10 @@ gate A de 04/09 mostrava. Detalhe em `docs/strategies/range-extreme-fade-v1.md`
   fica como registro: deduplicar (413/414; pela chave do índice proposto na
   ADR-019 há **109 grupos e 279 linhas** duplicadas em 687 runs; 566 sem label).
   O que **vale** fazer é rotular os runs de 06–07/09 sem label (529–572 = backtests da pesquisa e pré-teste de futuros; 660–676 = 9 runs já rotulados `research-exit-policy-2026-09-07` (estudo de saídas) + 8 sem label do replay do roadmap: 660, 664, 666, 668, 671, 673, 674, 676).
-- `ensure_asset` grava `tick_size` via `Decimal::from_f64_retain(0.01)` → `0.0100000000000000002…` em todos os 14 ativos: corrigir para `Decimal::new(1, 2)` e limpar o banco (viola "Decimal nunca f64").
-- Simulador: comissão por ação (US$ 0,005, mín. US$ 1,00, IBKR Canada) em vez de US$ 0,35 fixo; `spread_bps` por ativo cobrado nos dois lados **inclusive no fill do alvo limit** (hoje o alvo não paga nada — `simulated/broker.rs:751-775`), separado do slippage de mercado. Teste de paridade: com STK/USD/2 bp os runs 413–421 reproduzem.
-- `ibkr/broker.rs:366-399`: casar o `CommissionReport` que chega em poll posterior ao fill (hoje só no mesmo lote).
-- Deixar `tick_size` no TOML da estratégia (regra v1) mas registrar divergência com `assets.tick_size` em log.
+- ✅ `ensure_asset` grava `tick_size` via `Decimal::from_f64_retain(0.01)` → `0.0100000000000000002…` em todos os 14 ativos: corrigir para `Decimal::new(1, 2)` e limpar o banco (viola "Decimal nunca f64"). **Feito**; os 14 ativos do banco dev limpos por `sql/maintenance/0005-corrigir-tick-size.sql`. O banco de produção é decisão do dono, como o 0004.
+- ✅ Simulador: comissão por ação (US$ 0,005, mín. US$ 1,00, IBKR Canada) em vez de US$ 0,35 fixo; ~~`spread_bps` por ativo~~ **desconto único de 2 bp** cobrado no fill do alvo limit (o alvo não pagava nada — `simulated/broker.rs`), separado do slippage de mercado. **Feito, com o teste de paridade**: `--legacy-cost` reproduz os números de 08/09 dígito a dígito. O teto de 1% e o piso de US$ 1,00 da tabela IBKR estão implementados e **nunca mordem** nestes ativos.
+- ⚠️ `ibkr/broker.rs`: casar o `CommissionReport` que chega em poll posterior ao fill (hoje só no mesmo lote). **Parcial**: o adapter conta e loga as execuções sem relatório, com os `exec_id`, para o buraco ser mensurável em produção. Fechá-lo exige adiar a emissão do fill — mudança no caminho ao vivo, com o mesmo smoke test do §5.9.
+- ✅ Deixar `tick_size` no TOML da estratégia (regra v1) mas registrar divergência com `assets.tick_size` em log. **Feito**: o `paper` compara na largada e avisa.
 
 ### 5.7 Fase 0 do framework: screener SQL com fill honesto
 
@@ -638,4 +699,7 @@ Esforço total da Onda A: ~2–3 semanas de calendário com dedicação integral
 | `docs/reports/gate-a-com-flatten-2026-09-07.md` **(novo, 07/09)** | o gate A re-rodado pelo MOTOR com flatten, hotfix ET e as métricas do ADR-019. **Os números dele substituem os de `gate-a-revalidacao-2026-09-04.md`** — nenhum run sem flatten é comparável (precedente ADR-015 §4). A substituição **formal** do gate A continua sendo a decisão 2 do dono (§10). Ressalva do próprio relatório (§6): o período inclui o feed degradado do Gateway a partir de 07/08/2026, então o **nível** do último bloco está contaminado; o delta com/sem flatten não está |
 | `trader-research/` **(novo, 08/09 — §5.3 implementado)** | pacote Python (uv, numpy, tzdata; 97 testes) que consome o `--output` do walkforward: PSR, DSR como faixa, IC95 do PF por bootstrap estacionário sobre o calendário completo de pregões, MC de drawdown por modo de sizing, concentração e P&L por ano. Falha fechado em seis situações — réguas diferentes, run experimental, divergência contra o `metrics.rs`, run sem calendário, arquivo repetido e `--por portfolio` sem `--capital` |
 | `docs/reports/estatistica-gate-a-2026-09-08.md` **(novo, 08/09)** | o critério "IC95 em blocos ≥ 1,0" medido pela primeira vez. Achado: **a unidade em que o gate é lido decide o veredito** — reprova nos oito pares, reprova nas três estratégias, passa no portfólio dos oito. Registra também que o esquema errado do bootstrap chegou a **virar um veredito** (balance·IJS), e a rodada adversarial de 63 achados que corrigiu o pacote antes da publicação |
+| `docs/reports/custo-real-2026-09-08.md` **(novo, 08/09 — §5.6 implementado)** | o custo do simulador trocado pelo real. Achados: a comissão antiga era **1/9,9** da real, e o **desconto no fill do alvo é maior que toda a comissão nova** (US$ 1.760 contra 1.489), respondendo por 56% do efeito; com o custo certo **nenhum recorte passa o gate** — o portfólio dos oito, que passava tudo, reprova no avg R. Traz o teste de paridade (`--legacy-cost` reproduz os números antigos dígito a dígito), a decomposição em três cenários e a §0 registrando os números que a primeira versão do próprio relatório errou |
+| `sql/maintenance/0005-corrigir-tick-size.sql` **(novo, 08/09)** | corrige o `tick_size` gravado a partir de f64 nos 14 ativos. Efeito prático hoje é nulo (o motor lê o TOML), e o script diz isso |
+| `sql/maintenance/0006-rotular-runs-sem-label.sql` **(novo, 08/09)** | rotula os 586 runs sem `label` **pela data**, não por propósito inferido. A causa (o `backtest` gravava NULL sempre) foi corrigida no código |
 | `sql/maintenance/0004-reclassificar-flatten.sql` **(novo, 07/09)** | UPDATE opcional dos flattens gravados como `manual` antes do ADR-018 — depende de decisão do dono |

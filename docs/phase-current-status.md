@@ -111,6 +111,14 @@ O que isso contraria no que se dizia antes:
    concentração (59% contra o teto **proposto** de 60%). Sob o gate proposto no
    ADR-019 §7, **nenhuma** das oito combinações passaria — motivo a mais para não
    tratar esses critérios como vigentes sem decisão do dono.
+6. **O custo ainda estava barato (§5.6, 08/09).** Os números acima usam
+   comissão de US$ 0,35 fixos por perna; a IBKR cobra **US$ 0,005 por ação**,
+   o que nas posições operadas é ~US$ 12 por trade em vez de US$ 0,70. Com a
+   tabela real: a fade em AVUV e em IWV passam a reprovar o profit factor, a
+   `balance-area` agregada fica com **PF em R 0,94 e avg R −0,035**, duas das
+   três estratégias ficam **negativas em 2026**, e **nenhum recorte passa o
+   gate** — nem por par, nem por estratégia, nem o portfólio dos oito. Ver
+   `docs/reports/custo-real-2026-09-08.md`.
 
 Delta in-sample do flatten, pares vivos, 2 bp, para referência: balance-area
 PF 1,92 / avg R 0,214 / +14.648 → PF 1,55 / avg R −0,007 / +6.576 (20 de 96

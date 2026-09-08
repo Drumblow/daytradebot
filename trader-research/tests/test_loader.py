@@ -38,7 +38,33 @@ def test_juntar_runs_com_slippage_diferente_e_erro(tmp_path):
 def test_mesma_regua_passa(tmp_path):
     a = _run(tmp_path, "a.json")
     b = _run(tmp_path, "b.json")
-    assert exige_mesma_regua([a, b]) == ("2", "15:45")
+    assert exige_mesma_regua([a, b]) == ("2", "15:45", "ibkr-fixed-us", "2")
+
+
+def test_modelos_de_comissao_diferentes_nao_somam(tmp_path):
+    # A comissao por acao da IBKR custa 9,9x o modelo fixo antigo na amostra
+    # medida: somar os dois produz um numero que nao descreve mundo nenhum,
+    # como somar com e sem flatten.
+    a = _run(tmp_path, "a.json", commission_model="ibkr-fixed-us")
+    b = _run(tmp_path, "b.json", commission_model="fixed-0.35")
+    with pytest.raises(ReguaDivergente, match="comissao"):
+        exige_mesma_regua([a, b])
+
+
+def test_descontos_no_alvo_diferentes_nao_somam(tmp_path):
+    a = _run(tmp_path, "a.json", limit_fill_haircut_bps="2")
+    b = _run(tmp_path, "b.json", limit_fill_haircut_bps="0")
+    with pytest.raises(ReguaDivergente, match="desconto no alvo"):
+        exige_mesma_regua([a, b])
+
+
+def test_run_sem_modelo_de_comissao_nao_soma_com_run_novo(tmp_path):
+    # Run anterior ao §5.6 nao declara o modelo. Ele nao pode entrar num
+    # agregado com runs que declaram: sao mundos diferentes.
+    a = _run(tmp_path, "a.json", commission_model=None)
+    b = _run(tmp_path, "b.json", commission_model="ibkr-fixed-us")
+    with pytest.raises(ReguaDivergente):
+        exige_mesma_regua([a, b])
 
 
 def test_run_experimental_nao_entra_em_relatorio_de_gate(tmp_path):

@@ -366,6 +366,11 @@ async fn fetch_today_executions(
     // exec_id → posição em `events`, para casar o CommissionReport (que
     // chega logo após o ExecutionData da mesma execução) com o fill.
     let mut index_by_exec: HashMap<String, usize> = HashMap::new();
+    // Quais execuções deste lote receberam CommissionReport. O que sobrar
+    // vira trade gravado com comissão ZERO — que, com a tabela por ação da
+    // IBKR, subestima o custo em US$ 10 a 25 por trade e faz o live parecer
+    // melhor que o backtest justamente no número que o gate B compara.
+    let mut com_comissao: HashSet<String> = HashSet::new();
 
     let drain = async {
         while let Some(item) = subscription.next().await {
@@ -386,13 +391,27 @@ async fn fetch_today_executions(
                     }
                 }
                 Ok(SubscriptionItem::Data(Executions::CommissionReport(report))) => {
-                    // Comissão real da execução: aplica no fill correspondente
-                    // deste lote (relatórios de execuções já vistas em polls
-                    // anteriores não estão no índice e são ignorados).
+                    // Comissão real da execução, aplicada no fill deste lote.
+                    //
+                    // LIMITE CONHECIDO (§5.6 do plano): a IBKR manda o
+                    // `CommissionReport` logo depois do `ExecutionData` da
+                    // mesma execução, e é assim que o casamento funciona. Se o
+                    // stream terminar (ou o drain expirar) ENTRE os dois, o
+                    // fill sai com comissão zero e o relatório chega num poll
+                    // seguinte — onde a execução já está em `seen` e é
+                    // descartada. O `com_comissao` abaixo torna esse buraco
+                    // VISÍVEL no log; fechá-lo exige adiar a emissão do fill
+                    // até a comissão chegar, o que muda o comportamento do
+                    // caminho ao vivo e precisa do mesmo smoke test de 2
+                    // pregões que o §5.9 exige. Não é mudança para entrar sem
+                    // teste operacional.
                     if let Some(&idx) = index_by_exec.get(&report.execution_id) {
                         if let OrderEvent::Fill { fill, .. } = &mut events[idx] {
                             match decimal_from_f64(report.commission) {
-                                Ok(commission) => fill.commission = commission,
+                                Ok(commission) => {
+                                    fill.commission = commission;
+                                    com_comissao.insert(report.execution_id.clone());
+                                }
                                 Err(e) => warn!(
                                     error = %e,
                                     exec_id = %report.execution_id,
@@ -421,6 +440,23 @@ async fn fetch_today_executions(
         });
 
     disconnect(&client).await;
+
+    // Alerta o que ficou sem comissão. Silêncio aqui era o pior arranjo: o
+    // trade entra no banco com `commissions = 0`, o net_pnl fica otimista, e
+    // o gate B compara esse número com um backtest que agora cobra a tabela
+    // real da IBKR.
+    let sem_comissao: Vec<&String> = index_by_exec
+        .keys()
+        .filter(|id| !com_comissao.contains(*id))
+        .collect();
+    if !sem_comissao.is_empty() {
+        warn!(
+            quantidade = sem_comissao.len(),
+            exec_ids = ?sem_comissao,
+            "execuções sem CommissionReport neste lote: o fill vai com comissão              ZERO e o relatório, se chegar num poll seguinte, será descartado              (execução já vista). O trade gravado subestima o custo."
+        );
+    }
+
     result.map(|_| events)
 }
 

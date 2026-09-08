@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                r.id,\n                a.symbol,\n                r.strategy_version,\n                r.config_hash,\n                r.timeframe,\n                r.period_start,\n                r.period_end,\n                r.final_equity,\n                r.metrics as \"metrics!: serde_json::Value\",\n                r.label,\n                r.created_at\n            FROM backtest_runs r\n            JOIN assets a ON a.id = r.asset_id\n            WHERE r.strategy_id = $1\n              AND a.symbol = $2\n              AND r.config_hash = $3\n              AND COALESCE((r.metrics ->> 'experimental')::boolean, false) = false\n            ORDER BY r.created_at DESC\n            LIMIT 1\n            ",
+  "query": "\n            SELECT\n                r.id,\n                a.symbol,\n                r.strategy_version,\n                r.config_hash,\n                r.timeframe,\n                r.period_start,\n                r.period_end,\n                r.final_equity,\n                r.metrics as \"metrics!: serde_json::Value\",\n                r.label,\n                r.created_at\n            FROM backtest_runs r\n            JOIN assets a ON a.id = r.asset_id\n            WHERE r.strategy_id = $1\n              AND a.symbol = $2\n              AND r.config_hash = $3\n              AND COALESCE((r.metrics ->> 'experimental')::boolean, false) = false\n              AND r.metrics ->> 'commission_model' = $4\n              AND r.metrics ->> 'slippage_bps' = $5\n              AND r.metrics ->> 'limit_fill_haircut_bps' = $6\n            ORDER BY r.created_at DESC\n            LIMIT 1\n            ",
   "describe": {
     "columns": [
       {
@@ -63,6 +63,9 @@
       "Left": [
         "Text",
         "Text",
+        "Text",
+        "Text",
+        "Text",
         "Text"
       ]
     },
@@ -80,5 +83,5 @@
       false
     ]
   },
-  "hash": "3711c80e3178cee702e73f112f5e48d496238f5bf63f8c007a2da5c58f54a1d2"
+  "hash": "3b669e46c569eb7b38c233ff06137b2f6f7ce6324170361f5109340d4335037e"
 }

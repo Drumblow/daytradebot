@@ -10,7 +10,17 @@ import numpy as np
 import pytest
 
 RAIZ = Path(__file__).resolve().parents[2]
-RUNS = sorted((RAIZ / "out" / "adr018").glob("wf19_*.json"))
+# Os dois conjuntos de runs reais: `wf19_` com o custo antigo (US$ 0,35 fixos)
+# e `wf56_` com a tabela real da IBKR. O crosscheck roda nos dois — ele
+# confere o Python contra o `metrics.rs`, e isso vale para qualquer regua.
+# `wf19_` = custo antigo (US$ 0,35 fixos), `wf56_` = tabela real da IBKR. O
+# crosscheck roda nos dois: ele confere o Python contra o `metrics.rs`, e isso
+# vale para qualquer regua. Outros exports do diretorio ficam de fora de
+# proposito — ha runs anteriores ao ADR-019 la, sem os campos novos, e o
+# crosscheck (corretamente) os recusa.
+RUNS = sorted(
+    (RAIZ / "out" / "adr018").glob("wf19_*.json")
+) + sorted((RAIZ / "out" / "adr018").glob("wf56_*.json"))
 
 
 @pytest.fixture(scope="session")
@@ -214,6 +224,8 @@ def escreve_run(
     initial_capital: str | None = "100000",
     sessions: list[str] | None = None,
     sem_calendario: bool = False,
+    commission_model: str | None = "ibkr-fixed-us",
+    limit_fill_haircut_bps: str | None = "2",
 ) -> Path:
     corpo = {
         "symbol": trades[0]["symbol"] if trades else "TST",
@@ -224,6 +236,8 @@ def escreve_run(
         "windows": 6,
         "slippage_bps": slippage_bps,
         "session_flatten": session_flatten,
+        "commission_model": commission_model,
+        "limit_fill_haircut_bps": limit_fill_haircut_bps,
         "label": label,
         "experimental": experimental,
         "overrides": [],

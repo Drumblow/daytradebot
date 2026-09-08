@@ -14,6 +14,79 @@ use trader_domain::{
     OrderId, OrderSide, OrderStatus, OrderType, Position, Trade,
 };
 
+/// Como a comissão de uma execução é calculada.
+///
+/// Até 08/09/2026 o simulador cobrava US$ 0,35 fixos por perna, valor que não
+/// corresponde a nenhuma tabela real: a IBKR cobra **por ação**. Medido sobre
+/// os 214 trades OOS das oito combinações vivas (quantidades de 234 a 1.311
+/// ações, mediana 619), a comissão total vai de US$ 149,80 para US$ 1.489,36 —
+/// **9,9×** —, ou de US$ 0,70 para US$ 2,34–13,11 por trade (mediana US$ 6,19).
+/// Não é a "ordem de grandeza" que uma versão anterior deste comentário
+/// afirmava a partir de um único trade de 1.262 ações; é um fator de dez, e o
+/// custo passa a ser da mesma escala do risco orçado (§5.6 do plano).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommissionModel {
+    /// Valor fixo por perna. Continua aqui para **reproduzir** os runs
+    /// anteriores a 08/09/2026, não porque descreva alguma corretora.
+    PerTrade(Decimal),
+    /// Tabela Fixed da IBKR para ações e ETFs dos EUA.
+    PerShare {
+        /// US$ por ação.
+        per_share: Decimal,
+        /// Piso por ordem.
+        min_per_order: Decimal,
+        /// Teto como fração do valor negociado (1% na IBKR).
+        max_pct_of_value: Decimal,
+    },
+}
+
+impl CommissionModel {
+    /// IBKR US Fixed: US$ 0,005/ação, mínimo US$ 1,00, máximo 1% do valor.
+    ///
+    /// Nenhum dos dois limites morde nos 214 trades OOS medidos — verificado,
+    /// não suposto: zero acionamentos em 428 pernas. Mas a margem é menor do
+    /// que parece: o teto de 1% só valeria para papel abaixo de US$ 0,50, e o
+    /// piso de US$ 1,00 vale para ordem abaixo de 200 ações, contra uma ordem
+    /// mínima real de **234** — 17% acima do piso, não uma ordem de grandeza.
+    /// O cap de liquidez do ADR-020 vai reduzir tamanho e pode fazer o piso
+    /// morder.
+    pub fn ibkr_fixed_us() -> Self {
+        Self::PerShare {
+            per_share: Decimal::from(5) / Decimal::from(1000),
+            min_per_order: Decimal::ONE,
+            max_pct_of_value: Decimal::ONE / Decimal::from(100),
+        }
+    }
+
+    /// Sem comissão — para testes que medem outra coisa.
+    pub fn none() -> Self {
+        Self::PerTrade(Decimal::ZERO)
+    }
+
+    /// Comissão de UMA execução (uma perna).
+    pub fn for_execution(&self, quantity: Decimal, price: Decimal) -> Decimal {
+        if quantity.is_zero() {
+            return Decimal::ZERO;
+        }
+        match self {
+            Self::PerTrade(valor) => *valor,
+            Self::PerShare {
+                per_share,
+                min_per_order,
+                max_pct_of_value,
+            } => {
+                let bruta = (*per_share * quantity.abs()).max(*min_per_order);
+                let teto = price.abs() * quantity.abs() * *max_pct_of_value;
+                if teto > Decimal::ZERO {
+                    bruta.min(teto)
+                } else {
+                    bruta
+                }
+            }
+        }
+    }
+}
+
 /// Saídas pendentes associadas a uma posição aberta.
 #[derive(Debug, Clone)]
 struct PendingExit {
@@ -87,7 +160,21 @@ impl Default for SimulatedState {
 pub struct SimulatedBrokerConfig {
     pub account_id: Option<String>,
     pub initial_cash: Decimal,
-    pub commission_per_trade: Decimal,
+    pub commission: CommissionModel,
+    /// Custo aplicado no fill de uma ordem LIMITE (o alvo), como fração do
+    /// preço.
+    ///
+    /// Até 08/09/2026 o alvo não pagava **nada**: bastava o candle tocar o
+    /// nível para encher no preço exato. Isso é otimista por um motivo que
+    /// não é o spread — uma ordem limite parada no book é o lado passivo e
+    /// não paga spread — e sim porque **tocar não é encher**: o high do
+    /// candle no seu preço quase sempre significa que poucos lotes
+    /// negociaram ali, e você está numa fila. Este campo é o desconto
+    /// declarado que substitui esse otimismo, não uma cobrança de spread; o
+    /// §5.6 do plano o chama de "spread cobrado no alvo".
+    ///
+    /// Calibração por ativo (§2.2) é passo separado: aqui é um valor único.
+    pub limit_fill_haircut_pct: Decimal,
     /// Slippage como FRAÇÃO do preço: `0.001` = 0,1%.
     ///
     /// Já foi lido como "percentual" e dividido por 100 na aplicação, o que
@@ -110,8 +197,11 @@ impl Default for SimulatedBrokerConfig {
         Self {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::from(35) / Decimal::from(100), // $0.35
-            slippage_pct: Decimal::from(2) / Decimal::from(10_000),       // 2 bp (0,02%)
+            commission: CommissionModel::ibkr_fixed_us(),
+            // Mesmo 2 bp do slippage de mercado. Não é medição: é o mesmo
+            // valor, declarado, até a calibração por ativo do §5.6 existir.
+            limit_fill_haircut_pct: Decimal::from(2) / Decimal::from(10_000),
+            slippage_pct: Decimal::from(2) / Decimal::from(10_000), // 2 bp (0,02%)
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100), // 25%
         }
@@ -187,7 +277,10 @@ impl SimulatedBroker {
                     if let Some(trade) =
                         close_position_to_trade(&position, price, reason, &self.config, Utc::now())
                     {
-                        let exit_commission = trade.commissions / Decimal::from(2);
+                        let exit_commission = self
+                            .config
+                            .commission
+                            .for_execution(position.quantity, price);
                         state.cash += exit_cash_flow(
                             position.direction,
                             price,
@@ -288,7 +381,7 @@ impl SimulatedBroker {
             } else {
                 let fill_price =
                     apply_slippage(fill_base, entry.direction, true, self.config.slippage_pct);
-                let commission = self.config.commission_per_trade;
+                let commission = self.config.commission.for_execution(entry.quantity, fill_price);
 
                 match Position::new(
                     symbol,
@@ -374,7 +467,15 @@ impl SimulatedBroker {
                             ExitReason::Stop,
                         ))
                     } else if candle.high >= exit.target_price {
-                        Some((candle.open.max(exit.target_price), ExitReason::Target))
+                        Some((
+                            apply_slippage(
+                                candle.open.max(exit.target_price),
+                                Direction::Long,
+                                false,
+                                self.config.limit_fill_haircut_pct,
+                            ),
+                            ExitReason::Target,
+                        ))
                     } else {
                         None
                     }
@@ -387,7 +488,15 @@ impl SimulatedBroker {
                             ExitReason::Stop,
                         ))
                     } else if candle.low <= exit.target_price {
-                        Some((candle.open.min(exit.target_price), ExitReason::Target))
+                        Some((
+                            apply_slippage(
+                                candle.open.min(exit.target_price),
+                                Direction::Short,
+                                false,
+                                self.config.limit_fill_haircut_pct,
+                            ),
+                            ExitReason::Target,
+                        ))
                     } else {
                         None
                     }
@@ -405,7 +514,13 @@ impl SimulatedBroker {
                         &self.config,
                         state.now,
                     ) {
-                        let exit_commission = trade.commissions / Decimal::from(2);
+                        // A comissão da SAÍDA, no preço da saída — não metade
+                        // do total: com a tabela por ação as duas pernas só
+                        // coincidem por acaso.
+                        let exit_commission = self
+                            .config
+                            .commission
+                            .for_execution(position.quantity, exit_price);
                         state.cash += exit_cash_flow(
                             position.direction,
                             exit_price,
@@ -455,8 +570,12 @@ impl SimulatedBroker {
         if let Some(trade) =
             close_position_to_trade(&position, price, reason, &self.config, state.now)
         {
-            // Recebe o valor da venda menos comissão de saída.
-            let exit_commission = trade.commissions / Decimal::from(2);
+            // Recebe o valor da venda menos a comissão de saída, calculada
+            // no preço da saída (não metade do total do trade).
+            let exit_commission = self
+                .config
+                .commission
+                .for_execution(position.quantity, price);
             state.cash += exit_cash_flow(
                 position.direction,
                 price,
@@ -561,7 +680,7 @@ impl Broker for SimulatedBroker {
             Direction::Short => base_price / slippage_factor,
         };
 
-        let commission = self.config.commission_per_trade;
+        let commission = self.config.commission.for_execution(order.quantity, fill_price);
 
         match order.order_type {
             OrderType::Market | OrderType::Limit => {
@@ -866,7 +985,15 @@ fn close_position_to_trade(
 
     let gross_pnl =
         (exit_price - position.avg_entry_price) * position.quantity * direction_multiplier;
-    let commissions = config.commission_per_trade * Decimal::from(2); // entrada + saída
+    // Comissão das DUAS pernas, cada uma no seu preço. Com a tabela por ação
+    // a quantidade é a mesma nos dois lados, mas o teto de 1% do valor depende
+    // do preço — e derivar a saída da entrada esconderia isso.
+    let commissions = config
+        .commission
+        .for_execution(position.quantity, position.avg_entry_price)
+        + config
+            .commission
+            .for_execution(position.quantity, exit_price);
     let net_pnl = gross_pnl - commissions;
 
     let risk_amount = (position.avg_entry_price - position.stop_price).abs() * position.quantity;
@@ -971,7 +1098,8 @@ mod tests {
         SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(initial_cash),
-            commission_per_trade: commission,
+            commission: CommissionModel::PerTrade(commission),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1251,7 +1379,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(50_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1280,7 +1409,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1309,7 +1439,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1336,7 +1467,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1378,7 +1510,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1437,7 +1570,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 2,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1471,7 +1605,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1521,7 +1656,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1549,7 +1685,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 2,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1583,7 +1720,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1655,7 +1793,8 @@ mod tests {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("DU_SIM".to_string()),
             initial_cash: Decimal::from(100_000),
-            commission_per_trade: Decimal::ZERO,
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
             slippage_pct: Decimal::ZERO,
             entry_validity_candles: 1,
             entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
@@ -1682,5 +1821,213 @@ mod tests {
 
         // Sem posição, não há o que encerrar.
         assert!(!broker.close_position_at_market("SPY", Decimal::from(101), ExitReason::Time));
+    }
+
+    // ---------------------------------------------------------------------
+    // Custo real de execucao (§5.6 do plano).
+    //
+    // A licao da rodada adversarial de 08/09: formula certa sem teste de
+    // VALOR nao e formula guardada. Cada numero abaixo foi calculado fora do
+    // codigo, a partir da tabela publicada da IBKR.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn comissao_ibkr_e_por_acao() {
+        let m = CommissionModel::ibkr_fixed_us();
+        // 1.262 acoes x US$ 0,005 = US$ 6,31. O piso de US$ 1,00 nao morde e
+        // o teto de 1% (US$ 1.000 num papel de US$ 79) tampouco.
+        assert_eq!(
+            m.for_execution(Decimal::from(1262), Decimal::from(79)),
+            Decimal::new(631, 2)
+        );
+    }
+
+    #[test]
+    fn comissao_ibkr_respeita_o_piso_por_ordem() {
+        let m = CommissionModel::ibkr_fixed_us();
+        // 100 acoes dariam US$ 0,50; o piso e US$ 1,00.
+        assert_eq!(
+            m.for_execution(Decimal::from(100), Decimal::from(50)),
+            Decimal::ONE
+        );
+    }
+
+    #[test]
+    fn comissao_ibkr_respeita_o_teto_de_1_por_cento() {
+        let m = CommissionModel::ibkr_fixed_us();
+        // 1.000 acoes de um papel de US$ 0,10: por acao dariam US$ 5,00, mas
+        // 1% do valor negociado (US$ 100) e US$ 1,00.
+        assert_eq!(
+            m.for_execution(Decimal::from(1000), Decimal::new(10, 2)),
+            Decimal::ONE
+        );
+    }
+
+    #[test]
+    fn execucao_de_quantidade_zero_nao_paga_piso() {
+        let m = CommissionModel::ibkr_fixed_us();
+        assert_eq!(m.for_execution(Decimal::ZERO, Decimal::from(100)), Decimal::ZERO);
+    }
+
+    #[test]
+    fn modelo_fixo_ignora_quantidade_e_preco() {
+        let m = CommissionModel::PerTrade(Decimal::new(35, 2));
+        assert_eq!(
+            m.for_execution(Decimal::from(1), Decimal::from(10)),
+            Decimal::new(35, 2)
+        );
+        assert_eq!(
+            m.for_execution(Decimal::from(5000), Decimal::from(400)),
+            Decimal::new(35, 2)
+        );
+    }
+
+    #[test]
+    fn a_diferenca_entre_os_dois_modelos_na_amostra_medida() {
+        // Este teste guarda o numero que os documentos publicam, e ele foi
+        // medido, nao escolhido: nos 214 trades OOS das oito combinacoes
+        // vivas, as quantidades vao de 234 a 1.311 acoes (mediana 619).
+        //
+        // A versao anterior deste teste usava 1.262 acoes fixas e afirmava
+        // "> 17x" — passava sem tocar em dado nenhum, e o 18x que ela
+        // sustentava vazou para o titulo do relatorio, para o plano e para o
+        // HANDOFF. A razao REAL, sobre a amostra inteira, e 9,9x.
+        let antigo = CommissionModel::PerTrade(Decimal::new(35, 2));
+        let real = CommissionModel::ibkr_fixed_us();
+        let preco = Decimal::from(79);
+        let perna_dupla = |m: &CommissionModel, q: i64| {
+            m.for_execution(Decimal::from(q), preco) * Decimal::from(2)
+        };
+
+        // O modelo antigo nao depende do tamanho: US$ 0,70 sempre.
+        assert_eq!(perna_dupla(&antigo, 234), Decimal::new(70, 2));
+        assert_eq!(perna_dupla(&antigo, 1311), Decimal::new(70, 2));
+
+        // O real depende, e cobre a faixa medida.
+        assert_eq!(perna_dupla(&real, 234), Decimal::new(234, 2)); // US$ 2,34
+        assert_eq!(perna_dupla(&real, 619), Decimal::new(619, 2)); // US$ 6,19 (mediana)
+        assert_eq!(perna_dupla(&real, 1311), Decimal::new(1311, 2)); // US$ 13,11
+
+        // A razao vai de 3,3x na menor ordem a 18,7x na maior. Na MEDIANA da
+        // amostra e 8,8x; no agregado dos 214 trades, 9,9x. Publicar o extremo
+        // como se fosse o tipico foi o erro.
+        assert!(perna_dupla(&real, 234) < perna_dupla(&antigo, 234) * Decimal::from(4));
+        assert!(perna_dupla(&real, 1311) > perna_dupla(&antigo, 1311) * Decimal::from(18));
+    }
+
+    #[test]
+    fn a_menor_ordem_real_fica_apenas_17_por_cento_acima_do_piso() {
+        // 234 acoes x US$ 0,005 = US$ 1,17 contra o piso de US$ 1,00. A
+        // afirmacao "o piso so valeria para ordem abaixo de 200 acoes — as
+        // posicoes tem de 1.000 a 2.500" descrevia uma folga que nao existe.
+        let m = CommissionModel::ibkr_fixed_us();
+        assert_eq!(
+            m.for_execution(Decimal::from(234), Decimal::from(79)),
+            Decimal::new(117, 2)
+        );
+        // Uma ordem de 199 acoes ja cai no piso.
+        assert_eq!(
+            m.for_execution(Decimal::from(199), Decimal::from(79)),
+            Decimal::ONE
+        );
+    }
+
+    #[test]
+    fn a_comissao_da_saida_usa_o_preco_da_saida() {
+        // Com o teto de 1% do valor, as duas pernas so coincidem quando os
+        // precos coincidem. Derivar a saida da entrada (ou dividir o total por
+        // dois) esconde isso.
+        let m = CommissionModel::ibkr_fixed_us();
+        let qtd = Decimal::from(1000);
+        // Entrada a US$ 0,40: teto = 1% x 400 = US$ 4,00 (< US$ 5,00 por acao).
+        assert_eq!(m.for_execution(qtd, Decimal::new(40, 2)), Decimal::from(4));
+        // Saida a US$ 0,80: teto = US$ 8,00, entao vale o por acao, US$ 5,00.
+        assert_eq!(m.for_execution(qtd, Decimal::new(80, 2)), Decimal::from(5));
+    }
+
+    /// O trade fechado tem de cobrar as DUAS pernas pelo modelo, nao o dobro
+    /// de um valor fixo.
+    #[tokio::test]
+    async fn trade_cobra_comissao_das_duas_pernas_pela_tabela() {
+        let config = SimulatedBrokerConfig {
+            account_id: Some("DU_SIM".to_string()),
+            initial_cash: Decimal::from(100_000),
+            commission: CommissionModel::ibkr_fixed_us(),
+            limit_fill_haircut_pct: Decimal::ZERO,
+            slippage_pct: Decimal::ZERO,
+            entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
+        };
+        let broker = SimulatedBroker::new(config);
+        let ordem = directional_bracket(
+            "SPY",
+            OrderSide::Buy,
+            Decimal::from(1000),
+            Decimal::from(100),
+            Decimal::from(99),
+            Decimal::from(102),
+        );
+        broker.place_order(ordem).await.unwrap();
+        broker.set_market_candle("SPY", &candle("SPY", 100, 103, 100, 103));
+
+        let trades = broker.get_closed_trades();
+        assert_eq!(trades.len(), 1);
+        // 1.000 acoes x US$ 0,005 = US$ 5,00 por perna, US$ 10,00 no trade.
+        assert_eq!(trades[0].commissions, Decimal::from(10));
+    }
+
+    /// O alvo enchia de graca: bastava o candle tocar o nivel.
+    #[tokio::test]
+    async fn o_alvo_paga_o_desconto_de_fill_limite() {
+        let mut config = SimulatedBrokerConfig {
+            account_id: Some("DU_SIM".to_string()),
+            initial_cash: Decimal::from(100_000),
+            commission: CommissionModel::none(),
+            limit_fill_haircut_pct: Decimal::ZERO,
+            slippage_pct: Decimal::ZERO,
+            entry_validity_candles: 1,
+            entry_overshoot_tolerance: Decimal::from(25) / Decimal::from(100),
+        };
+
+        let sem_desconto = {
+            let broker = SimulatedBroker::new(config.clone());
+            let ordem = directional_bracket(
+                "SPY",
+                OrderSide::Buy,
+                Decimal::from(100),
+                Decimal::from(100),
+                Decimal::from(99),
+                Decimal::from(102),
+            );
+            broker.place_order(ordem).await.unwrap();
+            broker.set_market_candle("SPY", &candle("SPY", 100, 103, 100, 103));
+            broker.get_closed_trades().remove(0).exit_price
+        };
+        // Sem desconto, o fill e o proprio alvo.
+        assert_eq!(sem_desconto, Decimal::from(102));
+
+        config.limit_fill_haircut_pct = Decimal::from(2) / Decimal::from(10_000);
+        let com_desconto = {
+            let broker = SimulatedBroker::new(config);
+            let ordem = directional_bracket(
+                "SPY",
+                OrderSide::Buy,
+                Decimal::from(100),
+                Decimal::from(100),
+                Decimal::from(99),
+                Decimal::from(102),
+            );
+            broker.place_order(ordem).await.unwrap();
+            broker.set_market_candle("SPY", &candle("SPY", 100, 103, 100, 103));
+            broker.get_closed_trades().remove(0).exit_price
+        };
+        // Vender long com desconto: preco MENOR que o alvo, sempre contra o
+        // trader.
+        assert!(com_desconto < sem_desconto);
+        assert_eq!(com_desconto, Decimal::from(102) / (Decimal::ONE + config_haircut()));
+    }
+
+    fn config_haircut() -> Decimal {
+        Decimal::from(2) / Decimal::from(10_000)
     }
 }

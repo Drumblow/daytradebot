@@ -4,7 +4,7 @@ use chrono::{DateTime, Timelike, Utc};
 use rust_decimal::Decimal;
 use tracing::{debug, info, warn};
 
-use trader_adapters::simulated::{SimulatedBroker, SimulatedBrokerConfig};
+use trader_adapters::simulated::{CommissionModel, SimulatedBroker, SimulatedBrokerConfig};
 use trader_core::{
     context::MarketContextAnalyzer,
     execution::time_exit::{TimeExitConfig, TimeExitTracker},
@@ -21,10 +21,17 @@ pub struct BacktestConfig {
     pub symbol: String,
     /// Capital inicial.
     pub initial_capital: Decimal,
-    /// Comissão por trade (entrada + saída).
-    pub commission_per_trade: Decimal,
-    /// Slippage percentual aplicado no preço de execução.
+    /// Modelo de comissão. O padrão é a tabela real da IBKR (por ação);
+    /// `CommissionModel::PerTrade` reproduz os runs anteriores a 08/09/2026,
+    /// que cobravam US$ 0,35 fixos por perna.
+    pub commission: CommissionModel,
+    /// Slippage percentual aplicado no preço de execução a MERCADO.
     pub slippage_pct: Decimal,
+    /// Desconto aplicado no fill do alvo (ordem limite), como fração do preço.
+    ///
+    /// Existe porque tocar o nível não é encher nele (§5.6 do plano); ver o
+    /// campo homônimo em `SimulatedBrokerConfig`.
+    pub limit_fill_haircut_pct: Decimal,
     /// Candles de validade da entrada stop aguardando o rompimento.
     pub entry_validity_candles: u32,
     /// Saída ativa por tempo (validação pós-entrada em R), quando a
@@ -47,7 +54,7 @@ impl Default for BacktestConfig {
         Self {
             symbol: "SPY".to_string(),
             initial_capital: Decimal::from(100_000),
-            commission_per_trade: Decimal::from(35) / Decimal::from(100),
+            commission: CommissionModel::ibkr_fixed_us(),
             // 2 bp (0,02%). Calibrado, nao chutado: os pares operados sao
             // ETFs cotados entre $120 e $435, onde 1 centavo de spread vale
             // 0,23 a 0,83 bp. 2 bp cobre cerca de um spread cheio nos nomes
@@ -56,6 +63,7 @@ impl Default for BacktestConfig {
             // irreal para estes ativos, e sozinho levava o portfolio de
             // +33k para -40k em 18 meses.
             slippage_pct: Decimal::from(2) / Decimal::from(10_000),
+            limit_fill_haircut_pct: Decimal::from(2) / Decimal::from(10_000),
             entry_validity_candles: 1,
             time_exit: None,
             // 15h45 ET: a última barra de 15 min do RTH. O live encerra a
@@ -101,8 +109,9 @@ impl BacktestEngine {
         let broker = SimulatedBroker::new(SimulatedBrokerConfig {
             account_id: Some("BACKTEST".to_string()),
             initial_cash: config.initial_capital,
-            commission_per_trade: config.commission_per_trade,
+            commission: config.commission.clone(),
             slippage_pct: config.slippage_pct,
+            limit_fill_haircut_pct: config.limit_fill_haircut_pct,
             entry_validity_candles: config.entry_validity_candles,
             // Paridade com o live: a mesma tolerância de overshoot (ADR-015)
             // governa o cancelamento de entradas por gap além do gatilho.

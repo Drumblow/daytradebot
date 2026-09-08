@@ -321,14 +321,16 @@ def monta_relatorio(
     n_boot: int,
     capital: Decimal | None = None,
 ) -> str:
-    slippage, flatten = exige_mesma_regua(runs)
+    slippage, flatten, comissao, desconto = exige_mesma_regua(runs)
     exige_calendario(runs)
     unidades = agrupa(runs, por, capital)
     cab = [
         "<!-- gerado por trader-research (plano 5.3). Nao editar a mao. -->",
         f"**Regua dos runs:** slippage {slippage} bp/lado | flatten de fim de "
-        f"sessao {flatten or 'DESLIGADO'} | {len(runs)} runs | "
-        f"{n_boot:,} reamostras | seed {SEED}.",
+        f"sessao {flatten or 'DESLIGADO'} | comissao "
+        f"{comissao or 'NAO DECLARADA (run anterior ao 5.6)'} | desconto no "
+        f"alvo {desconto if desconto is not None else 'NAO DECLARADO'} bp | "
+        f"{len(runs)} runs | {n_boot:,} reamostras | seed {SEED}.",
         "",
         "**Esquema do bootstrap:** estacionario (Politis-Romano) sobre o P&L "
         "diario de **todos os pregoes, zeros incluidos**, como o ADR-019 "

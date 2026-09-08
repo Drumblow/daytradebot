@@ -3,5 +3,5 @@
 pub mod broker;
 pub mod market_data;
 
-pub use broker::{SimulatedBroker, SimulatedBrokerConfig};
+pub use broker::{CommissionModel, SimulatedBroker, SimulatedBrokerConfig};
 pub use market_data::SimulatedMarketDataProvider;

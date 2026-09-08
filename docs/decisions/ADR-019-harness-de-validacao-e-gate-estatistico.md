@@ -501,5 +501,19 @@ Consequências práticas:
   de Sharpe de um run deste harness deve ignorá-la até o item 5.
 - O N da família continua sendo estimativa declarada em relatório, como o
   próprio ADR já admitia.
-- **Custo por ativo** (comissão por ação, spread no alvo) é o §5.6 do plano,
-  não deste ADR; todos os números produzidos aqui usam US$ 0,35/perna.
+- **Custo por ativo** (comissão por ação, desconto no alvo) era o §5.6 do
+  plano, e **entrou em 08/09/2026**. Os números publicados por este ADR e pelo
+  relatório de gate A usam US$ 0,35/perna e ficaram, por isso, baratos: com a
+  tabela real da IBKR nenhum recorte passa o gate. O `metrics` gravado no
+  banco e o JSON do `walkforward` ganharam `commission_model` e
+  `limit_fill_haircut_bps` pelo mesmo motivo que já tinham `slippage_bps` — um
+  run com a comissão real e um com a antiga são mundos diferentes, e o
+  `analyze` não pode confundi-los. Ver `docs/reports/custo-real-2026-09-08.md`.
+- **O mecanismo do §3 precisou ser estendido, não só reusado.** Trocar o custo
+  reabriu por outra porta o caso que este ADR fechou: o banco passou a ter, para
+  o mesmo (estratégia, par, `config_hash`), runs com os dois custos — e o mais
+  recente era um `--legacy-cost` rodado para o teste de paridade. O `latest_for`
+  ganhou um quarto filtro, `commission_model`, e um run que **não declara** o
+  campo (todos os anteriores a 08/09) não casa com nenhum modelo. Falha fechado,
+  como o `experimental`. Coberto por
+  `crates/trader-infra/tests/backtest_run_baseline_test.rs`.

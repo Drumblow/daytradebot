@@ -73,11 +73,32 @@ impl SqlxBacktestRunRepository {
     ///
     /// Não substitui `latest_by_strategy` de propósito — o método antigo
     /// continua servindo a quem quiser "o último run, qualquer que seja".
+    ///
+    /// `commission_model` fecha a mesma porta pelo outro lado (§5.6). Em
+    /// 08/09/2026 o simulador passou a cobrar a tabela por ação da IBKR, 9,9×
+    /// o modelo fixo antigo (medido nos 214 trades OOS); o banco tem os dois. Sem este filtro, o run mais
+    /// recente pode ser um `--legacy-cost` rodado para paridade, e o gate B
+    /// compararia o paper (que paga comissão real) com um backtest que não
+    /// paga — o live pareceria pior por um motivo que não é a estratégia.
+    /// Run sem o campo é anterior ao §5.6 e **não casa com nada**: falha
+    /// fechado, como o `experimental`.
+    ///
+    /// `slippage_bps` e `limit_fill_haircut_bps` fecham os dois eixos que
+    /// sobravam. Nenhum dos dois marca o run como `experimental` — o
+    /// `--slippage-bps` nunca marcou —, e o ADR-018 manda rodar
+    /// `--slippage-bps 4` em IJS e SLYV para sensibilidade: esse run entraria
+    /// no banco não-experimental, mais recente, e viraria o baseline do gate B
+    /// da produção, que roda a 2 bp. Medido sobre os trades reais, 2 bp a mais
+    /// derrubam o avg R de IJS de 0,305 para 0,160 — deslocamento maior que a
+    /// banda inteira de ±30% do gate B.
     pub async fn latest_for(
         &self,
         strategy_id: &str,
         symbol: &str,
         config_hash: &str,
+        commission_model: &str,
+        slippage_bps: &str,
+        limit_fill_haircut_bps: &str,
     ) -> Result<Option<StoredBacktestRun>, RepositoryError> {
         let row = sqlx::query_as!(
             StoredRunRow,
@@ -100,12 +121,18 @@ impl SqlxBacktestRunRepository {
               AND a.symbol = $2
               AND r.config_hash = $3
               AND COALESCE((r.metrics ->> 'experimental')::boolean, false) = false
+              AND r.metrics ->> 'commission_model' = $4
+              AND r.metrics ->> 'slippage_bps' = $5
+              AND r.metrics ->> 'limit_fill_haircut_bps' = $6
             ORDER BY r.created_at DESC
             LIMIT 1
             "#,
             strategy_id,
             symbol,
-            config_hash
+            config_hash,
+            commission_model,
+            slippage_bps,
+            limit_fill_haircut_bps
         )
         .fetch_optional(&self.pool)
         .await

@@ -71,7 +71,13 @@ async fn ensure_asset(
         return Ok(id);
     }
 
-    let tick_size = Decimal::from_f64_retain(0.01).unwrap_or(Decimal::from(1) / Decimal::from(100));
+    // `Decimal::from_f64_retain(0.01)` gravava
+    // 0.0100000000000000002081668171172168513294309377670288085937500 — o
+    // binário mais próximo de 0,01, com 61 casas — em TODOS os 14 ativos.
+    // Viola a regra do AGENTS.md ("Decimal, nunca f64, para dinheiro") no
+    // lugar mais literal possível: o tamanho do tique. `Decimal::new(1, 2)`
+    // é exatamente 0,01 (§5.6 do plano).
+    let tick_size = Decimal::new(1, 2);
 
     let id = sqlx::query_scalar!(
         r#"

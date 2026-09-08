@@ -41,6 +41,22 @@ pub struct Args {
     /// live, cujas pernas de bracket vão com TIF Day, nunca faz. Não use o
     /// número dele para julgar estratégia.
     pub no_flatten: bool,
+    /// Restaura o custo anterior ao §5.6: comissão de US$ 0,35 fixos por
+    /// perna e alvo limite que enche sem pagar nada.
+    ///
+    /// Só para reproduzir runs de até 08/09/2026. A IBKR cobra por AÇÃO
+    /// (US$ 0,005, mín. US$ 1,00): nos 214 trades OOS medidos (234 a 1.311
+    /// ações, mediana 619) isso é US$ 2,34 a 13,11 por trade, não US$ 0,70.
+    pub legacy_cost: bool,
+    /// Desconto no fill do alvo, em pontos-base. Sobrepõe o padrão (2 bp) e o
+    /// modo legado (0). É o parâmetro escolhido a mão do modelo de custo.
+    pub limit_haircut_bps: Option<Decimal>,
+    /// Rótulo do run no banco.
+    ///
+    /// Sem isto o `backtest` gravava `label = NULL` SEMPRE — 586 dos 745 runs
+    /// do banco dev não têm rótulo, e a maior parte veio daqui. O `--label` do
+    /// `walkforward` existe desde o ADR-019; este comando ficou de fora.
+    pub label: Option<String>,
 }
 
 /// Executa um backtest da estratégia solicitada.
@@ -117,7 +133,8 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     let backtest_config = BacktestConfig {
         symbol: args.symbol.clone(),
         initial_capital: Decimal::from(100_000),
-        commission_per_trade: Decimal::from(35) / Decimal::from(100),
+        commission: super::commission_model(args.legacy_cost),
+        limit_fill_haircut_pct: super::limit_fill_haircut(args.legacy_cost, args.limit_haircut_bps),
         slippage_pct: match args.slippage_bps {
             Some(bps) => Decimal::from(bps) / Decimal::from(10_000),
             // 2 bp — ver a justificativa da calibracao em
@@ -135,11 +152,21 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
              o que o live não faz. Número só serve de comparação."
         );
     }
+    if args.legacy_cost {
+        println!("   Custo:      LEGADO (--legacy-cost): US$ 0,35 fixos por perna");
+        println!("               e alvo limite que enche de graça. Reproduz runs");
+        println!("               de até 08/09/2026; não é o custo da IBKR.");
+    } else {
+        println!("   Custo:      IBKR por ação (US$ 0,005, mín. US$ 1,00) + 2 bp no alvo");
+    }
 
     // Guardados antes do move para o engine: identificam a régua do run no
     // `metrics` persistido (ADR-019 §3).
     let slippage_bps_run = (backtest_config.slippage_pct * Decimal::from(10_000)).normalize();
     let session_flatten_run = backtest_config.session_flatten_et;
+    let commission_run = super::commission_label(args.legacy_cost);
+    let haircut_bps_run =
+        (backtest_config.limit_fill_haircut_pct * Decimal::from(10_000)).normalize();
 
     // Paridade com o live: mesmos limites de risco e horário da estratégia.
     let risk_config =
@@ -179,6 +206,11 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             // O `backtest` não tem `--set`: nunca é experimental. A chave
             // existe para o `latest_for` não depender de `COALESCE`.
             obj.insert("experimental".into(), false.into());
+            obj.insert("commission_model".into(), commission_run.into());
+            obj.insert(
+                "limit_fill_haircut_bps".into(),
+                haircut_bps_run.to_string().into(),
+            );
         }
 
         let record = BacktestRunRecord {
@@ -192,7 +224,12 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             initial_capital: report.initial_capital,
             final_equity: report.final_equity,
             metrics: metrics_json,
-            label: None,
+            // Sem `--label`, grava a data em vez de NULL: um run anônimo é
+            // impossível de atribuir depois, e era assim que 586 dos 745 runs
+            // do banco ficaram (§5.6 do plano).
+            label: Some(args.label.clone().unwrap_or_else(|| {
+                format!("backtest-{}", chrono::Utc::now().format("%Y-%m-%d"))
+            })),
         };
         let repo = SqlxBacktestRunRepository::new(pool.clone());
         match repo.save(&record).await {

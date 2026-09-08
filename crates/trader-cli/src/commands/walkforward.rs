@@ -43,6 +43,12 @@ pub struct Args {
     pub strategy_config: Option<String>,
     /// Sobrescritas `chave=valor` em `[strategy.parameters]`.
     pub set: Vec<String>,
+    /// Restaura o custo anterior ao §5.6 (US$ 0,35 fixos, alvo de graça).
+    /// Só para reproduzir runs de até 08/09/2026.
+    pub legacy_cost: bool,
+    /// Desconto no fill do alvo, em pontos-base. Sobrepõe o padrão (2 bp) e o
+    /// modo legado (0).
+    pub limit_haircut_bps: Option<Decimal>,
 }
 
 /// Bloco de saída do `--output`: o resultado do walk-forward mais o que
@@ -76,6 +82,13 @@ struct WalkForwardOutput<'a> {
     /// diferenca nao e cosmetica: reamostrar 19 pontos ou 272 muda o limite
     /// inferior do IC e chega a virar o veredito do criterio proposto.
     oos_sessions: Vec<chrono::NaiveDate>,
+    /// Modelo de comissão do run e desconto no fill do alvo, em bp.
+    ///
+    /// Mesmo motivo do `slippage_bps`: sem isto, um run com a comissão real
+    /// da IBKR e um com os US$ 0,35 fixos ficam indistinguíveis, e somá-los
+    /// produz um número que não descreve mundo nenhum.
+    commission_model: &'a str,
+    limit_fill_haircut_bps: String,
     label: &'a str,
     experimental: bool,
     overrides: Vec<(String, String)>,
@@ -225,6 +238,8 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
         entry_validity_candles: strategy.entry_validity_candles() as u32,
         time_exit: strategy.time_exit(),
         session_flatten_et: super::session_flatten_et(&config.app_config.session, args.no_flatten),
+        commission: super::commission_model(args.legacy_cost),
+        limit_fill_haircut_pct: super::limit_fill_haircut(args.legacy_cost, args.limit_haircut_bps),
         // Até o ADR-019 o walk-forward herdava 2 bp do `default()` sem ninguém
         // poder mudar: toda sensibilidade ao custo (ADR-016) tinha de ser
         // rodada no `backtest`, com outra régua.
@@ -371,6 +386,11 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
                 .map(|(h, mi)| format!("{h:02}:{mi:02}")),
             initial_capital: backtest_config.initial_capital,
             oos_sessions: oos_sessions.clone(),
+            commission_model: super::commission_label(args.legacy_cost),
+            limit_fill_haircut_bps: (backtest_config.limit_fill_haircut_pct
+                * Decimal::from(10_000))
+            .normalize()
+            .to_string(),
             label: &label,
             experimental: resolvido.is_experimental,
             overrides: resolvido.overrides.clone(),
@@ -405,6 +425,17 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             },
         );
         obj.insert("experimental".into(), resolvido.is_experimental.into());
+        obj.insert(
+            "commission_model".into(),
+            super::commission_label(args.legacy_cost).into(),
+        );
+        obj.insert(
+            "limit_fill_haircut_bps".into(),
+            (backtest_config.limit_fill_haircut_pct * Decimal::from(10_000))
+                .normalize()
+                .to_string()
+                .into(),
+        );
         obj.insert(
             "overrides".into(),
             serde_json::Value::Object(
@@ -513,7 +544,9 @@ fn print_acceptance(total_trades: usize, m: &trader_backtest::BacktestMetrics) {
     // nenhuma estratégia deste projeto alcança DSR 0,95, então estes números
     // informam a leitura em vez de aprovar ou reprovar sozinhos.
     println!(
-        "   [ i] t-stat do avg R: {:.2} · corr(risco, R): {:.2} · custo: {:.2}",
+        // "comissão", não "custo": o desconto no fill do alvo e o slippage
+        // ficam embutidos no preço e não entram em `cost_total` (§5.6).
+        "   [ i] t-stat do avg R: {:.2} · corr(risco, R): {:.2} · comissão: {:.2}",
         m.t_stat_avg_r, m.corr_risk_result, m.cost_total
     );
     println!(

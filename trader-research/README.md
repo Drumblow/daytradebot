@@ -32,10 +32,12 @@ vezes dá o mesmo número.
 Falham fechado, de propósito — cada uma corresponde a um erro que já aconteceu
 neste projeto:
 
-1. **Réguas diferentes não somam.** Runs com `slippage_bps` ou
-   `session_flatten` diferentes abortam (`ReguaDivergente`). Precedente:
-   ADR-015 §4 e ADR-018 invalidaram todo run anterior porque o motor mudou de
-   regra.
+1. **Réguas diferentes não somam.** A régua tem quatro eixos — `slippage_bps`,
+   `session_flatten`, `commission_model` e `limit_fill_haircut_bps` —, e
+   qualquer divergência aborta (`ReguaDivergente`). Precedente: ADR-015 §4 e
+   ADR-018 invalidaram todo run anterior porque o motor mudou de regra; o §5.6
+   fez o mesmo com o custo, e a comissão real é **9,9×** a antiga. O lado Rust
+   usa a mesma régua em `latest_for` para escolher o baseline do gate B.
 2. **Ablação não entra em relatório de gate.** Run com `experimental: true`
    (feito com `--set`/`--strategy-config`) aborta. Precedente: ADR-019 §3 — "a
    primeira ablação vira baseline em silêncio".

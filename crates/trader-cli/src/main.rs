@@ -125,6 +125,21 @@ enum Commands {
         /// nunca faz.
         #[arg(long)]
         no_flatten: bool,
+        /// Restaura o custo anterior ao §5.6: US$ 0,35 fixos por perna e alvo
+        /// limite que enche sem pagar nada. Só para reproduzir runs de até
+        /// 08/09/2026 — a IBKR cobra US$ 0,005 POR AÇÃO (mín. US$ 1,00).
+        #[arg(long)]
+        legacy_cost: bool,
+        /// Desconto no fill do alvo em pontos-base (padrão 2; 0 no modo
+        /// legado). É o parâmetro escolhido a mão do modelo de custo, e
+        /// responde por mais da metade do efeito — varie para ver quanto do
+        /// veredito depende dele.
+        #[arg(long)]
+        limit_haircut_bps: Option<rust_decimal::Decimal>,
+        /// Rótulo do run no banco. Sem ele, grava `backtest-<data>` — nunca
+        /// NULL, para o run não ficar impossível de atribuir depois.
+        #[arg(long)]
+        label: Option<String>,
     },
     /// Validação walk-forward out-of-sample sobre dados reais do banco.
     Walkforward {
@@ -150,6 +165,17 @@ enum Commands {
         /// os runs 413–421 e medir o delta; não vale como gate A.
         #[arg(long)]
         no_flatten: bool,
+        /// Restaura o custo anterior ao §5.6: US$ 0,35 fixos por perna e alvo
+        /// limite que enche sem pagar nada. Só para reproduzir runs de até
+        /// 08/09/2026 — a IBKR cobra US$ 0,005 POR AÇÃO (mín. US$ 1,00).
+        #[arg(long)]
+        legacy_cost: bool,
+        /// Desconto no fill do alvo em pontos-base (padrão 2; 0 no modo
+        /// legado). É o parâmetro escolhido a mão do modelo de custo, e
+        /// responde por mais da metade do efeito — varie para ver quanto do
+        /// veredito depende dele.
+        #[arg(long)]
+        limit_haircut_bps: Option<rust_decimal::Decimal>,
         /// Exporta o resultado (janelas, métricas, trades do holdout) em JSON.
         #[arg(short, long)]
         output: Option<String>,
@@ -325,6 +351,9 @@ async fn main() -> Result<()> {
             output,
             slippage_bps,
             no_flatten,
+            legacy_cost,
+            limit_haircut_bps,
+            label,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -345,6 +374,9 @@ async fn main() -> Result<()> {
                     output,
                     slippage_bps,
                     no_flatten,
+                    legacy_cost,
+                    limit_haircut_bps,
+                    label,
                 },
             )
             .await
@@ -387,6 +419,8 @@ async fn main() -> Result<()> {
             holdout_from,
             strategy_config,
             set,
+            legacy_cost,
+            limit_haircut_bps,
         } => {
             let from = from
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -424,6 +458,8 @@ async fn main() -> Result<()> {
                     holdout_from,
                     strategy_config,
                     set,
+                    legacy_cost,
+                    limit_haircut_bps,
                 },
             )
             .await

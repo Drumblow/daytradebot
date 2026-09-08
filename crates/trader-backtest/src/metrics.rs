@@ -136,8 +136,19 @@ pub struct BacktestMetrics {
     pub months_total: usize,
     #[serde(default)]
     pub months_positive: usize,
-    /// Comissão + taxas somadas. O slippage não entra: ele já está embutido
-    /// nos preços de execução do simulador e não é recuperável do trade.
+    /// **Só o caixa pago à corretora**: comissão + taxas. Não é o custo total
+    /// de execução, apesar do nome.
+    ///
+    /// Ficam de fora dois itens, ambos embutidos no PREÇO e não recuperáveis
+    /// do trade: o slippage de mercado e — desde o §5.6 — o desconto no fill
+    /// do alvo (`limit_fill_haircut_pct`). O segundo não é detalhe: medido nos
+    /// 214 trades OOS das oito combinações vivas, ele soma **US$ 1.759**
+    /// contra **US$ 1.489** de comissão. Quem lê este campo como "quanto
+    /// custou operar" vê 46% do que o motor cobrou.
+    ///
+    /// Separá-lo exige o simulador registrar o desconto no momento do fill
+    /// (item aberto). Até lá, relatório que publica custo tem de dizer
+    /// "comissão", não "custo".
     #[serde(default)]
     pub cost_total: Decimal,
 }

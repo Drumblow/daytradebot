@@ -211,7 +211,14 @@ decisão do dono — o resultado seria: **nenhuma das oito combinações passa**
 a que chega mais perto é `range-extreme-fade-v1` em SLYV, reprovada só pelos
 20 trades contra os 50 exigidos.
 
-> **Atualização de 08/09/2026:** o quinto critério do §7 — o limite inferior do
+> **Atualização de 08/09/2026 (custo):** todos os números deste relatório usam
+> comissão de **US$ 0,35 fixos por perna**. A IBKR cobra **por ação**, e com a
+> tabela real (§5.6 do plano) o custo por trade vai de US$ 0,70 para ~US$ 12:
+> a `fade` em AVUV e em IWV passam a reprovar o profit factor, a `balance-area`
+> agregada fica com PF em R **0,94** e avg R negativo, e **nenhum recorte passa
+> o gate**. Ver `docs/reports/custo-real-2026-09-08.md`.
+>
+> **Atualização de 08/09/2026 (IC95):** o quinto critério do §7 — o limite inferior do
 > IC95 do PF por bootstrap em blocos — não era calculável quando este relatório
 > foi escrito. Agora é (`trader-research/`, §5.3 do plano). Ele **não muda** a
 > conclusão acima por par, mas acrescenta uma leitura que este relatório não

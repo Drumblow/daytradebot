@@ -29,13 +29,7 @@ pub async fn run(config: &CliConfig) -> Result<()> {
         "simulated" => {
             let broker = SimulatedBroker::new(trader_adapters::simulated::SimulatedBrokerConfig {
                 account_id: Some("DU_SIM".to_string()),
-                initial_cash: rust_decimal::Decimal::from(100_000),
-                commission_per_trade: rust_decimal::Decimal::from(35)
-                    / rust_decimal::Decimal::from(100),
-                slippage_pct: rust_decimal::Decimal::from(1) / rust_decimal::Decimal::from(1000),
-                entry_validity_candles: 1,
-                entry_overshoot_tolerance: rust_decimal::Decimal::from(25)
-                    / rust_decimal::Decimal::from(100),
+                ..Default::default()
             });
             print_summary(&broker.get_account_summary().await?);
             print_exposure(&broker).await?;

@@ -6,6 +6,25 @@ própria lista de pendências do ADR registrava que ele **não tinha como ser
 avaliado** — faltava o relatório em Python do §5.3 do plano (item 1 da lista).
 Agora ele existe (`trader-research/`) e o critério tem número.
 
+> ## ⚠️ A RÉGUA MUDOU DE NOVO NO MESMO DIA — leia com o custo em mente
+>
+> Os números deste relatório usam a comissão de **US$ 0,35 fixos por perna** e
+> um alvo limite que enche de graça — o modelo do simulador quando ele foi
+> escrito. Horas depois, o §5.6 do plano trocou os dois: comissão **por ação**
+> da IBKR (9,9× a antiga, medido nos 214 trades) e um desconto de 2 bp no fill
+> do alvo, que sozinho responde por 56% do efeito.
+>
+> O que muda: **o portfólio dos oito pares deixa de passar tudo** — reprova no
+> avg R (0,107 contra o piso de 0,15) — e o limite inferior do IC95 cai de
+> 1,135 para 1,038. Nenhum recorte passa mais o gate, e isso vale mesmo com o
+> desconto zerado (avg R 0,147, IC95 1,089).
+>
+> O que **não** muda: o achado central deste relatório, de que a **unidade** em
+> que o gate é lido decide o veredito, e a crítica ao esquema do bootstrap
+> (§3). Esses são sobre método, não sobre o nível dos números.
+>
+> Números com o custo real em `docs/reports/custo-real-2026-09-08.md`.
+
 **O que mudou de fato:** nada nas estratégias, nada no live. O motor de
 backtest ganhou um campo no JSON (`oos_sessions`, o calendário de pregões da
 amostra OOS) e o `initial_capital`; o resto é análise sobre os mesmos oito

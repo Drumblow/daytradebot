@@ -94,6 +94,29 @@ impl LoadedStrategy {
         }
     }
 
+    /// Tamanho do tique declarado no TOML da estratégia.
+    ///
+    /// A regra v1 é que o tique vem do TOML, não da tabela `assets` — e assim
+    /// continua. O que faltava era **notar a divergência**: até 08/09/2026 a
+    /// coluna `assets.tick_size` guardava
+    /// 0,0100000000000000002081668171… em todos os 14 ativos, porque
+    /// `ensure_asset` a gravava a partir de um f64. Ninguém percebeu porque
+    /// ninguém lia a coluna. Agora o `paper` compara as duas na largada
+    /// (§5.6 do plano).
+    pub fn tick_size(&self) -> rust_decimal::Decimal {
+        match self {
+            Self::PullbackTrendV1(s) => s.parameters().tick_size,
+            Self::FailureTestLongV1(s) => s.parameters().tick_size,
+            Self::BreakoutFirstPullbackV1(s) => s.parameters().tick_size,
+            Self::OpeningReversalV1(s) => s.parameters().tick_size,
+            Self::BalanceAreaBreakoutV1(s) => s.parameters().tick_size,
+            Self::RangeExtremeFadeV1(s) => s.parameters().tick_size,
+            Self::Low2M2sShortV1(s) => s.parameters().tick_size,
+            Self::ValueAreaReentryV1(s) => s.parameters().tick_size,
+            Self::TrendlineBreakTestV1(s) => s.parameters().tick_size,
+        }
+    }
+
     /// Hash de auditoria da configuração carregada.
     pub fn config_hash(&self) -> String {
         match self {
