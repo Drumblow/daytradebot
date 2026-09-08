@@ -3,7 +3,7 @@
 **Autor:** análise automatizada (coding agent, pesquisa multiagente de 06–07/09/2026) a pedido do dono do projeto
 **Pergunta do dono:** "elaborar a documentação de implementação de novas técnicas e estratégias com potencial maior de lucro para testarmos — com liberdade para pensar em outros ativos ou até criptomoedas; a ideia é melhorar a capacidade lucrativa do bot."
 **Estado do código analisado:** `main` em `d5e7279` (06/09/2026); banco dev `trader_db` (porta 5434) com candles 15m de 24/02/2025 → 02/09/2026; produção = app umbrelOS v1.1 com 8 instâncias
-> ## Estado de execução — atualizado em 07/09/2026
+> ## Estado de execução — atualizado em 08/09/2026
 >
 > O plano abaixo é o documento de 07/09 e **não foi reescrito**: ele registra o
 > que se sabia quando foi produzido. Esta caixa registra o que já saiu do papel.
@@ -12,8 +12,8 @@
 > |---|---|
 > | 1 — flatten de fim de sessão (ADR-018) | ✅ **implementado** e verificado com dado real |
 > | 5 — hotfix ET do veto de meio-dia (§5.4) | ✅ **implementado** |
-> | 3 — harness de validação (ADR-019) | ✅ **implementado em parte** — o núcleo entrou; o que ficou de fora está na seção "Pendente" do `ADR-019` (lista e contagem canônicas), e inclui o relatório em Python e o Sharpe diário |
-> | 4 — relatório estatístico (§5.3) | ⏳ pendente — sem ele o critério "IC95 em blocos ≥ 1,0" não é avaliável |
+> | 3 — harness de validação (ADR-019) | ✅ **implementado em parte** — o núcleo entrou; o que ficou de fora está na seção "Pendente" do `ADR-019` (lista e contagem canônicas), e inclui o Sharpe diário |
+> | 4 — relatório estatístico (§5.3) | ✅ **implementado** em 08/09 (`trader-research/`). O critério "IC95 em blocos ≥ 1,0" passou a ser avaliável — números em `docs/reports/estatistica-gate-a-2026-09-08.md` |
 > | 6 — ADR-020 (sizing/liquidez) | ⏳ **não implementado**, continua proposto |
 > | 7 — higiene e custo real (§5.6) | ⏳ pendente |
 > | 2, 8, 9, 9b — feed, screener, A9, sair de IWV | ⏳ pendentes (2, 9 e 9b dependem do servidor ou de decisão do dono) |
@@ -22,7 +22,7 @@
 > O estado exato de `main` não é fixado aqui de propósito: um SHA envelheceria
 > a cada commit. Use `git log --oneline`.
 >
-> **Três coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
+> **Cinco coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
 >
 > 1. **§5.4 diz que o efeito do hotfix ET seria "imensurável". Não é.** Medido:
 >    a fade cai de PF 1,74 / avg R 0,218 / +4.560 para **PF 1,57 / 0,182 /
@@ -37,10 +37,22 @@
 >    resultados diferentes entre si. A migração 0005 cria só o índice de busca.
 > 3. **O PF em R, que o §2.3 achado 4 previa, é pior do que o plano estimava:**
 >    a balance-area tem **PF_R 0,74 em AVUV e 0,97 em VBR** — abaixo de 1, ou
->    seja, sem edge em unidades de risco. Sob o gate proposto no ADR-019 §7
->    (que ainda **não** é o gate vigente) nenhuma das sete combinações passaria.
+>    seja, sem edge em unidades de risco.
+> 4. **A unidade em que o gate é lido decide o veredito.** Com o §5.3
+>    implementado, os mesmos 214 trades reprovam nos **oito** pares isolados,
+>    reprovam nas **três** estratégias agregadas e **passam** em todos os
+>    critérios — os seis do ADR-010 e os três mensuráveis do ADR-019 §7 —
+>    quando lidos como **um portfólio de oito pares**. Escolher a unidade não é
+>    detalhe de apresentação; é a decisão.
+> 5. **O esquema do bootstrap não é intercambiável.** Reamostrar só os pregões
+>    *com trade*, em vez de todos como o ADR-019 §8 pré-registrou, fez a
+>    balance em IJS **passar** (1,337) onde ela reprova (0,848). Com 17–32 dias
+>    ativos em ~330 pregões, um bloco de 5 vira 16–29% da série e o bootstrap
+>    circular degenera. Foi erro meu na primeira implementação, pego na revisão
+>    adversarial.
 >
-> Veredito e números em `docs/reports/gate-a-com-flatten-2026-09-07.md`.
+> Veredito do gate A em `docs/reports/gate-a-com-flatten-2026-09-07.md`;
+> estatística em `docs/reports/estatistica-gate-a-2026-09-08.md`.
 
 **Regra de leitura:** nada aqui altera as **regras** das estratégias v1 em produção; as duas exceções são o hotfix do veto de meio-dia (§5.4, correção de bug com nota, precedente A2) e o piso de stop transversal (§6.9), se o dono aprová-lo. Toda mudança de regra é v2 validada do zero (framework §4); toda mudança de motor tem ADR proposto. Números de backtest são a 2 bp/lado e, salvo indicação, **sem** o flatten de fim de sessão que o live faz — ver §2.3, que é o achado central.
 
@@ -181,7 +193,7 @@ Leituras: (1) o "últimos 10 meses ≈ 0" da régua antiga vira +8,6k com flatte
 | `is_tradeable` rígido (`context/mod.rs:79-81`) | Range mudo em 40% das barras | **§6.1** |
 | Cap de notional 1× hardcoded (`risk/mod.rs:253`) | Risco real ≪ 1%; sem cap por liquidez | **§5.5** |
 | ~~TIF Day + flatten só no live~~ **resolvido em 07/09**: o motor faz flatten por mudança de data ET, com a janela vindo de `[session]`. Só o swing (hold multi-dia) continua fora | Sem swing | **§5.1** ✅ |
-| Walk-forward por contagem de candles, sem purge; ~~sem holdout~~ (**`--holdout-from` entrou em 07/09**: bloco travado, reportado à parte, com erro em vez de holdout desligado em silêncio); sem DSR/PSR/IC | Viés de seleção das 42+ combinações não corrigido — o que falta é o §5.3 | **§5.2** ✅ **, §5.3** |
+| Walk-forward por contagem de candles, sem purge; ~~sem holdout~~ (**`--holdout-from` entrou em 07/09**: bloco travado, reportado à parte, com erro em vez de holdout desligado em silêncio); ~~sem DSR/PSR/IC~~ (**entraram em 08/09**, §5.3) | Viés de seleção das 42+ combinações agora tem número: DSR **0,45** no portfólio com N=42, contra o 0,95 convencional | **§5.2** ✅ **, §5.3** ✅ |
 | Backtest single-symbol, capital fixo | Conta compartilhada (3 posições, 200%) não simulada | **§6.4** |
 | Entrada limit no simulador enche na hora sem olhar o mercado (`simulated/broker.rs:522-575`) | Nenhum número de entrada limit vale (ADR-009 incluído) | infra |
 
@@ -341,11 +353,37 @@ Sem isto, cada ablação das v2 exige um módulo novo e o gate B pode ser contam
 
 ### 5.3 Relatório estatístico (Python, `trader-research/`)
 
+> ✅ **IMPLEMENTADO em 08/09/2026.** Pacote em `trader-research/` (uv, numpy,
+> tzdata; 97 testes), relatório em
+> `docs/reports/estatistica-gate-a-2026-09-08.md`. Três coisas que o texto
+> abaixo não sabia:
+>
+> 1. **O PSR muda conforme a série.** O texto abaixo dá um número por
+>    estratégia (balance 0,938; fade 0,984; openrev 0,82) sem dizer sobre qual
+>    série. São dois números diferentes: no pool da balance, PSR(0) = **0,942**
+>    sobre o P&L diário e **0,574** sobre o R por trade — a mesma inflação por
+>    sizing que o PF em $ tem sobre o PF em R. O relatório imprime os dois.
+> 2. **A direção do erro do DSR é desconhecida, não "otimista".** Sem
+>    `n_trials` registrado, V[SR] entre tentativas é substituída pela do
+>    estimador de uma série; para tentativas *correlacionadas* — que é o caso
+>    registrado — o DSR impresso é **pessimista**, não otimista.
+> 3. **O esquema do bootstrap precisa do calendário de pregões.** O ADR-019 §8
+>    pré-registra "todos os pregões, zeros incluídos"; sem a lista de sessões
+>    no JSON isso é inexequível, e a diferença chega a virar veredito. O
+>    `walkforward` passou a exportar `oos_sessions` e `initial_capital`.
+>
+> Os intervalos citados abaixo (balance OOS iid [1,24; 3,47], blocos
+> [0,87; 4,91]; fade [1,20; 3,90] / [1,39; 3,57]; openrev [0,63; 1,97]) são da
+> pesquisa de 06–07/09 e foram **medidos de novo** com a régua do live e o
+> esquema pré-registrado — ver o relatório. Os limites inferiores em blocos
+> ficam em 0,768 (balance), 0,959 (fade) e 0,842 (openrev).
+
+
 Pesquisa em Python (uv, numpy/pandas) consumindo `--output`; o que virar critério é portado para `crates/trader-backtest/src/stats.rs` (f64 permitido: a regra do AGENTS.md proíbe f64 para **dinheiro**; `metrics.rs` já usa f64 no annualizer).
 
 - PSR (t-stat, skew, kurtosis) por estratégia e do pool; DSR reportado como **faixa** [N=2 … N registrado] — nunca pass/fail (balance PSR 0,938; fade 0,984; openrev 0,82; DSR < 0,5 para todas com N ≥ 4).
 - IC95 do PF por bootstrap estacionário sobre P&L diário (blocos de 5 e 10 pregões, seed fixa, 10k reamostras), lado a lado com iid. O veredito muda com o esquema — por isso pré-registrado: balance OOS iid [1,24; 3,47] mas blocos **[0,87; 4,91]**; fade [1,20; 3,90] / [1,39; 3,57]; openrev [0,63; 1,97].
-- MC de drawdown reamostrando (R, risk_amount) juntos, por modo de sizing (§5.5). Com o sizing atual p95: balance 3,8%, fade 1,9%, openrev 5,3% — o critério de 10% só morde se o risco subir.
+- MC de drawdown reamostrando (R, risk_amount) juntos, por modo de sizing (§5.5). ~~Com o sizing atual p95: balance 3,8%, fade 1,9%, openrev 5,3%~~ — **medido de novo em 08/09 com a régua do live**, o p95 do sizing atual é bem menor: balance **1,28%**, fade **0,75%**, openrev **1,89%** no pool de cada estratégia. A conclusão sobrevive e fica mais forte: o critério de 10% **não morde em nenhum modo** exceto o C (0,5%/4×), onde o balance chega a 11,7% de p95 e 10,8% de probabilidade de estourar. O modo C, aliás, exige alavancagem que o teto de 200% da conta bloqueia.
 - Concentração: share dos 2 melhores meses, meses positivos, share do melhor dia.
 - CPCV **não** se aplica a regras sem fit (os 5 caminhos são permutações dos mesmos blocos) — fica reservado a qualquer componente ajustado (§7, meta-labeling).
 
@@ -515,7 +553,7 @@ As variantes de alvo compartilham as **mesmas entradas**: calcular por trade a d
 |---|---|---|
 | 1 | ✅ §5.1 flatten + ADR-018; §5.8 diagnóstico do feed (Gateway vs TWS, mesma barra); ✅ §5.4 hotfix ET; §5.6 ~~dedupe~~ (**⛔ revogado**, ver §5.6)/rótulos/tick_size; §5.7 `sql/screens` já está no repo desde a pesquisa, mas a **calibração** que o próprio §5.7 exige antes de usá-lo como Fase 0 não foi feita | — |
 | 1–2 | ✅ §5.2 harness (walkforward `--output/--slippage/--label/--holdout`, PF_R, métricas por dia, `strategy_id` nos trades, `analyze` por par) — **parcial**, ver ADR-019 "Pendente"; §5.6 comissão por ação + spread no alvo | §5.1 |
-| 2 | ✅ Re-rodar gate A das 3 estratégias com flatten + hotfix (`docs/reports/gate-a-com-flatten-2026-09-07.md`); §5.3 relatório estatístico; decisão do dono sobre o gate B da balance-area | §5.1, §5.2 |
+| 2 | ✅ Re-rodar gate A das 3 estratégias com flatten + hotfix (`docs/reports/gate-a-com-flatten-2026-09-07.md`); ✅ §5.3 relatório estatístico (`docs/reports/estatistica-gate-a-2026-09-08.md`); ⏳ decisão do dono sobre o gate B da balance-area | §5.1, §5.2 |
 | 2–3 | §5.5 cap de liquidez + `capital_fraction` + registro de equity (ADR-020); §5.9 A9 (confirmação de ordem e short) com smoke test; §5.10 sair de IWV; §5.8 correção do feed (poll alinhado / realtime como gatilho) conforme o diagnóstico | §5.8 |
 | 3–4 | §6.1 passo 1 (medir o delta Neutral) — **a medição de maior valor esperado do plano**; §6.4 replay de portfólio | §5.1, §5.2 |
 | 4–6 | §6.1 passo 2 (v2) se passar; §6.2 como v2 pré-registrada em símbolos onde a v1 não roda; §6.9 piso de stop medido no harness; §6.10 janelas e §6.11 alvo pareado como variantes pré-registradas; §6.6 instrumentação | §6.1, §6.4 |
@@ -598,4 +636,6 @@ Esforço total da Onda A: ~2–3 semanas de calendário com dedicação integral
 | `docs/strategy-analysis-framework.md` | seção "Fase 0 — Screener" marcada como proposta |
 | `docs/HANDOFF.md` | entrada de 07/09 apontando para este plano, e as entradas da execução |
 | `docs/reports/gate-a-com-flatten-2026-09-07.md` **(novo, 07/09)** | o gate A re-rodado pelo MOTOR com flatten, hotfix ET e as métricas do ADR-019. **Os números dele substituem os de `gate-a-revalidacao-2026-09-04.md`** — nenhum run sem flatten é comparável (precedente ADR-015 §4). A substituição **formal** do gate A continua sendo a decisão 2 do dono (§10). Ressalva do próprio relatório (§6): o período inclui o feed degradado do Gateway a partir de 07/08/2026, então o **nível** do último bloco está contaminado; o delta com/sem flatten não está |
+| `trader-research/` **(novo, 08/09 — §5.3 implementado)** | pacote Python (uv, numpy, tzdata; 97 testes) que consome o `--output` do walkforward: PSR, DSR como faixa, IC95 do PF por bootstrap estacionário sobre o calendário completo de pregões, MC de drawdown por modo de sizing, concentração e P&L por ano. Falha fechado em seis situações — réguas diferentes, run experimental, divergência contra o `metrics.rs`, run sem calendário, arquivo repetido e `--por portfolio` sem `--capital` |
+| `docs/reports/estatistica-gate-a-2026-09-08.md` **(novo, 08/09)** | o critério "IC95 em blocos ≥ 1,0" medido pela primeira vez. Achado: **a unidade em que o gate é lido decide o veredito** — reprova nos oito pares, reprova nas três estratégias, passa no portfólio dos oito. Registra também que o esquema errado do bootstrap chegou a **virar um veredito** (balance·IJS), e a rodada adversarial de 63 achados que corrigiu o pacote antes da publicação |
 | `sql/maintenance/0004-reclassificar-flatten.sql` **(novo, 07/09)** | UPDATE opcional dos flattens gravados como `manual` antes do ADR-018 — depende de decisão do dono |

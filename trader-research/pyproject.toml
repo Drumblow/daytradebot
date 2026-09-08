@@ -1,0 +1,25 @@
+[project]
+name = "trader-research"
+version = "0.1.0"
+description = "Estatistica de pesquisa do HumanStyle Trader Bot (plano de lucratividade, secao 5.3)"
+requires-python = ">=3.11"
+# `tzdata` nao e opcional: sem ele o Windows nao tem a base de fusos e a
+# regra de "data de Nova York" -- que e a unica correta aqui -- quebra.
+dependencies = ["numpy>=1.26", "tzdata>=2024.1"]
+
+[project.scripts]
+trader-research = "trader_research.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trader_research"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]

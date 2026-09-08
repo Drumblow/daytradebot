@@ -60,6 +60,22 @@ struct WalkForwardOutput<'a> {
     windows: usize,
     slippage_bps: String,
     session_flatten: Option<String>,
+    /// Base do `max_drawdown_pct` — o motor calcula o DD sobre o PICO, que
+    /// comeca aqui. Sem este campo, quem le o JSON de fora (o
+    /// `trader-research` do §5.3) precisa CHUTAR 100k, e o chute vira
+    /// silenciosamente errado no dia em que o `capital_fraction` do ADR-020
+    /// fracionar o capital do backtest.
+    initial_capital: Decimal,
+    /// Datas ET de TODOS os pregoes cobertos pela amostra OOS — inclusive os
+    /// que nao tiveram trade.
+    ///
+    /// Sem isto, quem le o JSON so enxerga os dias COM trade (17 a 35 num
+    /// periodo de ~270 pregoes) e o bootstrap em blocos do ADR-019 §8, que e
+    /// pre-registrado sobre "o P&L diario de todos os pregoes, zeros
+    /// incluidos", nao tem como ser executado como foi pre-registrado. A
+    /// diferenca nao e cosmetica: reamostrar 19 pontos ou 272 muda o limite
+    /// inferior do IC e chega a virar o veredito do criterio proposto.
+    oos_sessions: Vec<chrono::NaiveDate>,
     label: &'a str,
     experimental: bool,
     overrides: Vec<(String, String)>,
@@ -236,6 +252,28 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
     )
     .await?;
 
+    // O calendario de pregoes que a amostra OOS cobriu, do jeito que o motor
+    // viu: a uniao das janelas de teste do `split_windows` e a data ET de
+    // cada candle nela. Nao da para reconstruir isso de fora com dias uteis —
+    // feriado de NYSE e dia de meio pregao entrariam como pregao.
+    let oos_sessions: Vec<chrono::NaiveDate> = {
+        let mut datas: Vec<chrono::NaiveDate> =
+            match trader_backtest::split_windows(selecao.len(), args.windows) {
+                Some(splits) => {
+                    let inicio = splits.first().map(|(_, teste)| teste.start).unwrap_or(0);
+                    let fim = splits.last().map(|(_, teste)| teste.end).unwrap_or(0);
+                    selecao[inicio..fim]
+                        .iter()
+                        .map(|c| trader_core::session::et_date(c.timestamp))
+                        .collect()
+                }
+                None => Vec::new(),
+            };
+        datas.sort_unstable();
+        datas.dedup();
+        datas
+    };
+
     // O holdout roda como UM backtest sobre a série inteira (o warm-up dos
     // indicadores precisa dos candles anteriores) e conta só os trades que
     // entram depois do corte. Nunca participou de seleção nenhuma.
@@ -331,6 +369,8 @@ pub async fn run(config: &CliConfig, args: Args) -> Result<()> {
             session_flatten: backtest_config
                 .session_flatten_et
                 .map(|(h, mi)| format!("{h:02}:{mi:02}")),
+            initial_capital: backtest_config.initial_capital,
+            oos_sessions: oos_sessions.clone(),
             label: &label,
             experimental: resolvido.is_experimental,
             overrides: resolvido.overrides.clone(),

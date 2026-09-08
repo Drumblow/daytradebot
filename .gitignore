@@ -43,3 +43,9 @@ docs/books/
 
 # Saidas de backtest/walkforward geradas localmente (JSON e logs).
 out/
+
+# Ambiente do trader-research (§5.3). O `uv.lock` E versionado: e ele que faz
+# o relatorio estatistico ser reproduzivel noutra maquina.
+trader-research/.venv/
+trader-research/**/__pycache__/
+trader-research/.pytest_cache/

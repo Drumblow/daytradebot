@@ -1,10 +1,11 @@
 # ADR-019 — Harness de validação e gate A estatístico
 
-**Status:** **IMPLEMENTADO em parte** (07/09/2026). O núcleo entrou — flags do
-walkforward, `--set` com falha fechada, `analyze` por (par, hash), PF em R e
-concentração, journal do simulador. **Dez itens NÃO entraram**, entre eles o
-relatório em Python e o Sharpe diário: a lista canônica está em "Pendente" ao
-final — e é a **única** contagem válida. Nenhum outro documento deve enumerar
+**Status:** **IMPLEMENTADO em parte** (07–08/09/2026). O núcleo entrou — flags
+do walkforward, `--set` com falha fechada, `analyze` por (par, hash), PF em R e
+concentração, journal do simulador; em 08/09 entrou o **relatório estatístico
+em Python** (`trader-research/`, item 1). **Nove itens continuam de fora**,
+entre eles o Sharpe diário: a lista canônica está em "Pendente" ao final — e é
+a **única** contagem válida. Nenhum outro documento deve enumerar
 nem contar essas pendências por conta própria; devem apontar para lá — ver "Ajustes feitos na
 implementação" ao final. Números em `docs/reports/gate-a-com-flatten-2026-09-07.md` §7.
 **Data:** 2026-09-07
@@ -461,31 +462,41 @@ produziu o A2 e o bug do veto de meio-dia.
 
 Duas revisões adversariais (07 e 08/09/2026) mostraram que as versões
 anteriores desta seção **subestimavam o que ficou de fora**: a primeira falava
-em "duas exceções", a segunda em sete. São **dez**. Esta é a lista completa; qualquer outro documento que enumere pendências
-deste ADR deve apontar para cá em vez de repetir uma lista própria.
+em "duas exceções", a segunda em sete. Eram **dez**; com o item 1 entregue em
+08/09, restam **nove**. Esta é a lista completa; qualquer outro documento que
+enumere pendências deste ADR deve apontar para cá em vez de repetir uma lista
+própria.
 
 | # | O que não entrou | Onde estava no ADR |
 |---|---|---|
-| 1 | **Relatório estatístico em Python** (`trader-research/`): PSR, DSR como faixa, IC95 por bootstrap estacionário em blocos, MC de drawdown | item 8 |
+| ~~1~~ | ✅ **ENTREGUE em 08/09/2026** — `trader-research/`: PSR, DSR como faixa, IC95 por bootstrap estacionário em blocos sobre o calendário completo de pregões, MC de drawdown por modo de sizing, concentração e P&L por ano. Números em `docs/reports/estatistica-gate-a-2026-09-08.md`. Exigiu dois campos novos no JSON do `walkforward`: `initial_capital` e `oos_sessions` (o calendário de pregões da amostra OOS — sem ele o bootstrap pré-registrado do §8 é inexequível) | item 8 |
 | 2 | **Dedupe e índice único** de `backtest_runs` — **recusados com número**, não esquecidos: no maior grupo "duplicado" (24 linhas) há sete valores distintos de `final_equity` | item 3 |
 | 3 | `n_trials` / `trial_group` | itens 3 e 6 |
 | 4 | `sharpe_r` e `avg_r_gross` | item 4 |
 | 5 | **Sharpe e Sortino sobre retornos DIÁRIOS** (o `sortino` não existe em nenhuma forma). O cálculo continua anualizando pelo intervalo mediano da série — por candle de 15 min, o anualizador é ≈ 187 e os runs full-period dão Sharpe −6 a −9 com PF > 1. É o defeito que o próprio ADR mandava corrigir, e ele segue lá (`metrics.rs`, `calculate_sharpe`) | item 4 |
 | 6 | `entries_triggered` / `entries_cancelled_overshoot` — o §6.7 do plano (entrada STP LMT) depende desse número para decidir | item 4 |
-| 7 | **P&L por ano civil.** O P&L por **bloco** do walk-forward existe (a tabela por janela do `walkforward` imprime trades IS/OOS, WR, PF, avg R e net por bloco); o corte por ano é que não | item 4 |
+| 7 | **P&L por ano civil** — continua fora do `metrics.rs`. O P&L por **bloco** do walk-forward existe (a tabela por janela do `walkforward` imprime trades IS/OOS, WR, PF, avg R e net por bloco); o corte por ano é que não. O relatório do §5.3 já o imprime em Python, o que fecha a *pergunta* mas não o item: quem lê o `walkforward` continua sem ele | item 4 |
 | 8 | **PF em R nos mapas por grupo.** O §4 pede `(n, PF, PF_R, net, avg R)` por `exit_reason`, direção e hora; `GroupMetrics` traz tudo menos o PF_R — só existe o agregado | item 4 |
-| 9 | **WR por dia.** Entrou `trading_days` (contagem de datas) e os dois shares; win-rate diário não | item 4 |
+| 9 | **WR por dia** — continua fora do `metrics.rs`. Entrou `trading_days` (contagem de datas) e os dois shares; win-rate diário não. Idem item 7: o relatório do §5.3 imprime, o motor não calcula | item 4 |
 | 10 | **Custo em R.** O `print_acceptance` imprime `cost_total`, que é dólar; o §4 pedia o custo em R ao lado do avg R bruto | itens 4 e 6 |
 
 Consequências práticas:
 
-- O critério "limite inferior do IC95 em blocos ≥ 1,0" do §7 **não tem como ser
-  avaliado** enquanto o item 1 não existir. Dos cinco critérios propostos no
-  §7, o `walkforward` cobre **três**: PF_R e concentração saem impressos sob o
-  rótulo de proposta, e o **holdout travado** roda de fato (`--holdout-from`
-  reporta o bloco separado e passa o `print_acceptance` nele). Faltam o IC95 em
-  blocos (depende do item 1) e a sensibilidade a 4–5 bp, que hoje é rodar o
-  comando de novo à mão com outro `--slippage-bps`.
+- O critério "limite inferior do IC95 em blocos ≥ 1,0" do §7 **já é avaliável**
+  desde 08/09 (item 1). Medido: das oito combinações vivas, só a
+  `range-extreme-fade-v1` em SLYV passa, e por 0,003 (1,003); nenhuma das três
+  estratégias passa no pool; o **portfólio dos oito juntos** passa com 1,135 —
+  ou seja, a unidade em que o critério é lido decide o veredito. Detalhe em
+  `docs/reports/estatistica-gate-a-2026-09-08.md`.
+- **O esquema do §8 não é intercambiável, e isso foi medido.** A primeira
+  implementação reamostrava só os pregões *com trade* em vez de todos; com
+  17–32 pontos em vez de ~330, o bloco de 5 vira 16–29% da série, o bootstrap
+  circular degenera em rotação e o IC fica mais permissivo do que anuncia. O
+  efeito não é cosmético: a balance em IJS **passava** por um esquema e reprova
+  pelo outro (1,337 → 0,848). Trocar o esquema exige alterar formalmente este
+  pré-registro.
+- Dos cinco critérios propostos no §7, faltava também a sensibilidade a 4–5 bp,
+  que continua sendo rodar o comando de novo à mão com outro `--slippage-bps`.
 - O Sharpe impresso continua sem significado no full-period. Quem ler a linha
   de Sharpe de um run deste harness deve ignorá-la até o item 5.
 - O N da família continua sendo estimativa declarada em relatório, como o

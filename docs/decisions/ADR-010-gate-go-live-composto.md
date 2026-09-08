@@ -29,8 +29,16 @@
 > ≤ 60% e passagem num holdout travado. **Nada disso é gate hoje.** O
 > `walkforward` já imprime esses números, sob a linha
 > `--- proposta ADR-019 §7 (ainda não é o gate vigente) ---`, para o dono
-> decidir olhando o efeito real: sob eles, **nenhuma** das sete combinações
-> vivas passaria (a mais próxima é a range-fade em SLYV).
+> decidir olhando o efeito real: sob eles, **nenhuma** das oito combinações
+> vivas passaria (a mais próxima é a range-fade em SLYV, reprovada só pelos 20
+> trades contra os 50 exigidos).
+>
+> O quinto critério — o limite inferior do IC95 do PF por bootstrap em blocos —
+> passou a ser calculável em 08/09 (`trader-research/`). Ele não muda a frase
+> acima, mas acrescenta uma pergunta que este ADR não responde: **em que
+> unidade o gate é lido?** Os mesmos trades reprovam nos oito pares, reprovam
+> nas três estratégias agregadas e passam em tudo quando lidos como um
+> portfólio dos oito. Ver `docs/reports/estatistica-gate-a-2026-09-08.md`.
 >
 > Adotá-los substitui formalmente este ADR e é decisão do dono (§10.2 do plano
 > de lucratividade).

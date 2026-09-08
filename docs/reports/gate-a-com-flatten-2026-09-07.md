@@ -175,6 +175,16 @@ as métricas novas. As duas colunas que o gate não tinha:
 | fade · SLYV | 20 | 2,64 | 2,34 | **59%** | 1,86 | 0,04 | 22% |
 | openrev · IWM | 32 | 1,72 | 2,03 | 110% | 1,88 | −0,28 | 39% |
 | openrev · IWN | 26 | 1,56 | 1,56 | 74% | 1,08 | −0,02 | 31% |
+| **fade · IWV** (ver nota) | 18 | 1,32 | 1,08 | 225% | 0,16 | 0,19 | 92% |
+
+> **Nota de 08/09/2026 — a tabela acima nasceu com sete linhas e o portfólio
+> tem oito.** A `range-extreme-fade-v1` em **IWV** é instância viva
+> (`trader-iwv-rangefade`) e não foi rodada em 07/09. Rodada em 08/09 com a
+> mesma régua, ela reprova o gate A pela amostra e pelo avg R (0,043), tem
+> **PF em R 1,08**, os 2 melhores meses somando **225%** do net e o melhor dia
+> valendo **92%** dele — a combinação mais concentrada do conjunto. Reforça o
+> §5.10 do plano (retirá-la), que continua sendo decisão do dono. Onde este
+> relatório diz "sete combinações", leia **oito**.
 
 **1. A balance-area perde em R nos dois pares que já reprovavam.** PF_R 0,74
 em AVUV e 0,97 em VBR: em unidades de risco, essas instâncias não têm edge. O
@@ -197,9 +207,17 @@ distinguível de ruído.
 risco e R), exatamente como a re-simulação previa.
 
 **Se o gate proposto no ADR-019 §7 valesse hoje** — e ele ainda não vale, é
-decisão do dono — o resultado seria: **nenhuma das sete combinações passa**, e
+decisão do dono — o resultado seria: **nenhuma das oito combinações passa**, e
 a que chega mais perto é `range-extreme-fade-v1` em SLYV, reprovada só pelos
-20 trades contra os 50 exigidos. Isso não muda o que fazer no curto prazo (o
+20 trades contra os 50 exigidos.
+
+> **Atualização de 08/09/2026:** o quinto critério do §7 — o limite inferior do
+> IC95 do PF por bootstrap em blocos — não era calculável quando este relatório
+> foi escrito. Agora é (`trader-research/`, §5.3 do plano). Ele **não muda** a
+> conclusão acima por par, mas acrescenta uma leitura que este relatório não
+> tinha: os mesmos trades, lidos como **portfólio dos oito pares**, passam em
+> todos os critérios mensuráveis. Ver
+> `docs/reports/estatistica-gate-a-2026-09-08.md`. Isso não muda o que fazer no curto prazo (o
 paper forward segue sendo o único OOS verdadeiro e a amostra é o gargalo), mas
 muda a expectativa: a régua certa, aplicada aos dados que existem, não aprova
 nada.

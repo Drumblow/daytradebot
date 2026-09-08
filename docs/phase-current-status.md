@@ -109,7 +109,7 @@ O que isso contraria no que se dizia antes:
    em AVUV. O bug estava ajudando; o plano previa "imensurável" e errou.
 5. **Nenhum t-stat chega a 2** e só a fade em SLYV passa no critério de
    concentração (59% contra o teto **proposto** de 60%). Sob o gate proposto no
-   ADR-019 §7, **nenhuma** das sete combinações passaria — motivo a mais para não
+   ADR-019 §7, **nenhuma** das oito combinações passaria — motivo a mais para não
    tratar esses critérios como vigentes sem decisão do dono.
 
 Delta in-sample do flatten, pares vivos, 2 bp, para referência: balance-area
