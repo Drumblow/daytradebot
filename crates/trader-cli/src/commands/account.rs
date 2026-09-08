@@ -50,6 +50,17 @@ fn print_summary(summary: &trader_domain::AccountSummary) {
     println!("Equity:        {}", summary.equity);
     println!("Buying Power:  {}", summary.buying_power);
     println!("Daily PnL:     {}", summary.daily_pnl);
+    // A moeda da conta (ADR-020 §5). O cap de notional trata a equity como
+    // DÓLARES; se aparecer "CAD" aqui, o teto de 1× está ~1,37× errado desde
+    // sempre — e é a pergunta §10.3 que o dono precisa responder.
+    println!(
+        "Moedas:        {}",
+        if summary.currencies.is_empty() {
+            "não informadas pelo broker".to_string()
+        } else {
+            summary.currencies.join(", ")
+        }
+    );
 }
 
 async fn print_exposure<B: Broker>(broker: &B) -> Result<()> {
