@@ -40,3 +40,6 @@ docs/books/
 # O binario e as configs sao COPIADOS para ca no workflow; nao versionar.
 /deploy/images/bot/trader-cli
 /deploy/images/bot/config/
+
+# Saidas de backtest/walkforward geradas localmente (JSON e logs).
+out/

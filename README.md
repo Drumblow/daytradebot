@@ -76,6 +76,10 @@ Para detalhes, veja [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Operação, deploy e runbooks |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Segurança e controles financeiros |
 | [`docs/strategy-analysis-framework.md`](docs/strategy-analysis-framework.md) | Processo de criação de estratégias |
+| [`docs/cto-plano-lucratividade-2026-09.md`](docs/cto-plano-lucratividade-2026-09.md) | Plano de lucratividade: novas técnicas, estratégias e ativos (pesquisa de 09/2026) |
+| [`docs/reports/auditoria-2026-09-07.md`](docs/reports/auditoria-2026-09-07.md) | Auditoria do plano: 174 afirmações verificadas contra código, banco e fontes; 52 correções aplicadas |
+| [`docs/reports/roadmap-decisao-2026-09-07.md`](docs/reports/roadmap-decisao-2026-09-07.md) | Baseline de US$ na conta real, marcos de go/no-go e critérios de encerramento |
+| [`docs/reports/estudo-politicas-de-saida-2026-09-07.md`](docs/reports/estudo-politicas-de-saida-2026-09-07.md) | Estudo pareado de políticas de saída (breakeven, trailing, parcial) contra alvo fixo + flatten |
 | [`docs/strategies/pullback-trend-v1.md`](docs/strategies/pullback-trend-v1.md) | Primeira estratégia do MVP |
 | [`docs/decisions/ADR-*.md`](docs/decisions/) | Registro de decisões arquiteturais |
 | [`AGENTS.md`](AGENTS.md) | Regras para agentes de IA |

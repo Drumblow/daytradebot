@@ -39,6 +39,25 @@ Novas fontes podem ser adicionadas, desde que passem pelo mesmo processo de aná
 
 ## 3. Fases do Processo
 
+### Fase 0 — Screener com fill honesto (proposta de 07/09/2026, pendente de aprovação do dono)
+
+> Origem: `docs/cto-plano-lucratividade-2026-09.md` §5.7. Em um dia, um screener em SQL sobre os candles do banco reprovou 7 candidatos que as análises de livro ranqueavam no top-3 — cada um custaria 1–2 semanas de Rust, doc e walk-forward, o destino das 5 estratégias arquivadas.
+
+Antes de escrever qualquer código de estratégia (Fase 4), o setup passa por um mini-backtest em SQL sobre os candles 15m do banco, com o **fill honesto** que o simulador aplica (ADR-015): entrada em `max(open, gatilho)` (long) / `min(open, gatilho)` (short), stop avaliado primeiro na barra do fill, custo de 4 bp ida e volta, saída no fechamento do dia. Ferramentas e regras em `sql/screens/README.md`.
+
+```text
+Regra de decisão, declarada ANTES de rodar:
+  - avg R líquido agregado com t ≥ 1,5;
+  - mesmo sinal em 2025 e em 2026;
+  - melhor trimestre ≤ 50% do P&L;
+  - ≥ 40 fills/ano nos ativos vivos, contados por DATA (11 ETFs correlacionados são o mesmo dia);
+  - o sinal não inverte ao mover o parâmetro principal ±20%.
+Reprovou → não vai para a Fase 3. Passou → segue, e o N de variantes testadas
+entra no relatório (docs/reports/screens-<data>.md) para a contagem de tentativas.
+```
+
+O screener é um filtro de **reprovação**, calibrado contra controles (positivos: `range-extreme-fade-v1` em AVUV/SLYV; `balance-area-breakout-v1` medida com flatten de fim de sessão, a régua do live; negativo: `pullback-trend-v1`). Ele é mais pessimista que o motor em dias de gap (o motor cancela a entrada quando o gap excede 25% do stop; o screener enche pior) e não modela barra de sinal — um setup cujo edge está na barra de sinal precisa modelá-la explicitamente no screen.
+
 ### Fase 1 — Extração do conceito
 
 Ler o capítulo/setup do livro e responder:
