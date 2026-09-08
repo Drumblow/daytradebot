@@ -244,3 +244,78 @@ O padrão é estrutural e faz sentido: **ETFs de value/small revertem; índices 
 **APROVADA PARA ACUMULAR AMOSTRA** (mesma categoria das 3 irmãs em live) nos ativos **AVUV, SLYV e IWV** — os três com 5/6 ou 4/6 janelas positivas e sem deterioração recente. Gate A formal segue aberto: OOS por ativo ~24–25 trades (< 50) — a amostra forward no paper live fecha isso. MDY/IJR/IWN ficam de fora da primeira leva live (deterioração nas janelas recentes); reavaliar quando a amostra crescer. IWM/SPY/QQQ/IWO **não operam esta estratégia** (reprovados).
 
 **Candidatos de v2 registrados (medir antes de intuir):** alvo estrutural no lado oposto do range (vs 1,5R fixo); segunda entrada (o livro a prefere); pivô-2 como nível alternativo ao extremo do dia; regra da EMA ligada só em contexto Barb Wire.
+
+---
+
+## 17. Nota de correção v1.0.1 — veto de meio do dia em ET (07/09/2026)
+
+**Não é bump de versão.** É correção de bug com nota, pelo precedente A2
+(`e4231f3`) e por §5.4 de `docs/cto-plano-lucratividade-2026-09.md`. As
+**regras** da estratégia não mudaram: o veto continua sendo "meio do dia
+(11h30–14h00 ET) **e** preço no terço central do range do dia", exatamente
+como §4.4 sempre descreveu. O que estava errado era a implementação.
+
+### O bug
+
+`is_midday_midrange` comparava o horário da barra em **UTC fixo**
+(`midday_start_time = "15:30:00"`, `midday_end_time = "18:00:00"`), calibrado
+para o horário de verão americano. Fora do DST a janela desliza uma hora e
+passa a cobrir **10h30–13h00 ET** em vez de 11h30–14h00 — ou seja, veta a
+primeira hora do pregão, que é onde está **100% do P&L** desta estratégia
+(§2.3 achado 3 do plano), e libera a última hora do meio do dia, que deveria
+vetar. É a mesma família do A2 da auditoria de 30/08/2026, que já tinha
+corrigido as janelas de negociação e criado `crates/trader-core/src/session.rs`
+como implementação única da regra de horário — este arquivo tinha ficado de
+fora.
+
+Cerca de **24% do tempo da amostra do gate A** (os meses de EST) foi medido
+com o veto deslocado.
+
+### A correção
+
+`context.rs::is_midday_midrange` passa a converter com
+`crate::session::et_time` / `parse_et_time`; os campos do TOML e os defaults
+de `config.rs` viram horário de Nova York (`"11:30:00"` / `"14:00:00"`).
+Testes novos: `veto_de_meio_do_dia_nao_desliza_no_inverno` (o caso que pega o
+bug: 10h45 ET em novembro, que a janela UTC antiga vetava) e
+`veto_de_meio_do_dia_vale_igual_no_verao`.
+
+### `config_hash`
+
+| | hash |
+|---|---|
+| Antes (UTC fixo) | `49ee6f045b4c35a7` |
+| Depois (ET) | `818b53394244ca62` |
+
+Todo run e todo sinal a partir de 07/09/2026 carregam o hash novo. Os 109 runs
+com o hash antigo **não são comparáveis** com os novos, pelo mesmo precedente
+do ADR-015 §4.
+
+### Efeito medido — o plano previa "imensurável"; não é
+
+Re-rodada in-sample (24/02/2025 → 03/09/2026, 2 bp, **com** flatten do
+ADR-018), antes × depois da correção:
+
+| Par | n | PF antes | PF depois | avg R antes | avg R depois | net antes | net depois |
+|---|---|---|---|---|---|---|---|
+| AVUV | 29 | 1,55 | **1,24** | 0,199 | **0,112** | 1.760 | **817** |
+| SLYV | 21 | 2,75 | 2,75 | 0,458 | 0,458 | 2.579 | 2.579 |
+| IWV | 19 | 1,15 | 1,15 | −0,018 | −0,018 | 222 | 222 |
+| **Agregado** | **69** | **1,74** | **1,57** | **0,218** | **0,182** | **4.560** | **3.618** |
+
+Gate A OOS (walk-forward, 6 janelas, com flatten): AVUV cai de PF 1,89 /
+avg R 0,256 para **PF 1,47 / avg R 0,159** — passa por 0,009 acima do limiar
+do ADR-010. SLYV (PF 2,64 / 0,424) e IWV (PF 1,31 / 0,043) não mudam **em
+nada**.
+
+**A leitura honesta é que o bug estava ajudando.** A contagem de trades de
+AVUV é a mesma (29): a correção troca *quais* sinais passam — libera
+10h30–11h30 ET e veta 13h–14h ET nos meses de EST. O saldo dessa troca é
+negativo. Isso não é argumento para manter o bug: uma janela que anda uma hora
+duas vezes por ano não é regra, é acidente, e a regra que o livro descreve é a
+de ET. Mas registra que **o edge da range-fade é mais fino do que o gate A de
+04/09 mostrava**, e que AVUV agora passa por margem desprezível.
+
+Consequências para o gate B: o baseline de comparação da `range-extreme-fade-v1`
+é o run com hash `818b53394244ca62` **e** flatten. Qualquer `analyze` contra
+run mais antigo compara coisas diferentes.

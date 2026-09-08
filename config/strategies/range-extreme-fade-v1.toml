@@ -24,9 +24,13 @@ use_ema_side_rule = false
 ema_side_lookback = 8
 
 # Veto meio do dia + meio do range (seção 4.4 do doc; literal, Cap. 5).
-# Em UTC, horário de verão americano: 11:30–14:00 ET = 15:30–18:00 UTC.
-midday_start_time = "15:30:00"
-midday_end_time = "18:00:00"
+# Em horario de NOVA YORK (ET). Convertido com chrono-tz: NAO ajustar no DST.
+# Ate o hotfix v1.0.1 (07/09/2026) estes campos eram UTC fixo (15:30-18:00),
+# calibrados para o horario de verao; no EST a janela deslizava para
+# 10:30-13:00 ET e vetava a primeira hora do pregao, onde esta o P&L da
+# estrategia. Ver docs/strategies/range-extreme-fade-v1.md, nota de correcao.
+midday_start_time = "11:30:00"
+midday_end_time = "14:00:00"
 
 # Veto Barb Wire (seção 4.5 do doc; literal, Cap. 5)
 barb_wire_bars = 3

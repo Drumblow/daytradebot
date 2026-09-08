@@ -221,20 +221,17 @@ pub fn is_midday_midrange(candles: &[Candle], params: &StrategyParameters) -> bo
     let Some(last) = candles.last() else {
         return false;
     };
-    let parse = |s: &str| {
-        let p: Vec<&str> = s.split(':').collect();
-        chrono::NaiveTime::from_hms_opt(
-            p.first().and_then(|v| v.parse().ok()).unwrap_or(0),
-            p.get(1).and_then(|v| v.parse().ok()).unwrap_or(0),
-            p.get(2).and_then(|v| v.parse().ok()).unwrap_or(0),
-        )
-        .unwrap_or_default()
-    };
-    // A janela de veto é definida em UTC no TOML (como as demais); comparar
-    // em UTC para consistência com check_trading_hours.
-    let time_utc = last.timestamp.time();
-    let in_midday =
-        time_utc >= parse(&params.midday_start_time) && time_utc <= parse(&params.midday_end_time);
+    // HOTFIX v1.0.1 (§5.4 do plano de lucratividade; precedente A2): a janela
+    // era comparada em UTC FIXO (15:30–18:00), calibrado para o horário de
+    // verão. Fora do DST ela desliza uma hora e passa a cobrir 10h30–13h ET em
+    // vez de 11h30–14h — vetando a primeira hora do pregão, que é onde está
+    // 100% do P&L desta estratégia, e liberando parte do meio do dia que
+    // deveria vetar. ~24% do TEMPO da amostra do gate A foi medido assim.
+    // Agora a janela é declarada em ET e convertida com `chrono-tz`, como
+    // todas as outras janelas do projeto desde o A2 (`crate::session`).
+    let time_et = crate::session::et_time(last.timestamp);
+    let in_midday = time_et >= crate::session::parse_et_time(&params.midday_start_time)
+        && time_et <= crate::session::parse_et_time(&params.midday_end_time);
     if !in_midday {
         return false;
     }

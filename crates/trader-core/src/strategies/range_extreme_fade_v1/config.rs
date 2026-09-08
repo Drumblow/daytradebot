@@ -50,9 +50,10 @@ pub struct StrategyParameters {
     pub ema_side_lookback: usize,
 
     // --- veto meio do dia + meio do range (seção 4.4 do doc; literal Cap. 5) ---
-    /// Início do veto (11:30 ET = 15:30 UTC no horário de verão).
+    /// Início do veto, em horário de NOVA YORK (ET). Convertido com
+    /// `chrono-tz`: não ajustar no DST (hotfix v1.0.1, §5.4 do plano).
     pub midday_start_time: String,
-    /// Fim do veto (14:00 ET = 18:00 UTC no horário de verão).
+    /// Fim do veto, em horário de NOVA YORK (ET), inclusivo.
     pub midday_end_time: String,
 
     // --- veto Barb Wire (seção 4.5 do doc; literal Cap. 5) ---
@@ -118,8 +119,8 @@ impl Default for RangeExtremeFadeV1Config {
                     max_extension_atr_mult: Decimal::from(5) / Decimal::from(10), // 0,5 (calibrado)
                     use_ema_side_rule: false, // calibrado: regra vale para Barb Wire (Cap. 5)
                     ema_side_lookback: 8,
-                    midday_start_time: "15:30:00".to_string(), // 11:30 ET (DST)
-                    midday_end_time: "18:00:00".to_string(),   // 14:00 ET (DST)
+                    midday_start_time: "11:30:00".to_string(), // ET
+                    midday_end_time: "14:00:00".to_string(),   // ET
                     barb_wire_bars: 3,
                     barb_wire_overlap_pct: Decimal::from(5) / Decimal::from(10), // 0,5
                     barb_wire_doji_body_pct: Decimal::from(3) / Decimal::from(10), // 0,3

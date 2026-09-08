@@ -415,3 +415,95 @@ fn primeira_barra_do_dia_sem_extremo_previo() {
     let result = strategy().analyze_candles("IWM", &candles);
     assert_rejection(&result, RejectionReason::IncompleteSetup);
 }
+
+// ---------------------------------------------------------------------------
+// Hotfix v1.0.1 — veto de meio do dia em ET (§5.4 do plano de lucratividade)
+// ---------------------------------------------------------------------------
+
+/// Um pregão com preço parado no MEIO do range do dia, terminando no horário
+/// ET pedido. Range 99,00–101,00; todo close em 100,00 (centro exato), então
+/// `is_midday_midrange` depende só da janela de horário.
+///
+/// `utc_open_hour` é a hora UTC de 09h30 ET: 13 no horário de verão (EDT),
+/// 14 no de inverno (EST).
+fn dia_no_meio_do_range(
+    ano: i32,
+    mes: u32,
+    dia: u32,
+    utc_open_hour: u32,
+    barras: i64,
+) -> Vec<Candle> {
+    let base = Utc
+        .with_ymd_and_hms(ano, mes, dia, utc_open_hour, 30, 0)
+        .unwrap();
+    (0..barras)
+        .map(|i| {
+            candle(
+                base + Duration::minutes(i * 15),
+                dec(100),
+                dec_centi(10100),
+                dec_centi(9900),
+                dec(100),
+            )
+        })
+        .collect()
+}
+
+/// O bug do A2, agora nesta estratégia: com a janela em UTC fixo
+/// (15:30–18:00), no horário de INVERNO o veto cobria 10h30–13h ET em vez de
+/// 11h30–14h. Ou seja, vetava a primeira hora — onde está 100% do P&L da
+/// estratégia — e liberava o fim do meio do dia.
+///
+/// 10h45 ET no inverno é 15h45 UTC: cairia DENTRO da janela UTC antiga e tem
+/// de ficar FORA da janela ET correta.
+#[test]
+fn veto_de_meio_do_dia_nao_desliza_no_inverno() {
+    let params = RangeExtremeFadeV1Config::default().strategy.parameters;
+
+    // 2026-11-02 é EST (UTC-5): 09h30 ET = 14h30 UTC.
+    // 6 barras → última às 15h45 UTC = 10h45 ET. FORA do veto (11h30–14h).
+    let manha = dia_no_meio_do_range(2026, 11, 2, 14, 6);
+    assert_eq!(
+        crate::session::et_time(manha.last().unwrap().timestamp),
+        chrono::NaiveTime::from_hms_opt(10, 45, 0).unwrap(),
+        "a série de inverno tem de terminar às 10h45 ET"
+    );
+    assert!(
+        !context::is_midday_midrange(&manha, &params),
+        "10h45 ET não é meio do dia — com a janela em UTC fixo este caso era \
+         vetado no inverno, matando a primeira hora do pregão"
+    );
+
+    // 14 barras → última às 17h45 UTC = 12h45 ET. DENTRO do veto.
+    let meio = dia_no_meio_do_range(2026, 11, 2, 14, 14);
+    assert_eq!(
+        crate::session::et_time(meio.last().unwrap().timestamp),
+        chrono::NaiveTime::from_hms_opt(12, 45, 0).unwrap()
+    );
+    assert!(
+        context::is_midday_midrange(&meio, &params),
+        "12h45 ET é meio do dia e o preço está no centro do range: tem de vetar"
+    );
+}
+
+/// A mesma hora ET decide igual no verão — é o ponto do A2: a regra é de
+/// Nova York, não de UTC.
+#[test]
+fn veto_de_meio_do_dia_vale_igual_no_verao() {
+    let params = RangeExtremeFadeV1Config::default().strategy.parameters;
+
+    // 2026-07-22 é EDT (UTC-4): 09h30 ET = 13h30 UTC.
+    let manha = dia_no_meio_do_range(2026, 7, 22, 13, 6); // 10h45 ET
+    assert!(!context::is_midday_midrange(&manha, &params));
+
+    let meio = dia_no_meio_do_range(2026, 7, 22, 13, 14); // 12h45 ET
+    assert!(context::is_midday_midrange(&meio, &params));
+
+    // 14h15 ET (19 barras) já saiu do veto — a borda superior é 14h00.
+    let tarde = dia_no_meio_do_range(2026, 7, 22, 13, 20);
+    assert_eq!(
+        crate::session::et_time(tarde.last().unwrap().timestamp),
+        chrono::NaiveTime::from_hms_opt(14, 15, 0).unwrap()
+    );
+    assert!(!context::is_midday_midrange(&tarde, &params));
+}
