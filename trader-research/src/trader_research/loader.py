@@ -114,9 +114,10 @@ class Run:
         erro que somar com e sem flatten.
 
         O `sizing` entrou no mesmo dia com o ADR-020, e e o eixo mais
-        traicoeiro dos quatro: dois modos de dimensionamento produzem o MESMO
-        PF em R e o MESMO avg R — as metricas que o gate le — e P&L em $, DD%
-        e fracao presa no cap completamente diferentes. Medido nos 214 trades:
+        traicoeiro dos quatro: dois modos de dimensionamento produzem PF em R
+        e avg R praticamente iguais — as metricas que o gate le; medido, avg R
+        0,10728 no modo A contra 0,10683 no B — e P&L em $, DD% e fracao presa
+        no cap completamente diferentes. Medido nos 214 trades:
         o modo A rende US$ 14.574 e o modo B, com os mesmos trades, US$ 4.128.
         """
         return (

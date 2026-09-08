@@ -108,8 +108,9 @@ def test_sem_repeticao_o_mapa_sai_vazio(tmp_path):
 def test_modos_de_sizing_diferentes_nao_sao_somaveis(tmp_path):
     """ADR-020: o eixo mais traicoeiro da regua.
 
-    Dois modos de dimensionamento produzem o MESMO PF em R e o MESMO avg R —
-    as metricas que o gate le — com P&L em $ completamente diferentes: nos
+    Dois modos de dimensionamento produzem PF em R e avg R praticamente
+    iguais — as metricas que o gate le — com P&L em $ completamente
+    diferentes: nos
     214 trades medidos, US$ 14.574 no modo A contra US$ 4.128 no modo B. Sem
     esta trava, somar os dois daria um numero que nao descreve nenhum dos
     dois, e nada no relatorio denunciaria.
