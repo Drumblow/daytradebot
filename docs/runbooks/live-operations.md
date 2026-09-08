@@ -24,15 +24,25 @@ Nova York (o horário de verão americano é resolvido pelo tzdata):
 
 | Quando | O quê |
 |---|---|
-| seg–sex **9h25 ET** | sobe as 11 instâncias |
-| seg–sex **16h10 ET** | para as 11 instâncias |
+| seg–sex **9h25 ET** | sobe as 8 instâncias |
+| seg–sex **15h55–16h10 ET** | **flatten de fim de sessão** (ADR-018): cada instância cancela a entrada pendente e encerra a mercado a posição que ela rastreia |
+| seg–sex **16h10 ET** | para as 8 instâncias |
 | diário **16h30 ET** | `pg_dump` + retenção de 7 dias |
+
+> **O 16h10 do scheduler e o fim do flatten são o mesmo instante de propósito.**
+> Desde o ADR-018 a janela não é mais constante no código: vem da seção `[session]`
+> de `config/default.toml` (`flatten_start = "15:55:00"` e
+> `flatten_end = "16:10:00"`, horário de Nova York), a mesma que o motor de backtest
+> lê. Antecipar o stop do scheduler, ou mexer em `[session]`, desliga a proteção de
+> overnight **sem nenhum erro visível**. Se a janela ficar vazia
+> (`flatten_start >= flatten_end`) a instância nem sobe: o live aborta no boot.
+> Trade encerrado pelo flatten fica no banco com `exit_reason = 'end_of_day'`.
 
 Se o app subir *dentro* do pregão (servidor religou às 10h de uma terça), o
 scheduler liga as instâncias na hora, sem esperar o próximo 9h25.
 
 Cada instância também tem uma **guarda de janela** no entrypoint: fora do horário
-ela sai com `exit 0` e fica parada. É o que impede 11 conexões na IBKR quando o
+ela sai com `exit 0` e fica parada. É o que impede 8 conexões na IBKR quando o
 servidor religa de madrugada.
 
 Gateway e Postgres ficam no ar 24/7.
@@ -88,7 +98,7 @@ imagem `ghcr.io/drumblow/trader-bot`.
 
 ```bash
 sudo docker ps -a --filter name=daytradebot_
-sudo docker logs daytradebot_iwm-pullback_1 --tail 50
+sudo docker logs daytradebot_ijs-balance_1 --tail 50
 sudo docker logs daytradebot_gateway_1 --tail 30
 sudo docker logs daytradebot_scheduler_1 --tail 30
 sudo docker exec daytradebot_postgres_1 psql -U trader -d trader_db -p 5433 -c "SELECT ..."
@@ -99,7 +109,7 @@ instância evita ter que descobrir a senha do banco, que é derivada do `APP_SEE
 do umbrelOS e não existe em arquivo nenhum:
 
 ```bash
-ENVS=$(sudo docker inspect -f '{{range .Config.Env}}-e {{.}} {{end}}' daytradebot_iwm-pullback_1)
+ENVS=$(sudo docker inspect -f '{{range .Config.Env}}-e {{.}} {{end}}' daytradebot_ijs-balance_1)
 ```
 
 ```bash
@@ -116,8 +126,33 @@ sudo docker exec daytradebot_scheduler_1 /usr/local/bin/scheduler.sh stop-instan
 sudo docker exec daytradebot_scheduler_1 /usr/local/bin/scheduler.sh start-instances
 ```
 
-Parar o bot **não desprotege posições abertas** — stop e alvo ficam server-side na
-IBKR. Para impedir a abertura do dia seguinte, pare o app inteiro:
+Parar o bot **não cancela stop e alvo** — as pernas do bracket ficam server-side na
+IBKR. Mas elas vão com **TIF Day e expiram no sino**: quem impede que a posição
+atravesse a noite descoberta não é a corretora, é o **flatten de fim de sessão**
+(ADR-018), e ele só roda com a instância de pé.
+
+> ⚠️ **Não pare uma instância com posição aberta antes das 15h55 ET.** Sem o bot na
+> janela o flatten não acontece, o bracket expira no fechamento e **a posição dorme
+> sem stop**. A proteção volta, mas só na manhã seguinte e só depois de um alerta: a
+> recuperação enxerga a posição e bloqueia novas entradas, e o watchdog registra
+> `position_unprotected` (`critical`); na **segunda detecção seguida** ele recoloca o
+> stop no preço da ordem recuperada do banco e registra `stop_replaced`. A primeira
+> detecção só alerta de propósito — logo após um restart as pernas do bracket podem
+> ainda não aparecer em `open_orders`, e recolocar por cima de um stop que existe
+> deixaria ordem órfã capaz de abrir posição invertida. Se não houver ordem aberta
+> persistida para o símbolo não há stop conhecido para recolocar: aí o alerta pede
+> intervenção manual e a posição continua descoberta até alguém agir.
+
+Se precisar parar no meio do pregão com posição aberta, zere na mão antes (`$ENVS`
+vem da seção "Monitorar"; `--provider ibkr` é obrigatório porque o padrão é
+`simulated`, e sem `--confirm` o comando só mostra o que faria):
+
+```bash
+sudo docker run --rm --network host --entrypoint /opt/trader/bin/trader-cli -w /opt/trader $ENVS -e TRADER__IBKR__CLIENT_ID=99 ghcr.io/drumblow/trader-bot:latest flatten --symbol <SIMBOLO> --provider ibkr --confirm
+```
+
+Para impedir a abertura do dia seguinte, pare o app inteiro — **depois das
+16h10 ET**:
 
 ```bash
 sudo umbreld client apps.stop.mutate --appId daytradebot
@@ -129,17 +164,34 @@ Seguro — o bot reconstrói limites diários do banco e dedupra fills por
 `broker_fill_id`.
 
 ```bash
-sudo docker restart daytradebot_iwm-pullback_1
+sudo docker restart daytradebot_ijs-balance_1
 ```
+
+**Exceção: da última barra do pregão (15h45 ET) até as 16h10 ET, não reinicie com
+posição aberta.** O marcador de "já fiz o flatten hoje" vive em memória e a janela
+dura 15 minutos; se o restart não reconstruir a posição como *rastreada*, o flatten
+**se recusa a fechá-la de propósito** — nenhuma instância encerra posição que ela
+mesma não abriu, senão duas instâncias do mesmo símbolo inverteriam a posição uma
+da outra a cinco minutos do sino. O caso vira evento `critical` /
+`untracked_position` no banco e espera mão humana: o mesmo `flatten` da seção
+anterior, antes do fechamento.
 
 ## Deploy
 
-`push` em `main` → `images.yml` compila e publica em `ghcr.io/drumblow/*` → o job
-`deploy` roda no runner do app e recria as 11 instâncias com `--no-deps`, deixando
-Postgres e Gateway de pé. Fora do pregão elas sobem com a imagem nova e saem
-sozinhas pela guarda, prontas para as 9h25.
+`push` em `main` tocando `crates/**`, `config/**` ou `deploy/images/**` →
+`images.yml` compila e publica em `ghcr.io/drumblow/*` → o job `deploy` roda no
+runner do app e recria as 8 instâncias com `--no-deps`, deixando Postgres e Gateway
+de pé. Fora do pregão elas sobem com a imagem nova e saem sozinhas pela guarda,
+prontas para as 9h25.
 
 O job só roda com a variável `APP_DEPLOY=enabled` no repositório.
+
+> **Deploy não é neutro para o gate B.** Um push que muda a configuração de uma
+> estratégia muda o `config_hash` dela em produção e, por §3.8 de
+> `docs/cto-plano-lucratividade-2026-09.md`, **reinicia o relógio de 4 semanas** do
+> gate B daquela estratégia. Isso é decisão de dono, não efeito colateral de um
+> `git push` — conferir `docs/HANDOFF.md` antes. Em 07/09/2026 havia commits
+> retidos na `main` **sem push** exatamente por esse motivo.
 
 ## Circuit breaker
 
@@ -166,7 +218,7 @@ sudo docker exec daytradebot_postgres_1 pg_dump -U trader -p 5433 -d trader_db |
 
 A IBKR aceita **uma sessão por usuário**. **Não abrir TWS/Gateway local (PC de
 trabalho ou outro host) com o usuário do bot** — derruba a sessão da casa e mata as
-11 instâncias. Para consultar a conta, usar outro usuário ou o portal web.
+8 instâncias. Para consultar a conta, usar outro usuário ou o portal web.
 
 ## Depois de uma queda de energia
 
@@ -185,6 +237,20 @@ sudo docker exec daytradebot_postgres_1 psql -U trader -d trader_db -p 5433 -c "
 Cada dia sem candles é um pregão perdido e precisa de relatório em `docs/reports/`
 registrando a lacuna — a amostra do gate B da ADR-010 não pode contar dias em que o
 bot não rodou.
+
+**Se a máquina caiu com o pregão aberto, confira a posição no broker antes de
+qualquer outra coisa.** O flatten das 15h55 ET não roda com o servidor desligado e o
+bracket morre no sino: a posição atravessa a noite **sem stop**. O que acontece na
+volta depende de haver trilha no banco:
+
+- **Posição que o bot abriu e persistiu:** a instância do dia seguinte recupera a
+  ordem em aberto e religa o tracker com o replay dos fills, então ela *é* rastreada
+  — o watchdog reprotege como descrito na seção anterior e o flatten daquele dia a
+  encerra normalmente.
+- **Exposição que nenhuma ordem aberta explica** (sobra de sessão derrubada na IBKR,
+  por exemplo): ninguém rastreia. O flatten de fim de sessão se recusa a fechá-la de
+  propósito e o watchdog não tem stop conhecido para recolocar. É o caso do
+  `flatten` manual da seção "Parar / retomar manualmente".
 
 > **A máquina ainda não liga sozinha.** O app se recupera depois que o servidor
 > liga; ele não liga o servidor. Enquanto a BIOS não estiver em *Restore on AC Power

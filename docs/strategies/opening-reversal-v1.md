@@ -65,7 +65,14 @@ Na primeira hora, quando o mercado testa a máxima ou mínima do dia anterior e 
 ## 7. Gestão de Risco
 
 - Risco por trade: 1,0% (padrão do projeto).
-- Limites globais: 2%/dia, 3 trades/dia, 3 perdas consecutivas, flat 15:30 ET (brackets cancelados/fechados pelo broker ao fim do dia como nas demais).
+- Limites globais: 2%/dia, 3 trades/dia, 3 perdas consecutivas. **Fim de sinal
+  às 15:30 ET** (`trading_end_time` no TOML) — que NÃO é o momento do flat.
+  Correção de 07/09/2026: o broker **não** fecha nada no fim do dia. As três
+  pernas do bracket vão com TIF **Day** e simplesmente EXPIRAM no sino, o que
+  deixaria a posição atravessar a noite **sem stop** (C1 da auditoria de
+  30/08). Quem encerra é o bot, a mercado, na janela `[session]`
+  15:55–16:10 ET, gravando `ExitReason::EndOfDay` (ADR-018); no backtest, o
+  fechamento da última barra do pregão.
 - Direções: **long e short** (primeira estratégia do bot com short — o simulador, o RiskManager (RR em valor absoluto) e o bracket do domínio já são simétricos).
 
 ## 8. Fase 2 — Tabela Subjetivo → Objetivo (consolidada)
@@ -159,12 +166,19 @@ crates/trader-core/src/strategies/opening_reversal_v1/
 [x] Código revisado
 [x] Testes unitários passando (12 casos)
 [x] Backtest executado e relatório gerado
-[~] Métricas mínimas atingidas — **APROVADA EM QUALIDADE em 3 ativos; amostra insuficiente**
+[~] Métricas mínimas atingidas — **números de 06/08 sem flatten; re-rodado com a régua do live só em IWM e IWN (ver §17). IJR, VB e SLYV NÃO foram re-medidos**
 [x] Nenhuma violação de regra de segurança financeira
 [ ] Versionada no git
 ```
 
 ## 16. Veredito da validação (2026-08-06) — APROVADA PARA ACUMULAR AMOSTRA (small-caps)
+
+> ⚠️ **Números desatualizados desde 07/09/2026 — ver §17.** Saíram de um
+> backtest sem flatten de fim de pregão. A re-rodada com a régua do live cobriu
+> **apenas IWM e IWN** (os pares vivos): lá a estratégia continua passando e
+> melhora (PF in-sample 1,23 → 1,74). **IJR, VB e SLYV não foram re-medidos** —
+> o "mapa final de qualidade OOS" de cinco ativos abaixo vale para a régua
+> antiga e não deve ser usado para decidir par novo.
 
 - Backtest 17,5 meses × 6 ativos (runs 81–86): positiva nos 6, com 26–34 trades/ativo.
 - **Walk-forward OOS 6 janelas (runs 87–92):**
@@ -175,3 +189,44 @@ crates/trader-core/src/strategies/opening_reversal_v1/
 - Padrão: o edge vive em small-caps (como a pullback-trend-v1). OOS agregado IWM+IWN+IJR: 81 trades.
 - **Expansão de ativos (2026-08-06, 8 novos testados):** aprovada em qualidade também em **VB (23t OOS, PF 1.75, avgR 0.425)** e **SLYV (21t, 1.62, 0.418)**. Reprovada em IJS, VBR, AVUV, IWO, IWV. Mapa final de qualidade OOS: **IWM, IWN, IJR, VB, SLYV** (amostra agregada 125 trades).
 - **Decisão:** candidata forte. Para fechar o critério de amostra: mais histórico ou aceitar amostra agregada dos 5 ativos — decisão do dono. Não vai ao live antes disso (framework Fase 7).
+
+---
+
+## 17. Releitura com a régua do live (07/09/2026) — passa, e **melhora**
+
+O §16 acima foi medido sem o flatten de fim de pregão (ADR-018). Ao contrário
+das outras duas estratégias ativas, esta **melhora** com a régua correta:
+in-sample nos pares vivos o PF sobe de **1,23 para 1,74** e o net de +3.400
+para +8.085.
+
+O motivo é aritmético, não uma reabilitação: dos 67 trades, **8 eram overnight
+e somavam −2.722** (6 deles estopados no dia seguinte). Fechá-los no sino
+remove perdas que o live nunca teve. Quem lê isto como "a openrev é melhor do
+que parecia" está lendo errado — o backtest antigo é que a punia por trades que
+o live não faz.
+
+Walk-forward, 6 janelas, com flatten (runs 731–732 e `gate-a-adr019`):
+
+| Par | n OOS | WR | PF em $ | PF em R | avg R | 2 melhores meses | t-stat | corr(risco,R) |
+|---|---|---|---|---|---|---|---|---|
+| IWM | 32 | 59,3% | 1,72 | **2,03** | 0,450 | 110% | 1,88 | −0,28 |
+| IWN | 26 | 53,8% | 1,56 | 1,56 | 0,283 | 74% | 1,08 | −0,02 |
+
+Passa nos seis critérios do ADR-010 **menos a amostra** (32 e 26 contra 50).
+
+Duas observações que só as métricas do ADR-019 dão:
+
+1. **É a única das três que INVERTE o PF**: PF em R (2,03) acima do PF em
+   dólares (1,72), com correlação **negativa** entre risco e resultado (−0,28).
+   Onde a balance-area ganha em dólares por acidente de sizing, esta perde —
+   ou seja, o edge dela em R é maior do que o P&L sugere.
+2. **A concentração continua alta** (110% dos 2 melhores meses em IWM):
+   reprovaria o critério proposto no ADR-019 §7, que ainda não é o gate
+   vigente.
+
+Nada aqui muda a regra da v1. A hipótese short-only da primeira hora
+(`opening-reversal-v2`) continua na **Onda C** como hipótese de regime — 2025
+PF 2,33 contra 2026 PF 0,82 —, com a spec pronta em
+`docs/strategies/opening-reversal-v2.md` e sem implementação.
+
+Relatório completo: `docs/reports/gate-a-com-flatten-2026-09-07.md`.

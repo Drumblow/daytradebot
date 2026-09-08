@@ -1,8 +1,39 @@
 # ADR-010: Gate de go-live composto (estratégia + operação)
 
-**Status:** Aprovado  
+**Status:** Aprovado — **vigente**, com duas notas de 07/09/2026 (abaixo)  
 **Data:** 2026-08-04  
 **Autor:** CTO
+
+> ### Nota 1 — a régua do gate A mudou, os critérios não (ADR-018)
+>
+> Os seis critérios deste ADR continuam sendo o gate. O que mudou é o
+> **backtest que os alimenta**: até 07/09/2026 o motor deixava a posição
+> atravessar a noite, enquanto o live encerra tudo a mercado às 15h55 ET. Todo
+> veredito de gate A anterior ao flatten foi emitido contra um backtest que
+> ganha dinheiro dormindo posicionado.
+>
+> Consequência concreta: a `balance-area-breakout-v1` **reprova** este gate pelo
+> avg R com a régua correta (VBR −0,013; AVUV −0,173 com WR 31,4%) — só IJS
+> passa sozinha. A `range-extreme-fade-v1` reprova em IWV. A
+> `opening-reversal-v1` passa em IWM e IWN.
+>
+> O relatório de 04/09 (`docs/reports/gate-a-revalidacao-2026-09-04.md`) foi
+> **formalmente substituído** por `docs/reports/gate-a-com-flatten-2026-09-07.md`.
+> Nenhum run anterior ao flatten é comparável com os novos — mesmo precedente do
+> ADR-015 §4.
+>
+> ### Nota 2 — há critérios PROPOSTOS que ainda não valem (ADR-019 §7)
+>
+> O ADR-019 propõe acrescentar ao gate A: limite inferior do IC95 do PF por
+> bootstrap em blocos ≥ 1,0, PF em **R** ≥ 1,2, share dos 2 melhores meses
+> ≤ 60% e passagem num holdout travado. **Nada disso é gate hoje.** O
+> `walkforward` já imprime esses números, sob a linha
+> `--- proposta ADR-019 §7 (ainda não é o gate vigente) ---`, para o dono
+> decidir olhando o efeito real: sob eles, **nenhuma** das sete combinações
+> vivas passaria (a mais próxima é a range-fade em SLYV).
+>
+> Adotá-los substitui formalmente este ADR e é decisão do dono (§10.2 do plano
+> de lucratividade).
 
 ---
 

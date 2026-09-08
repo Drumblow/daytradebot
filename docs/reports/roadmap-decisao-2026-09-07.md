@@ -11,6 +11,29 @@ Este documento responde a isso com número, premissa e comando — e nada além 
 **Estado:** `main` em `d5e7279`; produção = app umbrelOS v1.1 com 8 instâncias em paper
 (v1.2.0 do app **ainda não publicada**, HANDOFF 04/09); nada da Onda A implementado; hoje
 (07/09) é feriado nos EUA — o próximo pregão é 08/09.
+> ⚠️ **Estado em 07/09/2026, fim do dia.** O cabeçalho abaixo diz "nada da Onda A
+> implementado". Isso valia de manhã. Depois disso foram implementados o
+> ADR-018 (flatten), o hotfix ET da range-fade e o ADR-019 (harness) — `main` em
+> `e1f1266`, **sem push**.
+>
+> O que muda para as contas desta página: o baseline de $ do §1 foi calculado
+> por replay em Python sobre os JSONs do motor de 06/09, e o motor com o ADR-018
+> agora **reproduz esses números** (contagem de trades idêntica; 20/9/8 saídas
+> `end_of_day`, os mesmos trades overnight). Os cenários A–D seguem válidos.
+>
+> Duas coisas pioraram e não estão refletidas abaixo:
+>
+> - **O hotfix ET (item #4 desta página) corta ~21% do net in-sample da
+>   range-fade** (PF 1,74 → 1,57), tudo em AVUV. O plano previa efeito
+>   imensurável; não é. Todo cenário que inclua a fade fica abaixo do publicado.
+> - **O PF em R põe a balance-area abaixo de 1** em AVUV (0,74) e VBR (0,97).
+>   Isso não muda o P&L em dólares dos cenários, mas muda a probabilidade de
+>   esses dólares se repetirem.
+>
+> Os marcos M0–M4 e os critérios de encerramento (18/12/2026 e 31/03/2027)
+> continuam válidos e **não** foram recalculados. Detalhe em
+> `docs/reports/gate-a-com-flatten-2026-09-07.md`.
+
 **Regra de leitura:** todo número desta página é **paper**, em backtest **in-sample** com custo
 de 2 bp/lado, e vem de um **replay em Python sobre os JSONs do motor de 06/09** (não do motor com
 a ADR-018). Onde o número não existe, está a premissa e o comando que a substitui.

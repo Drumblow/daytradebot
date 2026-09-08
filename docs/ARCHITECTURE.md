@@ -2,8 +2,15 @@
 
 **Versão:** 1.0  
 **Status:** Aprovado para implementação  
-**Última atualização:** 2026-07-02  
+**Última atualização:** 2026-09-07  
 **Autor:** Software Architect  
+
+> **Estado do que está descrito aqui:** o ADR-018 (flatten de fim de pregão), o
+> hotfix v1.0.1 do veto de meio-dia da `range-extreme-fade-v1` e o ADR-019
+> (harness de validação) estão implementados na `main`, mas **ainda sem push** —
+> ou seja, ainda não estão em produção. O ADR-020 e os critérios de gate do
+> ADR-019 §7 são proposta e não estão implementados; onde este documento os
+> cita, diz isso explicitamente.
 
 ---
 
@@ -153,6 +160,18 @@ botdaytrade/
 - `context::MarketContextAnalyzer` — classificação de mercado.
 - `risk::RiskManager` — validação de risco e sizing.
 - `execution::ExecutionEngine` — orquestração de ordens, stops e alvos.
+- `session` — janelas e datas de pregão em horário de Nova York (`et_time`,
+  `et_date`, `parse_et_time`, `within_trading_window`). É a **única**
+  implementação dessa regra: as janelas de negociação das estratégias, o veto de
+  meio-dia da `range-extreme-fade-v1` e os dois lados do flatten do ADR-018
+  chamam estas funções. Os **gatilhos** do flatten, porém, são diferentes de
+  propósito: no live é o relógio — `in_flatten_window` compara `et_time(agora)`
+  com a janela `[session] flatten_start`–`flatten_end`, e roda por tick, porque
+  depois das 16h ET não chega mais candle fechado para disparar nada; no
+  backtest é a mudança de `et_date` entre a barra atual e a seguinte
+  (`is_last_bar_of_session`), porque ali não há relógio, há série. Comparação
+  com UTC fixo desliza uma hora na virada do DST — foi exatamente o bug do
+  hotfix v1.0.1.
 - `strategies/` — implementações concretas de estratégias.
   - `pullback_trend_v1/`
     - `mod.rs`
@@ -184,12 +203,16 @@ pub trait Strategy {
 
 - `ibkr::IbkrMarketDataProvider`
 - `ibkr::IbkrBrokerAdapter`
+- `simulated::SimulatedBroker` e `simulated::SimulatedMarketDataProvider` — é
+  aqui que mora o simulador de execução usado por testes e pelo backtest, não em
+  `trader-backtest`. Expõe `pending_entry_order_id`, que o flatten do ADR-018 usa
+  para cancelar a entrada ainda não preenchida pelo mesmo `Broker::cancel_order`
+  do live, em vez de sumir com a ordem sem rastro.
 
 **Futuramente:**
 
 - `alpaca::AlpacaBrokerAdapter`
 - `polygon::PolygonMarketDataProvider`
-- `simulated::SimulatedBroker` (para testes e backtest)
 
 ### 5.4 `trader-infra`
 
@@ -198,10 +221,24 @@ pub trait Strategy {
 **Módulos:**
 
 - `db` — conexão PostgreSQL, migrations sqlx.
-- `repositories` — implementações sqlx de `CandleRepository`, `SignalRepository`, `OrderRepository`, `TradeRepository`, `MarketContextRepository`, `AssetRepository`.
-- `config` — carregamento de configuração (arquivos + env vars).
+- `repositories` — implementações sqlx de `CandleRepository`, `SignalRepository`, `OrderRepository`, `TradeRepository`, `FillRepository`, `MarketContextRepository`, `AssetRepository`, `IngestionRepository`, `SystemEventRepository` e `BacktestRunRepository`.
+- `config` — carregamento de configuração (arquivos + env vars). Expõe `AppConfig` e, desde o ADR-018, `SessionSettings` (bloco `[session]`: `flatten_start` = 15:55:00, `flatten_end` = 16:10:00, `last_bar` = 15:45:00, todos em **horário de Nova York** e parseados por `trader_core::session::parse_et_time`). É a fonte única do fim de pregão: o worker de paper trading e o backtest leem do mesmo lugar. Antes disso o live tinha duas constantes em `paper.rs` e o backtest não tinha fim de sessão nenhum.
 - `logging` — inicialização do `tracing`.
 - `clock` — abstração de tempo para testes determinísticos.
+
+> **`BacktestRunRepository` é peça de comparação, não só de gravação (ADR-019 §3).**
+> Além de persistir runs, ele expõe `latest_for(strategy_id, symbol, config_hash)`,
+> que é como o `analyze` escolhe o baseline — o `latest_by_strategy` antigo pegava
+> o run mais recente em *qualquer* símbolo e *qualquer* config, então a primeira
+> ablação rodada virava baseline do gate B em silêncio. Runs com override entram
+> marcados como `experimental` no jsonb `metrics` e ficam de fora. A migração 0005
+> cria `idx_backtest_runs_baseline` para essa busca.
+
+> **Leitura de trade falha fechado.** `TradeRow` converte para `Trade` por
+> `TryFrom`, não `From`: `exit_reason` desconhecido no banco vira erro de
+> repositório em vez do antigo `_ => Target` silencioso, que transformava dado
+> corrompido em trade vencedor. Qualquer repositório novo deve seguir o mesmo
+> contrato. Teste de integração em `crates/trader-infra/tests/trade_repository_test.rs`.
 
 > **Nota:** Um `event_bus` interno ainda não foi implementado. Eventos importantes são persistidos diretamente nas tabelas (`signals`, `orders`, `fills`, `trades`, `system_events`).
 
@@ -211,25 +248,76 @@ pub trait Strategy {
 
 **Módulos:**
 
-- `engine` — loop de eventos por candle.
-- `broker_sim` — simulador de execução com slippage e comissão.
-- `metrics` — cálculo de métricas de performance.
-- `report` — geração de relatórios comparativos.
+- `engine` — loop de eventos por candle e flatten de fim de pregão (ADR-018).
+  `BacktestConfig.session_flatten_et: Option<(u32, u32)>`, default
+  `Some((15, 45))` em horário de NY, fecha a posição na última barra do pregão;
+  `None` (flag `--no-flatten`) reproduz os runs anteriores ao ADR.
+- `walkforward` — janelas out-of-sample e holdout travado; é o caminho que
+  recebeu as flags novas do ADR-019.
+- `metrics` — cálculo de métricas de performance (`BacktestMetrics`). Além dos
+  agregados, expõe o tipo público `GroupMetrics` e as quebras `by_exit_reason`
+  (chaveada por `ExitReason::as_str`, via `Trade::effective_exit_reason` para
+  reconhecer o flatten gravado antes da variante existir), `by_direction` e
+  `by_entry_hour_et` (hora de **Nova York**, não UTC), mais as métricas de
+  dispersão e concentração do ADR-019: `profit_factor_r`, `t_stat_avg_r`,
+  `corr_risk_result`, `trading_days`, `top_day_share`, `top5_day_share`,
+  `top2_month_share`, `months_total`, `months_positive` e `cost_total`.
+- `report` — geração de relatórios comparativos, incluindo a tabela "Saídas por
+  motivo", que responde quanto do resultado veio de posição encerrada no sino em
+  vez de stop ou alvo.
+
+> **Nota:** o simulador de execução com slippage e comissão (`SimulatedBroker`)
+> não vive neste crate — está em `trader-adapters::simulated`, para que backtest
+> e testes usem o mesmo adapter que implementa o port `Broker`.
 
 ### 5.6 `trader-cli`
 
 **Responsabilidade:** Entrypoint principal do sistema.
 
-**Comandos iniciais:**
+**Módulos:**
+
+- `commands/` — um módulo por subcomando.
+- `dispatch` — resolve `--strategy` para a struct de estratégia e faz o parse do TOML de parâmetros.
+- `strategy_source` — de onde vem a config de um run: o TOML canônico (`config/strategies/<id>.toml`), um TOML alternativo (`--strategy-config`) ou o canônico com sobrescritas (`--set chave=valor`). ADR-019 §1–§2. É por causa dele que `toml` é dependência direta da CLI.
+- `risk_config` — parâmetros de risco por instância.
+- `alerts` — webhook de alertas críticos.
+- `synthetic` — candles sintéticos para smoke test (`--allow-synthetic`).
+- `config` — `CliConfig` (config da aplicação + provedor escolhido).
+
+**Comandos:**
 
 ```text
-trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31 --timeframe 15m
-trader-cli paper --strategy pullback-trend-v1 --symbol SPY --mode simulated --timeframe 15m
-trader-cli paper --strategy pullback-trend-v1 --symbol SPY --mode replay --timeframe 15m
-trader-cli ingest --symbol SPY --timeframe 15m
+trader-cli test-connection --provider ibkr
+trader-cli account --provider ibkr
+trader-cli ingest --symbol SPY --timeframe 15m --days 30
+trader-cli paper --strategy pullback-trend-v1 --symbol SPY --mode simulated|replay|live --timeframe 15m
+trader-cli backtest --strategy pullback-trend-v1 --symbol SPY --from 2025-01-01 --to 2025-12-31 --timeframe 15m [--output out/run.json] [--slippage-bps 10] [--allow-synthetic] [--no-flatten]
+trader-cli walkforward --strategy pullback-trend-v1 --symbol SPY --windows 6 [--output out/wf.json] [--slippage-bps 2.5] [--label gate-a-adr019] [--holdout-from 2026-01-01] [--strategy-config caminho.toml] [--set chave=valor] [--no-flatten]
+trader-cli analyze --strategy pullback-trend-v1 --symbol SPY
+trader-cli flatten --symbol SPY --confirm
+trader-cli cancel-orders --symbol SPY --confirm
 trader-cli status
 trader-cli journal --date 2026-07-01
+trader-cli debug-candles --symbol IWV --timeframe 15m
 ```
+
+- `--no-flatten` (ADR-018) desliga o encerramento de fim de pregão. Serve só para
+  reproduzir runs antigos e medir o delta: o resultado carrega posição pela noite,
+  coisa que o live nunca faz, e não vale como veredito de gate.
+- `--strategy-config` e `--set` (ADR-019) permitem variar parâmetro **sem código
+  novo** — não é preciso módulo novo em `trader-core` para uma ablação. Os dois
+  marcam o run como `experimental`, e run experimental é ignorado pelo baseline do
+  `analyze`.
+- As travas que **abortam** o comando: `--set` sem `--label`; chave inexistente
+  (as nove structs de `StrategyParameters` ganharam `deny_unknown_fields`); `--set`
+  que não muda o `config_hash` (override que não alterou nada é engano do operador,
+  não experimento); `--set` junto com `--holdout-from`; TOML de `--strategy-config`
+  cujo `strategy.id` não bate com `--strategy`; e `--holdout-from` com data inválida.
+- Além do veredito do gate vigente (ADR-010), o `walkforward` imprime os critérios
+  do ADR-019 §7 rotulados como **proposta que ainda não é o gate vigente**.
+- `analyze` compara o live contra o baseline de backtest por (estratégia, ativo,
+  `config_hash`) e filtra os trades do live pelo mesmo par `strategy_id` +
+  `config_hash`. Sem run compatível ele **avisa** em vez de pegar outro run.
 
 ---
 
@@ -325,8 +413,18 @@ pub trait CandleRepository: Send + Sync {
    6.1 Atualizar posição e trade no banco.
    6.2 Gerar diário automático.
    6.3 Verificar limites diários.
-7. Loop contínuo com health checks e reconexão.
+7. Na janela de fim de pregão (`[session] flatten_start`–`flatten_end`, por padrão
+   15h55–16h10 em horário de Nova York, lida da configuração — ADR-018):
+   7.1 Cancelar a ordem de entrada pendente.
+   7.2 Encerrar a mercado a posição que a própria instância abriu (posição órfã
+       fica para o comando manual `trader-cli flatten`).
+   7.3 Gravar o trade com `ExitReason::EndOfDay` — antes era `Manual` com
+       `journal.forced_exit`.
+8. Loop contínuo com health checks e reconexão.
 ```
+
+> **Por que o passo 7 não é opcional:** as pernas do bracket vão com TIF Day e
+> expiram no sino. Posição que atravessa a noite fica **sem stop**.
 
 ### 7.2 Backtest
 
@@ -341,8 +439,28 @@ pub trait CandleRepository: Send + Sync {
    4.4 Simular execução no fechamento do candle (modo conservador).
    4.5 Atualizar posições, stops e alvos.
    4.6 Registrar fills e resultados.
+   4.7 Se o candle for o último do pregão, encerrar a posição no fechamento dele
+       e gravar `ExitReason::EndOfDay` (ADR-018).
 5. Ao final, calcular métricas e gerar relatório.
 ```
+
+Sobre o passo 4.7:
+
+- O gatilho é **mudança de data ET** entre o candle atual e o seguinte, não o
+  relógio. Assim pregão de meio expediente também encerra, e o horário de
+  `session_flatten_et` (15h45 ET, espelhando `[session] last_bar`) entra só como
+  checagem de sanidade: se o pregão terminar depois dele, a série não é RTH-only e
+  o log avisa.
+- **O fim da série não é sino.** A última posição da amostra fica aberta — se o fim
+  dos dados contasse como fim de pregão, cada fronteira de janela do walk-forward
+  geraria um `EndOfDay` fantasma.
+- `--no-flatten` desliga o passo e reproduz os runs anteriores ao ADR **ao
+  centavo** (Σ|diff| = 0 no in-sample das três estratégias vivas). Serve para medir
+  o delta, não como gate.
+
+Esta era a divergência live/backtest que fazia o gate A comparar a operação real
+com um backtest que dormia posicionado. Números do reparo em
+`docs/reports/gate-a-com-flatten-2026-09-07.md`.
 
 ### 7.3 Ingestão histórica
 
@@ -377,15 +495,26 @@ pub trait CandleRepository: Send + Sync {
 
 ### 8.3 Configuração
 
-- Configuração base em arquivo TOML (`config/default.toml`).
+- Configuração base em arquivo TOML (`config/default.toml`); parâmetros de estratégia em `config/strategies/<id>.toml`.
+- O bloco `[session]` (`flatten_start`, `flatten_end`, `last_bar`, em horário de Nova York) é a fonte única do fim de pregão: live e backtest leem dele, de modo que a paridade do ADR-018 é por configuração e não por coincidência entre constantes duplicadas.
 - Sobreposição por variáveis de ambiente (`TRADER_BROKER__PAPER=true`).
 - Segredos via variáveis de ambiente ou secret manager (nunca no repo).
-- Cada execução registra o hash da configuração efetiva.
+- Cada execução registra o hash da configuração efetiva (`config_hash`). Ele é chave de comparação, não só metadado: o `analyze` escolhe o baseline de backtest por (estratégia, ativo, `config_hash`), ignorando runs experimentais, e filtra os trades do live pelo mesmo par (ADR-019 §3). Mudar um parâmetro invalida a comparação de propósito — foi o que o hotfix v1.0.1 fez com a `range-extreme-fade-v1` (`49ee6f045b4c35a7` → `818b53394244ca62`).
 
 ### 8.4 Tempo
 
 - Todos os timestamps em UTC no banco e no domínio.
-- Conversão para timezone do mercado apenas na camada de apresentação.
+- Regra de negócio que depende do relógio do mercado converte para horário de Nova
+  York e **nunca** compara UTC fixo: janelas de negociação, veto de meio-dia das
+  estratégias, flatten de fim de pregão (ADR-018) e o bucket `by_entry_hour_et`
+  das métricas.
+- A conversão vive num único lugar, `trader_core::session`. Offset fixo desliza uma
+  hora na virada do DST: foi assim que o veto de meio-dia da
+  `range-extreme-fade-v1` rodou na hora errada **fora do horário de verão** —
+  parte da amostra do gate A foi medida com a janela deslocada — até o hotfix
+  v1.0.1, e o efeito da correção não foi neutro (−21% no net in-sample da fade;
+  o bug estava ajudando).
+- Apresentação converte de UTC para ET para exibir; nunca o contrário.
 - `Clock` trait para testes determinísticos.
 
 ---
@@ -404,13 +533,25 @@ As decisões abaixo são detalhadas nos ADRs em `docs/decisions/`:
 | ADR-006 | Event sourcing para decisões | Auditoria completa e reprodução de cenários. |
 | ADR-007 | TWS API/IB Gateway para IBKR | Conexão persistente para streaming e ordens. |
 | ADR-008 | Paper trading com replay de candles do banco | Validação sem risco e auditoria completa antes do live. |
+| ADR-009 | Tipo de entrada configurável por estratégia (stop vs limit) | A entrada deixa de ser fixa e passa a ser parâmetro da estratégia. |
+| ADR-010 | Gate de go-live composto (estratégia + operação) | **É o gate em vigor.** Seis critérios: ≥ 50 trades, WR ≥ 40%, PF ≥ 1,3, DD ≤ 10%, avg R > 0,15, net > 0. |
+| ADR-011 | Operação na VM Oracle | Tirar bot, Gateway e banco do PC. Desativada pelo ADR-012. |
+| ADR-012 | Migração do live para o servidor da casa (umbrelOS, containers) | Substitui a VM Oracle. |
+| ADR-013 | Empacotar o bot como app do umbrelOS | Implementado; cutover em 2026-08-28. |
+| ADR-014 | Painel web de status (`trader-web`) | Implementado em 2026-08-28. |
+| ADR-015 | Guarda de overshoot na entrada stop | Live ≡ backtest na entrada; precedente de que run anterior à correção não é comparável. |
+| ADR-016 | Desligar a `pullback-trend-v1` | **Aplicado em produção desde 2026-09-04** (app v1.2.0): as instâncias da pullback saíram do compose e o `images.yml` recria 8 instâncias de 3 estratégias. |
+| ADR-017 | Limite de risco da conta inteira, não só por instância | Soma a exposição das instâncias; fechou o bloqueador de go-live da auditoria de 30/08. |
+| ADR-018 | Paridade de fim de sessão entre live e backtest | Flatten de fim de pregão como `ExitReason::EndOfDay`; janela no `[session]` da config para os dois modos; no backtest o gatilho é a mudança de data ET. Migração 0004 amplia o CHECK de `trades.exit_reason`. |
+| ADR-019 | Harness de validação e gate A estatístico | `--strategy-config`/`--set` permitem ablação sem código novo; holdout travado por `--holdout-from`; baseline do `analyze` por (estratégia, ativo, `config_hash`); métricas de dispersão e concentração. Implementado exceto o item 8 (relatório Python em `trader-research/`) e o dedupe do item 3. **Os critérios do §7 são proposta ainda não vigente — o gate em vigor continua sendo o do ADR-010.** |
+| ADR-020 | Dimensionamento por liquidez e fração de capital | **Proposto / especificado — NÃO implementado.** Nada do sizing descrito nele está no código. |
 
 ---
 
 ## 10. Restrições e premissas
 
 - O MVP opera apenas em **paper trading**.
-- O primeiro ativo é **SPY** (futuro: QQQ, AAPL, MSFT).
+- **SPY** é só o valor padrão dos comandos da CLI, não o ativo operado. A produção roda 8 instâncias, e os pares medidos no gate A de 07/09/2026 são IJS, VBR e AVUV (`balance-area-breakout-v1`), AVUV, SLYV e IWV (`range-extreme-fade-v1`) e IWM e IWN (`opening-reversal-v1`).
 - Timeframes operacionais: **15min** (operação), **1h** (contexto), **diário** (macro).
 - O sistema não fará HFT, scalping de alta frequência ou arbitragem.
 - A latência aceitável é de segundos, não milissegundos.

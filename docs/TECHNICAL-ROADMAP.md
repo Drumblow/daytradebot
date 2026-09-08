@@ -1,8 +1,8 @@
 # Roadmap Técnico — HumanStyle Trader Bot
 
-**Versão:** 1.1  
+**Versão:** 1.2  
 **Status:** Em andamento  
-**Última atualização:** 2026-07-02  
+**Última atualização:** 2026-09-07  
 
 ---
 
@@ -282,7 +282,7 @@ Nunca operar dinheiro real.
 
 **Duração estimada:** 2–3 semanas  
 **Objetivo:** Permitir avaliar a estratégia em dados históricos com as mesmas regras do live.  
-**Status:** ✅ Concluída (exportação de relatório ainda pendente)
+**Status:** ✅ Concluída — exportação JSON entregue (ADR-019); a paridade com as regras do live, que o objetivo desta fase exige, só foi fechada pelo ADR-018
 
 ### Entregáveis
 
@@ -301,7 +301,11 @@ Nunca operar dinheiro real.
   - Melhor/pior trade.
   - Sharpe simplificado.
 - [x] Comando `trader-cli backtest` com carregamento do banco.
-- [ ] Exportação de relatório em JSON/CSV.
+- [x] Flatten de fim de sessão no backtest (`ExitReason::EndOfDay`, seção `[session]` em `config/default.toml`, flag `--no-flatten`) — paridade live/backtest (ADR-018). O gatilho é mudança de data ET, não relógio: fim da série não é sino.
+- [x] Métricas do harness (ADR-019): PF em R (`profit_factor_r`), t-stat do avg R (`t_stat_avg_r`), corr(risco, R) (`corr_risk_result`), quebra por `exit_reason`/direção/hora ET (`by_exit_reason`, `by_direction`, `by_entry_hour_et` — horas de Nova York), concentração por dia e por mês (`top_day_share`, `top5_day_share`, `top2_month_share`, `months_positive`/`months_total`) e custo total (`cost_total`).
+- [x] Travas de reprodutibilidade do `trader-cli walkforward` (ADR-019): `--label`, `--holdout-from`, `--strategy-config`, `--set chave=valor` e `--slippage-bps` fracionário. Abortam o run: `--set` sem `--label`, chave inexistente, `--set` que não muda o `config_hash`, `--set` com `--holdout-from` e TOML com id diferente do `--strategy`.
+- [x] Seleção de baseline por `(estratégia, par, config_hash)` no `trader-cli analyze`, ignorando runs `experimental`; sem run compatível ele avisa em vez de comparar contra outro.
+- [x] Exportação de relatório em JSON — `trader-cli backtest --output` e, desde o ADR-019, `trader-cli walkforward --output` (janelas, métricas da seleção e do holdout, trades, `slippage_bps`, `session_flatten` e overrides). CSV segue sem cliente.
 
 ### Critérios de sucesso
 
@@ -379,7 +383,7 @@ Documentação permite que outra pessoa opere o sistema.
 | Fase 3 | 2 semanas | Semana 5 | Semana 7 | ✅ |
 | Fase 4 | 3 semanas | Semana 7 | Semana 10 | ✅ |
 | Fase 5 | 3 semanas | Semana 10 | Semana 13 | ✅ (simulado/replay) |
-| Fase 6 | 2–3 semanas | Semana 12 | Semana 15 | ✅ (exportação CSV/JSON pendente) |
+| Fase 6 | 2–3 semanas | Semana 12 | Semana 15 | ✅ |
 | Fase 7 | 3–4 semanas | Semana 15 | Semana 19 | ⏳ |
 | Fase 8 | 2–3 semanas | Semana 18 | Semana 21 | ⏳ |
 
@@ -419,6 +423,23 @@ Antes de iniciar uma nova fase, o seguinte deve estar verdadeiro:
 - [x] Documentação atualizada.
 - [x] Testes passando (unitários e de integração).
 - [x] Decisões arquiteturais impactantes registradas em ADR.
+
+> **Ressalva aberta em 07/09/2026 no item "mergeado na branch principal":** os
+> commits do ADR-018, do hotfix ET v1.0.1 da `range-extreme-fade-v1` e do
+> ADR-019 (`16a0cea`, `cbc8be5`, `8c88fd7`, `13f83f2`, `e1f1266`) estão na
+> `main` **local, sem push**. Isso é deliberado, não esquecimento:
+> `.github/workflows/images.yml` dispara em push para `main` com paths
+> `crates/**` e `config/**` e, com `APP_DEPLOY=enabled` fora do pregão, recria
+> as 8 instâncias de produção — o push mudaria o `config_hash` da
+> `range-extreme-fade-v1` em produção no meio do gate B e reiniciaria as 4
+> semanas (§3.8 do plano de lucratividade). O push é decisão do dono.
+> Estado do working tree: 268 testes no workspace (eram 241) e
+> `clippy --all-targets -D warnings` limpo.
+>
+> Ainda **propostos**, não implementados e portanto sem efeito sobre qualquer
+> fase acima: o ADR-020 (dimensionamento por liquidez) e os critérios
+> estatísticos do ADR-019 §7 (PF_R ≥ 1,2; 2 melhores meses ≤ 60%). O gate que
+> vale continua sendo o do ADR-010.
 
 ---
 

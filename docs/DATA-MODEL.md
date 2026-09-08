@@ -2,7 +2,7 @@
 
 **Versão:** 1.0  
 **Status:** Aprovado para implementação  
-**Última atualização:** 2026-07-02  
+**Última atualização:** 2026-09-07  
 **Banco:** PostgreSQL 15+  
 
 ---
@@ -315,7 +315,7 @@ CREATE UNIQUE INDEX idx_fills_broker_fill_id ON fills (broker_fill_id) WHERE bro
 
 ---
 
-### 3.7.1 `backtest_runs` (migração 0003)
+### 3.7.1 `backtest_runs` (migrações 0003 e 0005)
 
 Histórico de execuções de backtest / walk-forward, para comparação entre runs e com o live (`trader-cli analyze`).
 
@@ -332,10 +332,83 @@ CREATE TABLE backtest_runs (
     initial_capital  NUMERIC NOT NULL,
     final_equity     NUMERIC NOT NULL,
     metrics          JSONB NOT NULL,
-    label            TEXT,              -- ex.: "walkforward-oos-4w"
+    -- default "walkforward-oos-<N>w"; com o ADR-019 deixou de ser decorativo:
+    -- `--label` é OBRIGATÓRIO quando o run é experimental (`--set` /
+    -- `--strategy-config`), senão a ablação entra no histórico indistinguível
+    -- do run de produção e vira baseline do gate B por ordem de chegada.
+    label            TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- migração 0005 (ADR-019): índice da busca de baseline do gate B.
+CREATE INDEX idx_backtest_runs_baseline
+    ON backtest_runs (strategy_id, asset_id, config_hash, created_at DESC);
 ```
+
+**O que vive no `metrics` (jsonb).** Além das métricas do `BacktestMetrics`,
+os runs de `walkforward` a partir do ADR-019 gravam o que DEFINE o run:
+
+| Chave | Para quê |
+|---|---|
+| `slippage_bps` | custo do run (texto, aceita fração: `"2.5"`) |
+| `session_flatten` | hora **ET** (America/New_York) esperada da última barra do RTH (`[session].last_bar`, `"15:45"` no default) — ou `null` (`--no-flatten`); registra se a régua de fim de pregão do ADR-018 estava ligada |
+| `experimental` | `true` quando houve `--set`/`--strategy-config` |
+| `overrides` | mapa chave→valor dos `--set` aplicados |
+| `windows`, `holdout_from`, `holdout_metrics` | desenho da validação |
+
+`session_flatten` grava o **horário, não o gatilho**. No backtest a última
+barra do pregão é detectada por **mudança de data ET**
+(`is_last_bar_of_session`, `crates/trader-backtest/src/engine.rs`), porque nos
+pregões de meio expediente o dia acaba às 12h45; o horário da chave é só a
+checagem de sanidade, e quando a barra fecha depois dele o motor emite um
+`warn!` de "série não parece RTH-only". No live o gatilho é outro de
+propósito: a janela `[session] flatten_start`..`flatten_end`, checada por tick.
+E a barra em questão não é "a última barra de entrada" — o sinal dela é
+gerado, logado e contado normalmente; o que morre é a ordem
+(`cancel_pending_entry`), como no live, onde a perna do bracket vai com TIF
+Day e expira no sino.
+
+Sem essas chaves, dois runs com custo ou régua diferentes são
+indistinguíveis. Não as têm os runs anteriores ao ADR-019 nem — hoje, depois
+dele — os gravados pelo comando `backtest`, que persiste o `metrics` puro e
+`label: None` (`crates/trader-cli/src/commands/backtest.rs`). Em qualquer dos
+dois casos o `analyze` avisa que o run não é comparável com os novos.
+
+**As chaves do próprio `BacktestMetrics`** (`crates/trader-backtest/src/metrics.rs`).
+O ADR-018/019 acrescentou três sub-objetos — `by_exit_reason`, `by_direction`
+e `by_entry_hour_et`, todos mapas de `GroupMetrics` (tipo público novo) — e as
+métricas em R e de concentração: `profit_factor_r`, `t_stat_avg_r`,
+`corr_risk_result`, `trading_days`, `top_day_share`, `top5_day_share`,
+`top2_month_share`, `months_total`, `months_positive` e `cost_total`. Duas
+convenções que não se leem do nome:
+
+- as chaves de `by_exit_reason` são o texto canônico de `ExitReason::as_str()`
+  e incluem `end_of_day` por `Trade::effective_exit_reason()`, de modo que o
+  flatten gravado antes da migração 0004 (como `manual` + journal) cai na
+  linha certa;
+- as de `by_entry_hour_et` são horas de **Nova York** com dois dígitos
+  (`"09"`, `"10"`, `"15"`), não UTC — é a exceção ao princípio 5 desta página,
+  e é deliberada: um bucket em UTC junta duas horas de pregão diferentes na
+  virada do DST.
+
+Todas carregam `#[serde(default)]` — os três mapas e os dez campos em R e de
+concentração: runs anteriores ao ADR-019 simplesmente não as trazem, e
+desserializam com zero/mapa vazio em vez de falhar. Não é detalhe de estilo.
+O jsonb `metrics` guarda esta struct serializada, e há centenas de runs
+gravados antes do ADR sem nenhum desses campos: sem o atributo, o `analyze`
+abortaria com "métricas do run N inválidas" ao cair num deles e o histórico do
+gate B ficaria ilegível. O teste `metrics_de_run_antigo_ainda_desserializa`
+(`crates/trader-backtest/src/metrics.rs`) trava a regressão com o jsonb de um
+run real.
+
+**Não há índice ÚNICO nem dedupe**, apesar de o plano os pedir. A auditoria de
+07/09/2026 mediu que, no maior grupo "duplicado" por
+`(strategy_id, asset_id, config_hash, período, label)` — 24 linhas —, existem
+**sete valores distintos de `final_equity`**: não são cópias. O `config_hash`
+cobre só o TOML da estratégia, não a versão do motor, o slippage nem a régua
+de fim de sessão. Deduplicar por essa chave apagaria resultados diferentes
+entre si. Fica para quando a identidade do run for recuperável (as chaves
+acima são o primeiro passo) e o dono autorizar apagar linhas.
 
 ---
 
@@ -411,7 +484,14 @@ CREATE TABLE trades (
     risk_amount         NUMERIC NOT NULL,
     result_in_r         NUMERIC NOT NULL,   -- ex: +2.0, -1.0
 
-    exit_reason         TEXT NOT NULL CHECK (exit_reason IN ('target', 'stop', 'time', 'manual', 'risk_manager')),
+    -- 'end_of_day' entrou na migração 0004 (ADR-018): o encerramento de fim de
+    -- pregão passou a ter motivo próprio. Antes ia como 'manual' com
+    -- journal->>'forced_exit' = 'session_flatten', e o gate B contava flatten
+    -- como saída discricionária. Os trades gravados ANTES do ADR continuam
+    -- 'manual' no banco — a reclassificação é opcional e depende de decisão do
+    -- dono (`sql/maintenance/0004-reclassificar-flatten.sql`); o código os
+    -- reconhece pelo journal via `Trade::effective_exit_reason()`.
+    exit_reason         TEXT NOT NULL CHECK (exit_reason IN ('target', 'stop', 'time', 'manual', 'risk_manager', 'end_of_day')),
     strategy_id         TEXT NOT NULL,
     strategy_version    TEXT NOT NULL,
     config_hash         TEXT NOT NULL,
@@ -569,6 +649,7 @@ CREATE TABLE ingestions (
 | `signals` | `assets`, `market_contexts`, `strategy_configs` | N:1, N:1, implícito |
 | `orders` | `signals`, `assets`, `orders` (parent) | N:1, N:1, N:1 |
 | `fills` | `orders`, `assets` | N:1, N:1 |
+| `backtest_runs` | `assets` | N:1 |
 | `positions` | `assets`, `signals` | N:1, N:1 |
 | `trades` | `assets`, `signals`, `positions` | N:1, N:1, N:1 |
 | `account_snapshots` | — | — |
@@ -588,8 +669,33 @@ CREATE TABLE ingestions (
 
 ## 6. Estratégia de migrações
 
-- Usar `sqlx migrate` ou `refinery`.
-- Migrations versionadas em `migrations/`.
+Aplicadas até 07/09/2026:
+
+| # | O quê | ADR |
+|---|---|---|
+| 0001 | schema inicial | — |
+| 0002 | `fills.side` + dedupe/idempotência do replay de execuções | — |
+| 0003 | `backtest_runs` | — |
+| 0004 | `end_of_day` no CHECK de `trades.exit_reason` | ADR-018 |
+| 0005 | índice `idx_backtest_runs_baseline` | ADR-019 |
+
+As migrações vivem em `crates/trader-infra/src/db/migrations/` e são
+**embutidas no binário** por `sqlx::migrate!` (`db/mod.rs`), então um arquivo
+`.sql` novo exige recompilar `trader-infra`. Elas rodam no boot do `paper`;
+`backtest`, `walkforward`, `analyze` e `status` **não** as executam.
+
+O `DROP CONSTRAINT` da 0004 é por **busca** (`pg_constraint` + `ILIKE`), não
+por nome: o CHECK da 0001 é anônimo, e derrubar pelo nome implícito falharia
+em silêncio num ambiente que divergisse — o `ADD` criaria o novo, o antigo
+continuaria valendo e o primeiro INSERT de `end_of_day` quebraria só em
+produção (SQLSTATE 23514).
+
+- Ferramenta: `sqlx migrate`, embutido via `sqlx::migrate!` (`refinery` foi
+  descartado e não existe no repositório).
+- Migrations versionadas em `crates/trader-infra/src/db/migrations/`, como
+  acima — **não** há diretório `migrations/` na raiz. Criar a 0006 lá escreve
+  um arquivo que nunca é aplicado, e como as migrações são embutidas no
+  binário o erro só apareceria no boot do `paper`.
 - Ambiente de desenvolvimento com `docker-compose.yml` subindo PostgreSQL.
 - Testes de integração usam banco de teste isolado (`sqlx::test`).
 - Nunca alterar migrations já aplicadas em produção. Correções via nova migration.

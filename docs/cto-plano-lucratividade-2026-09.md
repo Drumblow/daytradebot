@@ -3,6 +3,44 @@
 **Autor:** análise automatizada (coding agent, pesquisa multiagente de 06–07/09/2026) a pedido do dono do projeto
 **Pergunta do dono:** "elaborar a documentação de implementação de novas técnicas e estratégias com potencial maior de lucro para testarmos — com liberdade para pensar em outros ativos ou até criptomoedas; a ideia é melhorar a capacidade lucrativa do bot."
 **Estado do código analisado:** `main` em `d5e7279` (06/09/2026); banco dev `trader_db` (porta 5434) com candles 15m de 24/02/2025 → 02/09/2026; produção = app umbrelOS v1.1 com 8 instâncias
+> ## Estado de execução — atualizado em 07/09/2026
+>
+> O plano abaixo é o documento de 07/09 e **não foi reescrito**: ele registra o
+> que se sabia quando foi produzido. Esta caixa registra o que já saiu do papel.
+>
+> | Item do ranking §4 | Estado |
+> |---|---|
+> | 1 — flatten de fim de sessão (ADR-018) | ✅ **implementado** e verificado com dado real |
+> | 5 — hotfix ET do veto de meio-dia (§5.4) | ✅ **implementado** |
+> | 3 — harness de validação (ADR-019) | ✅ **implementado**, menos o item 8 (relatório em Python) e o dedupe |
+> | 4 — relatório estatístico (§5.3) | ⏳ pendente — sem ele o critério "IC95 em blocos ≥ 1,0" não é avaliável |
+> | 6 — ADR-020 (sizing/liquidez) | ⏳ **não implementado**, continua proposto |
+> | 7 — higiene e custo real (§5.6) | ⏳ pendente |
+> | 2, 8, 9, 9b — feed, screener, A9, sair de IWV | ⏳ pendentes (2, 9 e 9b dependem do servidor ou de decisão do dono) |
+>
+> `main` está em `e1f1266`. **Nada foi enviado com push** — ver o aviso de deploy
+> em `docs/HANDOFF.md`.
+>
+> **Três coisas que a execução mostrou e que o texto abaixo ainda não sabia:**
+>
+> 1. **§5.4 diz que o efeito do hotfix ET seria "imensurável". Não é.** Medido:
+>    a fade cai de PF 1,74 / avg R 0,218 / +4.560 para **PF 1,57 / 0,182 /
+>    +3.618** in-sample (−21% no net), tudo em AVUV, com a **mesma** contagem de
+>    trades — a correção troca *quais* sinais passam. No OOS, AVUV cai de avg R
+>    0,256 para 0,159. O bug estava ajudando.
+> 2. **§5.2 e §5.6 pedem índice único e dedupe de `backtest_runs`; a
+>    implementação recusou os dois, com número.** No maior grupo "duplicado"
+>    (24 linhas) há **sete valores distintos de `final_equity`**: não são
+>    cópias. O `config_hash` cobre só o TOML da estratégia, não a versão do
+>    motor, o slippage nem a régua de fim de sessão. Deduplicar apagaria
+>    resultados diferentes entre si. A migração 0005 cria só o índice de busca.
+> 3. **O PF em R, que o §2.3 achado 4 previa, é pior do que o plano estimava:**
+>    a balance-area tem **PF_R 0,74 em AVUV e 0,97 em VBR** — abaixo de 1, ou
+>    seja, sem edge em unidades de risco. Sob o gate proposto no ADR-019 §7
+>    (que ainda **não** é o gate vigente) nenhuma das sete combinações passaria.
+>
+> Veredito e números em `docs/reports/gate-a-com-flatten-2026-09-07.md`.
+
 **Regra de leitura:** nada aqui altera as **regras** das estratégias v1 em produção; as duas exceções são o hotfix do veto de meio-dia (§5.4, correção de bug com nota, precedente A2) e o piso de stop transversal (§6.9), se o dono aprová-lo. Toda mudança de regra é v2 validada do zero (framework §4); toda mudança de motor tem ADR proposto. Números de backtest são a 2 bp/lado e, salvo indicação, **sem** o flatten de fim de sessão que o live faz — ver §2.3, que é o achado central.
 
 ---

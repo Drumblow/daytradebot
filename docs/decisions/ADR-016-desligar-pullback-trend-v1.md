@@ -26,7 +26,17 @@ ADR revisita a decisão com as regras corrigidas.
 
 ## Evidência
 
-Backtest de 18 meses (24/02/2025 → 02/09/2026), código atual, 11 pares:
+Backtest de 18 meses (24/02/2025 → 02/09/2026), motor de 02/09/2026 — ou seja,
+**antes do flatten de fim de pregão (ADR-018)** —, 11 pares:
+
+> **Nota de 07/09/2026:** a coluna "Veredito ADR-010" abaixo é da régua antiga.
+> Re-rodado o gate A com o flatten, a `balance-area-breakout-v1` **reprova por
+> qualidade** — avg R −0,013 em VBR e −0,173 em AVUV, com WR 31,4% — e a
+> `range-extreme-fade-v1` **reprova em IWV** (avg R 0,043): não é mais "só falta
+> amostra". Vereditos vigentes em
+> `docs/reports/gate-a-com-flatten-2026-09-07.md`. A `pullback-trend-v1` não foi
+> re-rodada — está desligada —, e os números desta seção seguem sendo a base da
+> decisão sobre ela, que não muda.
 
 | Estratégia | Ativo | Trades | WR% | PF | avgR | Veredito ADR-010 |
 |---|---|---|---|---|---|---|
@@ -98,8 +108,21 @@ Por par, a 2 bp:
 
 **A `pullback-trend-v1` é a única estratégia que não sobrevive a um centavo de
 custo.** Ela fica negativa já a 1 bp, antes de qualquer premissa agressiva.
-As outras três seguem positivas até 2 bp, e a `balance-area-breakout-v1`
-aguenta 5 bp.
+As outras três seguem positivas até 2 bp — a margem de 5 bp que esta tabela dá
+à `balance-area-breakout-v1` foi medida sem flatten e não vale como afirmação
+sobre o motor atual (ver a nota abaixo).
+
+> **Correção de 07/09/2026 — toda esta seção é do motor sem flatten.** Com a
+> régua do live (ADR-018), a linha de 2 bp muda: balance +14.648 → **+6.576**
+> (20 dos 96 trades eram overnight e carregavam 65% do P&L); range-fade
+> +6.015 → **+4.560** e, com o hotfix ET do veto de meio-dia, → **+3.618**
+> (PF 1,57 · avg R 0,182 — o bug estava ajudando); opening-reversal
+> +3.400 → **+8.085**, porque o flatten remove 8 trades overnight, todos
+> perdedores. A sensibilidade a 4–5 bp **não foi re-medida com flatten** — segue
+> como pendência em `docs/reports/gate-a-com-flatten-2026-09-07.md` §5, e as
+> medições novas estão nas §§1–3b do mesmo relatório. A coluna da pullback não
+> foi re-medida — a estratégia está desligada —, e continua sendo a única
+> negativa já a 1 bp na régua em que todas foram comparadas.
 
 ## Por quê
 
@@ -121,11 +144,20 @@ aguenta 5 bp.
 - **A amostra do gate B fica bem mais lenta.** Saem 3 das 11 instâncias e, com
   elas, mais da metade dos trades do portfólio (254 de 486 em 18 meses). Em
   compensação, os que restam vêm dos pares que pagam o custo de execução.
-- **Nenhuma estratégia passa hoje em todos os critérios do ADR-010.** As três
-  restantes falham só por amostra; a pullback falha por qualidade. O gate A
-  precisa ser reaberto com o walk-forward re-rodado sob as regras corrigidas —
-  este ADR não fecha essa questão, só evita continuar alocando risco na
-  estratégia que já se sabe negativa.
+- **Nenhuma estratégia passa hoje em todos os critérios do ADR-010.** A pullback
+  falha por qualidade; as outras três, quando este ADR foi escrito, falhavam só
+  por amostra. **Atualização de 07/09/2026:** o gate A foi reaberto e re-rodado
+  com a régua do live (ADR-018 — runs OOS 725–732,
+  `docs/reports/gate-a-com-flatten-2026-09-07.md`), e a conta mudou: a
+  `balance-area-breakout-v1` passa a falhar **por qualidade** em VBR (avg R
+  −0,013) e AVUV (WR 31,4%, avg R −0,173), e a `range-extreme-fade-v1` falha por
+  avg R em IWV (0,043). Só IJS (balance), AVUV e SLYV (fade) e IWM/IWN (openrev)
+  continuam falhando apenas por amostra — nenhuma das combinações chega aos 50
+  trades OOS, e o paper forward segue sendo o único OOS verdadeiro. Este ADR não
+  fecha essa questão, só evita continuar alocando risco na estratégia que já se
+  sabe negativa. Os critérios adicionais do ADR-019 §7 (PF em R, concentração
+  mensal) **são proposta, não são o gate vigente**; sob eles nenhuma das sete
+  combinações passaria — o que reforça, mas não substitui, a leitura acima.
 - Os `client_id` 1, 2 e 3 ficam livres. **Não devem ser reaproveitados** enquanto
   houver histórico dessas instâncias no banco.
 

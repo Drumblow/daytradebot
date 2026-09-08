@@ -1,5 +1,25 @@
 # Revalidação do gate A com o motor corrigido — 04/09/2026
 
+> ## ⚠️ SUBSTITUÍDO em 07/09/2026 — não use os números desta página
+>
+> Este relatório mediu o gate A com um backtest que **não fazia flatten de fim
+> de pregão**, enquanto o live encerra tudo a mercado às 15h55 ET. Comparou o
+> live com um motor que ganha dinheiro dormindo posicionado (ADR-018).
+>
+> A releitura está em **`docs/reports/gate-a-com-flatten-2026-09-07.md`** e
+> muda o veredito: a `balance-area-breakout-v1` **reprova** o gate A pelo avg R
+> (VBR −0,013; AVUV −0,173 com WR 31%) — só IJS passa sozinha. A
+> `range-extreme-fade-v1` reprova em IWV. A `opening-reversal-v1` sobe e passa
+> em IWM/IWN.
+>
+> Dois motivos a mais para não reaproveitar nada daqui: o hotfix v1.0.1 da
+> range-fade mudou o `config_hash` dela (`49ee6f04…` → `818b5339…`), e o PF em
+> **R** — que este relatório não tinha — põe a balance-area **abaixo de 1** em
+> AVUV (0,74) e VBR (0,97).
+>
+> Mesmo precedente do ADR-015 §4: nenhum run anterior ao flatten é comparável
+> com os novos. O texto abaixo fica como registro do que se sabia em 04/09.
+
 **Por que existe:** todo backtest anterior a 03/09/2026 mediu um mundo mais
 generoso que a realidade. Três correções mudaram as regras, e o carimbo de
 aprovação do gate A (ADR-010) foi emitido com a régua antiga:

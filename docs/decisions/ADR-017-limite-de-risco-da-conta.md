@@ -1,6 +1,6 @@
 # ADR-017 — Limite de risco da conta inteira, não só por instância
 
-**Status:** aceito
+**Status:** aceito — vigente, com duas notas de 07/09/2026 (abaixo)
 **Data:** 2026-09-04
 **Fecha:** C2 da auditoria de 2026-08-30 (o bloqueador de go-live)
 **Contexto anterior:** ADR-010 (gate de go-live), ADR-013 (app do umbrelOS)
@@ -42,6 +42,23 @@ Três travas, todas somando as 11 instâncias:
 Configuráveis em `[risk]`: `max_portfolio_daily_loss_pct`,
 `max_concurrent_positions`, `max_portfolio_notional_pct`.
 
+> ### Nota 1 de 07/09/2026 — o notional agregado não é o que a tabela diz
+>
+> A linha "notional agregado" descreve um teto sobre a soma **incluindo a
+> posição que está para abrir**. O código não faz isso: `exposure_limit_hit`
+> (`crates/trader-cli/src/commands/paper.rs:1502-1529`) soma apenas as posições
+> **já abertas** e testa `notional >= teto` — o notional prospectivo fica de
+> fora. Como o sizing é `trunc(capital / entrada)`
+> (`crates/trader-core/src/risk/mod.rs:253`), duas posições cheias somam
+> ≈ 199,9% < 200% e a terceira ainda passa pelo teto. Na prática a trava que
+> morde é `positions.len() >= 3`, e o teto de 200% quase nunca é atingido
+> (medido no replay `portfolio-regime-1`; ADR-020, fato 4).
+>
+> Fazer a checagem incluir a posição prospectiva
+> (`notional_existente + notional_novo >= teto`) é o que a **ADR-020 propõe** —
+> ADR **proposta, não implementada** em 07/09/2026. Até ela ser aprovada e
+> aplicada, o que vale é esta nota, não a linha da tabela.
+
 Bloqueio **não** é circuit breaker: a instância não morre, só não abre posição
 nova naquele ciclo, registra `portfolio_limit` em `system_events` e segue
 gerenciando o que já tem aberto.
@@ -69,10 +86,26 @@ As duas fontes usadas já são autoritativas e ninguém precisa mantê-las:
 - **3 posições simultâneas:** com ativos correlacionados, a quarta posição
   quase não diversifica e multiplica a exposição ao mesmo movimento.
 - **200% de notional:** o sizing já limita cada posição a ~100% do capital;
-  este teto permite duas posições cheias e barra a terceira por tamanho.
+  este teto permite duas posições cheias e barra a terceira por tamanho. Era a
+  intenção; **o código não barra** — ver a nota 1 acima.
 
 São padrões calibrados para **conta paper com margem**. Antes de dinheiro real
 devem ser reapertados — provavelmente 2% de perda diária e 100% de notional.
+
+> ### Nota 2 de 07/09/2026 — não aperte o notional para 100% antes da ADR-020
+>
+> Com o sizing de hoje, "100% de notional" recusa o cluster de entradas — e o
+> cluster é onde está o edge. No replay dos 232 trades dos 8 pares vivos, o P&L
+> vai de US$ 19.380 (com flatten, ADR-018) para **US$ 12.286** sob 1 posição /
+> 100% de notional; na balance-area, dias com ≥ 2 entradas têm PF 2,69 contra
+> 0,70 nos dias de entrada única (ADR-020, fato 4).
+>
+> A ADR-020 propõe chegar aos 100% **sem** perder o cluster, via
+> `capital_fraction = 1 / max_concurrent_positions`: com 3 posições e fração
+> 1/3, três posições cheias cabem em 100%. Proposta **não implementada** em
+> 07/09/2026. Enquanto ela não estiver no ar, esta ADR deve ser lida como
+> "permitir o cluster", e o aperto acima não é a mudança inócua que a frase
+> sugere.
 
 ## Consequências
 

@@ -216,6 +216,14 @@ Registrar em `trader-cli/src/dispatch.rs` e no registry; config TOML própria.
 
 ## 16. Veredito da validação (2026-08-17) — APROVADA PARA ACUMULAR AMOSTRA (small-cap value)
 
+> ⚠️ **Números desatualizados desde 07/09/2026 — ver §17 e o relatório
+> `docs/reports/gate-a-com-flatten-2026-09-07.md`.** Duas mudanças, na ordem:
+> o flatten de fim de pregão (ADR-018) e o hotfix ET do veto de meio-dia (§17).
+> Com as duas, o gate A OOS fica **AVUV PF 1,47 / avg R 0,159** (passava com
+> 1,89 / 0,256), **SLYV PF 2,64 / 0,424** (inalterada) e **IWV PF 1,31 /
+> avg R 0,043 — REPROVA**, o que confirma por outro caminho a recomendação de
+> tirar a fade de IWV (§5.10 do plano).
+
 Pipeline: backtest 17,5 meses (2025-02-24 → 2026-08-14) × 14 ativos (runs 210–223 no banco de comparação) → walk-forward OOS 6 janelas nos 6 que passaram da barra inicial (runs 224–229).
 
 ### Backtest (in-sample, config default calibrada — §12.1)
@@ -240,6 +248,14 @@ O padrão é estrutural e faz sentido: **ETFs de value/small revertem; índices 
 | IWN | 25 | 4/6 | +$1.901 | ⚠️ borderline (janelas 4–5 zeradas) |
 
 ### Veredito
+
+> ⚠️ **IWV saiu.** Com o flatten (ADR-018) e o hotfix ET (§17), IWV fica em
+> **PF 1,31 / avg R 0,043** no gate A OOS — abaixo do 0,15 do ADR-010, ou seja,
+> **REPROVA**. O stop mediano de 13 bp lá é o mesmo modo de falha da
+> pullback-trend-v1, e IWV tem **zero** trades `end_of_day` — o problema dela
+> não é o flatten. A recomendação (§5.10 do plano de lucratividade) é retirar a
+> fade de IWV; a troca de par é decisão do dono, porque reinicia 4 semanas de
+> gate B. AVUV passa agora por margem desprezível (avg R 0,159 contra 0,15).
 
 **APROVADA PARA ACUMULAR AMOSTRA** (mesma categoria das 3 irmãs em live) nos ativos **AVUV, SLYV e IWV** — os três com 5/6 ou 4/6 janelas positivas e sem deterioração recente. Gate A formal segue aberto: OOS por ativo ~24–25 trades (< 50) — a amostra forward no paper live fecha isso. MDY/IJR/IWN ficam de fora da primeira leva live (deterioração nas janelas recentes); reavaliar quando a amostra crescer. IWM/SPY/QQQ/IWO **não operam esta estratégia** (reprovados).
 
@@ -305,8 +321,14 @@ ADR-018), antes × depois da correção:
 
 Gate A OOS (walk-forward, 6 janelas, com flatten): AVUV cai de PF 1,89 /
 avg R 0,256 para **PF 1,47 / avg R 0,159** — passa por 0,009 acima do limiar
-do ADR-010. SLYV (PF 2,64 / 0,424) e IWV (PF 1,31 / 0,043) não mudam **em
-nada**.
+do ADR-010. SLYV (PF 2,64 / avg R 0,424) e IWV (PF 1,31 / avg R 0,043) não
+mudam **em nada** com o hotfix.
+
+E é isso que sela o caso de IWV: **avg R 0,043 está abaixo do 0,15 do ADR-010,
+então IWV REPROVA o gate A** — não por causa do flatten (lá a estratégia nunca
+segurou posição pela noite: zero saídas `end_of_day`) nem do hotfix, mas pelo
+stop mediano de 13 bp, o mesmo modo de falha que derrubou a
+`pullback-trend-v1`. O veredito do §16 ganhou o aviso correspondente.
 
 **A leitura honesta é que o bug estava ajudando.** A contagem de trades de
 AVUV é a mesma (29): a correção troca *quais* sinais passam — libera

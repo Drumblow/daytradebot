@@ -56,7 +56,7 @@ Reprovou → não vai para a Fase 3. Passou → segue, e o N de variantes testad
 entra no relatório (docs/reports/screens-<data>.md) para a contagem de tentativas.
 ```
 
-O screener é um filtro de **reprovação**, calibrado contra controles (positivos: `range-extreme-fade-v1` em AVUV/SLYV; `balance-area-breakout-v1` medida com flatten de fim de sessão, a régua do live; negativo: `pullback-trend-v1`). Ele é mais pessimista que o motor em dias de gap (o motor cancela a entrada quando o gap excede 25% do stop; o screener enche pior) e não modela barra de sinal — um setup cujo edge está na barra de sinal precisa modelá-la explicitamente no screen.
+O screener é um filtro de **reprovação**, calibrado contra controles (positivos: `range-extreme-fade-v1` em AVUV e SLYV, na configuração com o hotfix ET (nota v1.0.1) — `config_hash` `818b53394244ca62`, OOS PF 1,47 / avg R 0,159 e PF 2,64 / avg R 0,424; negativos: `pullback-trend-v1` e a `balance-area-breakout-v1` em VBR e AVUV, que sob a régua do live reprovam o gate A com avg R −0,013 e −0,173 e PF em R 0,97 e 0,74 — `docs/reports/gate-a-com-flatten-2026-09-07.md` §3 e §7). A balance-area com flatten serve como **referência de reprodução** do fill do screener (PF 1,55 / avg R −0,007 no agregado in-sample dos 3 pares), não como controle positivo: um controle positivo tem de passar a regra de decisão desta mesma fase, e calibrar o screener para deixá-la passar seria calibrá-lo para aprovar instância sem edge. Ele é mais pessimista que o motor em dias de gap (o motor cancela a entrada quando o gap excede 25% do stop; o screener enche pior) e não modela barra de sinal — um setup cujo edge está na barra de sinal precisa modelá-la explicitamente no screen.
 
 ### Fase 1 — Extração do conceito
 
@@ -140,7 +140,12 @@ trader-core/src/strategies/
     context.rs          → regras de contexto de mercado
     setup.rs            → detecção do setup
     entry.rs            → regras de entrada, stop e alvo
-    config.rs           → parâmetros da estratégia (Deserialize)
+    config.rs           → parâmetros da estratégia (`Deserialize` +
+                          `#[serde(deny_unknown_fields)]`, obrigatório desde o
+                          ADR-019: é o que faz `--set chave=valor` e
+                          `--strategy-config` do walk-forward falharem fechado
+                          em vez de ignorar um parâmetro escrito errado e
+                          produzir um run que parece válido)
 ```
 
 Contrato mínimo (atual):
@@ -161,7 +166,8 @@ pub trait Strategy {
 * todo `if` de rejeição deve produzir um `RejectionReason`;
 * todo sinal deve carregar metadados auditáveis (valores brutos que originaram a decisão);
 * usar `Decimal` para preços, não `f64`;
-* usar `chrono::DateTime<Utc>` para timestamps.
+* usar `chrono::DateTime<Utc>` para timestamps — mas **toda janela de horário do dia (veto, sessão, hora de entrada, fim de pregão) é declarada em horário de Nova York** e comparada por `trader_core::session` (`et_time`, `et_date`, `parse_et_time`, `within_trading_window`). Guardar em UTC continua certo; comparar hora do dia em UTC fixo é o erro — foi assim que o veto de meio-dia da `range-extreme-fade-v1` deslizou 1h fora do DST (hotfix v1.0.1, `docs/strategies/range-extreme-fade-v1.md` §17);
+* motivo de saída novo é mudança de **quatro** lugares de uma vez: a variante em `ExitReason`, a linha correspondente em `ExitReason::as_str()`, o braço em `parse_exit_reason` (`crates/trader-infra/src/repositories/trade_repository.rs`) e uma migração que amplie o CHECK de `trades.exit_reason` (precedente: `0004_exit_reason_end_of_day.sql`, do `end_of_day` do ADR-018). `as_str()` não é a tabela que o serde lê: `ExitReason` deriva `#[serde(rename_all = "snake_case")]`, e a igualdade entre as duas tabelas é garantida por teste (`exit_reason_serializa_em_snake_case`), não por reuso. Esquecer cada lugar quebra um lado diferente: sem a migração, o CHECK antigo rejeita a **escrita** do trade (INSERT recusado, SQLSTATE 23514); sem o braço em `parse_exit_reason`, quebra a **leitura** — desde o ADR-018 ela falha fechado (`TryFrom<TradeRow>` no lugar do `From`, sem o `_ => Target` silencioso), então um texto que o enum não conhece vira erro em vez de virar "alvo" nas métricas do gate em silêncio.
 
 ---
 
@@ -196,8 +202,16 @@ Rodar a estratégia em dados históricos reais do banco:
 ```text
 - mínimo 6 meses de dados;
 - mínimo 50 sinais para começar a avaliar;
-- aplicar slippage e comissão;
-- respeitar as mesmas regras de risco do live.
+- aplicar slippage e comissão (`--slippage-bps`; o gate A de 07/09/2026 roda a
+  2 bp + US$ 0,35 por perna);
+- respeitar as mesmas regras de risco do live;
+- rodar com o flatten de fim de pregão LIGADO (padrão desde o ADR-018): o motor
+  encerra no fechamento da última barra do pregão porque o live encerra tudo a
+  mercado na janela 15h55–16h10 ET (seção `[session]` de `config/default.toml`,
+  lida pelo live E pelo motor). `--no-flatten` existe só para reproduzir runs
+  antigos e não vale como evidência;
+- nenhum run anterior a 07/09/2026 é comparável com os atuais (mesmo precedente
+  do ADR-015).
 ```
 
 #### 5.3 Paper trading
@@ -220,10 +234,18 @@ Toda estratégia deve produzir:
 número de sinais
 número de entradas
 número de rejeições (por motivo)
+número de saídas por motivo (ExitReason: target, stop, end_of_day, manual...)
 win rate
-profit factor
-média de R por trade
+profit factor em $ E profit factor em R (o PF em $ infla com o sizing)
+média de R por trade e t-stat do avg R
+correlação entre o risco do trade e o resultado
 drawdown máximo
+concentração: melhor dia, 5 melhores dias, 2 melhores meses,
+              meses positivos / meses totais
+custo total = comissão + taxas (o slippage NÃO entra: já está embutido nos
+              preços de execução e não é recuperável do trade — ele aparece
+              no relatório como o parâmetro `--slippage-bps` do run)
+recortes por direção e por hora ET da entrada
 expectativa matemática
 razão risco/retorno média
 tempo médio na operação
@@ -248,8 +270,22 @@ Antes de uma estratégia ir para produção (paper), ela deve ser aprovada por c
 [ ] Especificação técnica completa
 [ ] Código revisado
 [ ] Testes unitários passando
-[ ] Backtest executado e relatório gerado
-[ ] Métricas mínimas atingidas (a definir por estratégia)
+[ ] Backtest e walk-forward executados COM o flatten (padrão desde o ADR-018)
+    e relatório gerado — run com `--no-flatten` não é evidência
+[ ] Gate A VIGENTE (ADR-010) atendido no OOS: ≥ 50 trades, WR ≥ 40%,
+    PF ≥ 1,3, DD ≤ 10%, avg R > 0,15, net > 0 (o `walkforward` imprime
+    o veredito)
+[ ] Critérios PROPOSTOS do ADR-019 §7 registrados — não são gate vigente.
+    O §7 propõe cinco além dos seis do ADR-010: IC95 do PF por bootstrap
+    em blocos ≥ 1,0; PF em R ≥ 1,2; 2 melhores meses ≤ 60%; holdout
+    travado; sensibilidade a custo a 4–5 bp. Destes, o `walkforward`
+    imprime hoje DOIS sob o rótulo "proposta ADR-019 §7" (PF em R e 2
+    melhores meses) — o IC em blocos depende do relatório Python do §8,
+    ainda pendente
+[ ] Relatório obrigatório do §7 anotado (não é critério, nem proposto):
+    t-stat do avg R e corr(risco, resultado), que o CLI imprime fora do
+    bloco da proposta, na linha `[ i]`
+[ ] Métricas mínimas da própria estratégia atingidas (a definir por estratégia)
 [ ] Nenhuma violação de regra de segurança financeira
 [ ] Versionada no git
 ```
@@ -266,6 +302,8 @@ pullback-trend-v2
 ```
 
 Nunca alterar uma estratégia em produção. Se precisar mudar uma regra, crie uma nova versão e teste do zero.
+
+Correção de bug que não muda a regra pretendida é a única exceção, e ela não é barata: o hotfix da `range-extreme-fade-v1` (veto de meio-dia em UTC fixo → ET) manteve o `strategy_id` **e** a `version` (`1.0.0`; o "v1.0.1" é rótulo da nota de correção — `docs/strategies/range-extreme-fade-v1.md` §17, que diz "Não é bump de versão" —, não campo de config). O que mudou foram os *valores* de `midday_start_time`/`midday_end_time` no TOML; como o `config_hash` é o hash do JSON da configuração inteira, isso já bastou para virá-lo (`49ee6f045b4c35a7` → `818b53394244ca62`). `config_hash` novo em produção é estratégia nova para efeito de amostra: reinicia a janela de 4 semanas do gate B (§3.8 do plano). Por isso o deploy de um hotfix desses é decisão do dono, não consequência de um push.
 
 O banco deve armazenar:
 

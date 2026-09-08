@@ -134,12 +134,16 @@ Interpretações nossas: todos os limiares numéricos (78 candles, 2%, 3×ATR, 0
 [x] Código revisado
 [x] Testes unitários passando (10 casos)
 [x] Backtest executado e relatório gerado
-[~] Métricas mínimas atingidas — **APROVADA EM QUALIDADE em 3 ativos; amostra insuficiente**
+[~] Métricas mínimas atingidas — **obsoleto: com a régua do live (ADR-018) REPROVA o gate A pelo avg R; só IJS passa (ver §16)**
 [x] Nenhuma violação de regra de segurança financeira
 [ ] Versionada no git
 ```
 
 ## 15. Veredito da validação (2026-08-06) — APROVADA PARA ACUMULAR AMOSTRA
+
+> ⚠️ **OBSOLETO desde 07/09/2026 — ver §16.** Estes números saíram de um
+> backtest sem flatten de fim de pregão. Com a régua do live a estratégia
+> **reprova** o gate A pelo avg R; só IJS passa sozinha.
 
 - Iteração documentada: o teto de largura em ATR (3×ATR de 15min) estava na escala errada para áreas de 3 dias (rejeitava 99,6% das janelas); corrigido para 10×ATR (o filtro real é o teto de 2% — p25 das janelas de SPY é 1,98%).
 - Backtest 17,5 meses × 6 ativos (runs 102–107): 19–53 trades/ativo.
@@ -150,3 +154,50 @@ Interpretações nossas: todos os limiares numéricos (78 candles, 2%, 3×ATR, 0
   - IJR (PF 1.95 mas WR 36.8%, avgR 0.096), SPY (PF 0.62), MDY (PF 1.01, avgR -0.09): reprovam.
 - **Expansão de ativos (2026-08-06, 8 novos testados):** aprovada em qualidade também em **IJS (29t OOS, PF 3.48, avgR 0.744 — melhor par do projeto)**, **VBR (37t, 2.60, 0.285)**, **AVUV (36t, 2.79, 0.242)**, **SLYV (26t, 2.18, 0.375)**, **SCHA (21t, 1.52, 0.278)** e IWO (11t, 3.89 — amostra mínima). Reprovada em VB e IWV (PF 1.26, marginal). Mapa final: **9 ativos aprovados em qualidade** (IWN, IWM, QQQ, IJS, VBR, AVUV, SLYV, SCHA, IWO) — amostra agregada 235 trades OOS. É a estratégia mais robusta do projeto em cobertura.
 - **Decisão:** candidata principal. Mesma pendência de amostra — decisão do dono. Não vai ao live antes disso.
+
+---
+
+## 16. Releitura com a régua do live (07/09/2026) — **REPROVA o gate A**
+
+**O §15 acima está obsoleto.** Ele foi medido com um backtest que deixava a
+posição atravessar a noite; o live encerra tudo a mercado às 15h55 ET porque as
+pernas do bracket vão com TIF Day (ADR-018). Não é uma nuance: **20 dos 96
+trades in-sample dos pares vivos eram overnight e carregavam 65% do P&L** — um
+edge que o live, por construção, nunca capturou.
+
+Com o flatten replicado no motor (walk-forward, 6 janelas, 2 bp, runs 725–732 e
+`gate-a-adr019`):
+
+| Par | n OOS | WR | PF em $ | **PF em R** | avg R | 2 melhores meses | t-stat | Veredito |
+|---|---|---|---|---|---|---|---|---|
+| IJS | 23 | 60,8% | 2,54 | 1,91 | **0,383** | 90% | 1,42 | passa (menos amostra) |
+| VBR | 34 | 44,1% | 1,51 | **0,97** | **−0,013** | 113% | −0,07 | **reprova (avg R)** |
+| AVUV | 35 | **31,4%** | 1,43 | **0,74** | **−0,173** | 115% | **−0,80** | **reprova (WR e avg R)** |
+
+Agregado in-sample: PF cai de **1,92 → 1,55** e o avg R de **0,214 → −0,007**.
+
+Duas leituras que o §15 não podia ter:
+
+1. **Em unidades de risco, VBR e AVUV perdem** (PF_R 0,97 e 0,74). O PF em
+   dólares acima de 1 vem da correlação entre tamanho e resultado (0,57 em
+   AVUV, a mais alta do projeto): o cap de notional põe posição maior
+   justamente nos trades de stop largo, e stop largo ganha. O gate lia só o PF
+   em dólares.
+2. **A concentração é extrema.** Os 2 melhores meses somam 113–115% do net em
+   VBR e AVUV — acima de 100% significa que os demais meses somam negativo. A
+   última janela (15/06 → 02/09/2026) é negativa nos três pares, com AVUV em
+   WR 0% e avg R −1,10.
+
+**O que fazer com as 3 instâncias em paper** (plano §2.5, recomendação, não
+decisão tomada): manter como **controle**, bloqueadas para dinheiro real —
+custam nada, geram amostra e são o único OOS verdadeiro. Ler o gate B **contra
+o backtest com flatten** e não contar overnight como edge. Não trocar as três
+de uma vez (§3.8: cada troca reinicia 4 semanas de gate B). A decisão de
+desligar ou substituir pela v2 (§6.2) é do dono.
+
+**Hipótese que isto abre, e que NÃO é ajuste da v1:** os 20 trades overnight
+são simétricos (10 long / 10 short, 14 alvos / 6 stops), o que sugere edge
+**multi-dia**. Fica para a Onda C como `balance-area-breakout` swing v2, com
+ADR próprio — nunca como afrouxamento da v1.
+
+Relatório completo: `docs/reports/gate-a-com-flatten-2026-09-07.md`.

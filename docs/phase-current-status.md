@@ -1,5 +1,15 @@
 # Status Atual do Projeto — Pós-Sprint de Auditabilidade
 
+> **Atualização 2026-09-07 (régua do live e harness de validação):** o ADR-018
+> (flatten de fim de pregão), o hotfix v1.0.1 do veto de meio-dia da
+> `range-extreme-fade-v1` e o harness do ADR-019 estão **implementados** na
+> `main` — **sem push**. O **ADR-020** continua **proposto** e os critérios do
+> **ADR-019 §7 não são gate**: o gate vigente continua sendo o ADR-010. O
+> veredito de gate A que vale está em
+> **`docs/reports/gate-a-com-flatten-2026-09-07.md`**. Ver a seção
+> "Estado em 07/09/2026" logo abaixo; o resto do arquivo é o registro da sprint
+> de 03/08 e não foi reescrito.
+
 > **Atualização 2026-08-03 (ciclo de validação):** foi concluído um ciclo de 6
 > sprints focado em validação para operação real — persistência completa do
 > live (ordens/fills/trades), estado de risco durável, correções de backtest,
@@ -11,6 +21,113 @@
 **Sprint:** Correção do core, auditabilidade e MVP de paper trading simulado  
 **Responsável:** CTO / Agente de IA  
 **Status geral:** ✅ MVP de paper trading funcional e auditável — **incluindo modo live validado na conta paper da IBKR**
+
+---
+
+## Estado em 07/09/2026 — o que mudou depois desta sprint
+
+Esta seção é o que vale hoje. Tudo a partir de "Resumo Executivo" é o registro
+da sprint de 03/08 e ficou como estava — inclusive a tabela de pendências e o
+bloco "Validação" (os 28 testes de lá são daquele dia; hoje o workspace tem
+**268 testes**, eram 241, com `cargo clippy --all-targets -D warnings` limpo).
+
+### Implementado — commits `16a0cea`, `cbc8be5`, `8c88fd7`, `13f83f2`, `e1f1266` na `main`, **sem push**
+
+| Item | Status | Nota |
+|------|--------|------|
+| ADR-018 — flatten de fim de pregão | ✅ Implementado | `ExitReason::EndOfDay` (serde `end_of_day`), `ExitReason::as_str()`, `Trade::effective_exit_reason()`, migração 0004. Seção `[session]` em `config/default.toml` (`flatten_start` 15:55:00, `flatten_end` 16:10:00, `last_bar` 15:45:00 — **horário de Nova York**), tipo `SessionSettings` em `trader-infra::config`, lida pelo live **e** pelo motor. |
+| Flatten no backtest | ✅ Implementado | `BacktestConfig.session_flatten_et: Option<(u32,u32)>`, default `Some((15,45))`. O gatilho é **mudança de data ET** (`trader_core::session::et_date()`), não relógio: fim da série não é sino. `--no-flatten` em `backtest` e `walkforward` reproduz o baseline antigo **ao centavo** (diff zero). |
+| Hotfix v1.0.1 do veto de meio-dia da `range-extreme-fade-v1` | ✅ Implementado | UTC fixo → ET. Muda o `config_hash`: `49ee6f045b4c35a7` → `818b53394244ca62`. |
+| ADR-019 — harness de validação | ✅ Implementado, **menos** o item 8 (relatório Python em `trader-research/`) e o dedupe do item 3 | Métricas novas em `BacktestMetrics` e opções novas de CLI, abaixo. Runs OOS no banco dev: **725–732** e os rotulados `gate-a-adr019`. |
+| ADR-020 — sizing/liquidez | ⛔ **Proposto** | **Não implementado.** Nenhum caminho de código depende dele; documentação que o trate como vigente está errada. |
+| Critérios do ADR-019 §7 (PF_R ≥ 1,2; dois melhores meses ≤ 60%) | ⛔ **Proposta, não vigente** | São métricas medidas e publicadas, **não** gate. O gate de go-live continua sendo o **ADR-010**. |
+
+O que o harness acrescentou, em concreto:
+
+- `BacktestMetrics` ganhou `by_exit_reason`, `by_direction` e `by_entry_hour_et`
+  (mapas de `GroupMetrics`, tipo público novo — as chaves de hora são de
+  **Nova York**), mais `profit_factor_r`, `t_stat_avg_r`, `corr_risk_result`,
+  `trading_days`, `top_day_share`, `top5_day_share`, `top2_month_share`,
+  `months_total`, `months_positive` e `cost_total`.
+- `trader-cli walkforward` ganhou `--output`, `--slippage-bps` (Decimal, aceita
+  `2.5`), `--label`, `--holdout-from`, `--strategy-config` e `--set chave=valor`.
+- **Travas que abortam** (existem para impedir run órfão ou run que se confunde
+  com o baseline): `--set` sem `--label`; chave inexistente (os 9
+  `StrategyParameters` ganharam `deny_unknown_fields`); `--set` que não muda o
+  `config_hash`; `--set` junto com `--holdout-from`; TOML de `--strategy-config`
+  com `id` diferente do `--strategy`; `--holdout-from` inválido é **erro**, não
+  aviso. Módulo novo `crates/trader-cli/src/strategy_source.rs`; `toml` virou
+  dependência do `trader-cli`.
+- `trader-cli analyze` escolhe o baseline por (estratégia, par, `config_hash`)
+  via `latest_for`, ignora runs `experimental` e filtra os trades do live por
+  `strategy_id` + `config_hash`. Sem run compatível ele **avisa**, em vez de
+  comparar contra outro. Migração 0005 cria `idx_backtest_runs_baseline`.
+- `trade_repository` passou de `From<TradeRow>` para `TryFrom<TradeRow>` e a
+  leitura de `exit_reason` **falha fechado** — antes um valor desconhecido virava
+  `Target` em silêncio. Teste de integração novo em
+  `crates/trader-infra/tests/trade_repository_test.rs`.
+
+### Gate A com a régua do live — o veredito mudou
+
+OOS do walk-forward, 6 janelas, com flatten e com o hotfix ET. Fonte:
+`docs/reports/gate-a-com-flatten-2026-09-07.md`. Gate vigente = ADR-010
+(≥ 50 trades · WR ≥ 40% · PF ≥ 1,3 · DD ≤ 10% · avg R > 0,15 · net > 0).
+
+| Estratégia | Par | n | WR | PF $ | PF R | avg R | Veredito (ADR-010) |
+|---|---|---|---|---|---|---|---|
+| balance-area-breakout-v1 | IJS | 23 | 60,8% | 2,54 | 1,91 | 0,383 | passa, menos n |
+| balance-area-breakout-v1 | VBR | 34 | 44,1% | 1,51 | **0,97** | **−0,013** | **reprova (avg R)** |
+| balance-area-breakout-v1 | AVUV | 35 | **31,4%** | 1,43 | **0,74** | **−0,173** | **reprova (WR e avg R)** |
+| range-extreme-fade-v1 | AVUV | 26 | 57,6%† | 1,47 | 1,37 | 0,159 | passa por 0,009, menos n |
+| range-extreme-fade-v1 | SLYV | 20 | 70,0% | 2,64 | 2,34 | 0,424 | passa, menos n |
+| range-extreme-fade-v1 | IWV | 18 | 55,5% | 1,31 | — | **0,043** | **reprova (avg R)** |
+| opening-reversal-v1 | IWM | 32 | 59,3% | 1,72 | 2,03 | 0,450 | passa, menos n |
+| opening-reversal-v1 | IWN | 26 | 53,8% | 1,56 | 1,56 | 0,283 | passa, menos n |
+
+† A WR da fade em AVUV é a de §3 do relatório, medida **antes** do hotfix ET.
+O PF e o avg R da mesma linha vêm de §3b, que é pós-hotfix e **não republica
+win rate** — §7, de onde sai o PF em R, também não tem essa coluna. O hotfix
+não muda a contagem de trades (26 nos dois lados), mas troca *quais* sinais
+passam, então a WR pós-hotfix pode ser outra e ainda não foi medida. Enquanto
+não for, esta célula é a única WR publicada para essa combinação; não use os
+57,6% como número pós-hotfix.
+
+O que isso contraria no que se dizia antes:
+
+1. A `balance-area-breakout-v1` **reprova** o gate A com a régua do live; só IJS
+   passa. Em unidades de risco ela perde em AVUV (PF_R 0,74) e VBR (0,97) — o PF
+   em dólares acima de 1 vem da correlação entre tamanho e resultado (0,57 em
+   AVUV), que é o cap de notional pondo posição maior justamente nos trades de
+   stop largo.
+2. A `opening-reversal-v1` **melhora** com o flatten (in-sample PF 1,23 → 1,74,
+   +3.400 → +8.085) e passa em IWM e IWN, mas isso é aritmética: some 8 dos 67
+   trades, todos overnight e todos perdedores. Não é reabilitação.
+3. A `range-extreme-fade-v1` reprova em IWV (avg R 0,043), o que confirma a
+   recomendação §5.10 do plano por outro caminho.
+4. O hotfix ET tem efeito **negativo e grande** — in-sample a fade cai de
+   PF 1,74 / +4.560 para **PF 1,57 · avg R 0,182 · +3.618** (−21% no net), tudo
+   em AVUV. O bug estava ajudando; o plano previa "imensurável" e errou.
+5. **Nenhum t-stat chega a 2** e só a fade em SLYV passa no critério de
+   concentração (59% contra o teto **proposto** de 60%). Sob o gate proposto no
+   ADR-019 §7, **nenhuma** das sete combinações passaria — motivo a mais para não
+   tratar esses critérios como vigentes sem decisão do dono.
+
+Delta in-sample do flatten, pares vivos, 2 bp, para referência: balance-area
+PF 1,92 / avg R 0,214 / +14.648 → PF 1,55 / avg R −0,007 / +6.576 (20 de 96
+trades eram overnight); range-fade PF 1,88 / +6.015 → PF 1,74 / +4.560 (9 de 69);
+opening-reversal PF 1,23 / +3.400 → PF 1,74 / +8.085 (8 de 67).
+
+**Ressalva:** o banco dev tem feed degradado do Gateway a partir de 07/08/2026.
+O **nível** absoluto do último bloco está contaminado; o delta com/sem flatten
+não está, porque os dois lados leem os mesmos candles.
+
+### Aviso de deploy — nada disso foi enviado com push
+
+`.github/workflows/images.yml` dispara em push para `main` com paths `crates/**`
+e `config/**`: publica imagens e, com `APP_DEPLOY=enabled` e fora do pregão,
+**recria as 8 instâncias de produção**. Dar push muda o `config_hash` da
+`range-extreme-fade-v1` em produção no meio do gate B, o que reinicia as 4
+semanas (§3.8 do plano). Os commits acima estão só na `main` local.
 
 ---
 
