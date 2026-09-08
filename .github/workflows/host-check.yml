@@ -53,6 +53,42 @@ jobs:
              union all select 'candles', count(*) from candles" \
             || echo "banco inacessivel"
 
+      - name: Saidas incoerentes (alvo com prejuizo)
+        run: |
+          # Um trade que sai NO ALVO nao pode perder dinheiro: para um long, o
+          # alvo esta acima da entrada. Nos 214 trades do backtest isso
+          # acontece ZERO vezes. Na producao, dois dos sete trades reais estao
+          # assim (ids 11 e 13) — e o 13 e de 08/09/2026, com R -0,81.
+          #
+          # A hipotese, olhando `classify_exit_reason` (trade_tracker.rs), e
+          # que a ENTRADA encheu pior que o proprio alvo: a saida e
+          # classificada por PRECO, entao um long que entra acima do alvo
+          # fecha "no alvo" imediatamente, no prejuizo. Seria a familia do
+          # ADR-015 (entrada perseguindo preco), com a diferenca de que a
+          # trava de hoje olha o preco no ENVIO, nao o preco do FILL.
+          #
+          # Esta consulta traz os precos que faltam para confirmar ou derrubar
+          # a hipotese. So le.
+          docker exec daytradebot_postgres_1 psql -U trader -p 5433 -d trader_db -c \
+            "SELECT t.id, a.symbol, t.direction,
+                    t.entry_time AT TIME ZONE 'America/New_York' AS entrada_et,
+                    round(t.entry_price, 4) AS entrada,
+                    round(t.stop_price, 4)  AS stop,
+                    round(t.target_price, 4) AS alvo,
+                    round(t.exit_price, 4)  AS saida,
+                    t.exit_reason,
+                    round(t.net_pnl, 2) AS net,
+                    round(t.result_in_r, 3) AS r,
+                    CASE
+                      WHEN t.direction = 'long'  AND t.entry_price >= t.target_price THEN 'ENTRADA ACIMA DO ALVO'
+                      WHEN t.direction = 'short' AND t.entry_price <= t.target_price THEN 'ENTRADA ABAIXO DO ALVO'
+                      ELSE ''
+                    END AS diagnostico
+             FROM trades t JOIN assets a ON a.id = t.asset_id
+             WHERE t.exit_reason = 'target' AND t.net_pnl < 0
+             ORDER BY t.exit_time" \
+            || echo "banco inacessivel"
+
       - name: Auditoria do painel (mesmas agregacoes do trader-web)
         run: |
           # Espelha as queries do painel (crates/trader-web/src/queries.rs) para
